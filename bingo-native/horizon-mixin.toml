@@ -8,3 +8,9 @@ horizon_revision = "7b59041a89c3f1bc8e458f43d6b8ec48a0f814d3"
 
 [api]
 path = "api"
+
+# The client logic crate the api package depends on. The launcher stages a bundle's [[crate]]s beside the api
+# package and requires every path dependency of the api package to name one of them.
+[[crate]]
+id = "horizon-bingo"
+path = "horizon-bingo"

@@ -199,14 +199,14 @@ cargo test --locked --offline
 ```
 
 At the time of writing this passed: 599 tests in 53 test binaries (run with `CARGO_TARGET_DIR` set outside the
-repository). The bundle's own copy of the crate (`api/horizon-bingo/`) has only its unit tests in `src/` (41 tests, not
+repository). The bundle's own copy of the crate (`horizon-bingo/`) has only its unit tests in `src/` (41 tests, not
 run from the bundle). Do not run `cargo` inside the bundle: it writes a `Cargo.lock` into it.
 
 ## Layout
 
 - `horizon-mixin.toml`: the bundle: id, version, pinned Horizon commit, and the trait-mod package (`api/`).
 - `api/src/lib.rs`: the wiring to Horizon's hooks, environment variables, asset and language loading.
-- `api/horizon-bingo/src/`: the client logic, wire codecs, drawing and screens. Nothing here imports Horizon; the
+- `horizon-bingo/src/`: the client logic, wire codecs, drawing and screens. Nothing here imports Horizon; the
   host adapter is `api/src/lib.rs`.
 
 ## Licence

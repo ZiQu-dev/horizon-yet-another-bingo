@@ -235,7 +235,7 @@ document.
 
 - `bingo-native/`: the mod bundle you build. `horizon-mixin.toml` (id, version, pinned Horizon commit, trait-mod
   package `api/`), `api/src/lib.rs` (the wiring to Horizon's hooks, environment variables, asset and language loading)
-  and `api/horizon-bingo/src/` (the client logic, wire codecs, drawing and screens; nothing there imports Horizon).
+  and `horizon-bingo/src/` (the client logic, wire codecs, drawing and screens; nothing there imports Horizon).
 - `tools/prepare_assets.py`: makes the assets from your own copy of the original mod jar.
 - `dev/`: the tests, their recorded data and the design notes.
 

@@ -7,4 +7,4 @@ edition = "2024"
 # The launcher points this at the Horizon source it builds the game from.
 horizon-client = { git = "https://github.com/horizon-rust/horizon", rev = "7b59041a89c3f1bc8e458f43d6b8ec48a0f814d3" }
 # The client half itself: std-only, tested apart from the game (it lives inside this package so it is staged with it).
-horizon-bingo = { path = "horizon-bingo" }
+horizon-bingo = { path = "../horizon-bingo" }
