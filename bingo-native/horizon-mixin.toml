@@ -1,0 +1,10 @@
+# Bingo (native): the client half of "Yet Another Minecraft BINGO" (docs/native-mods.md, "Trait mods").
+[mod]
+id = "bingo_native"
+version = "0.0.1"
+
+[compatibility]
+horizon_revision = "7b59041a89c3f1bc8e458f43d6b8ec48a0f814d3"
+
+[api]
+path = "api"
