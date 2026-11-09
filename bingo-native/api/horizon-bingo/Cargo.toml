@@ -1,0 +1,10 @@
+[package]
+name = "horizon-bingo"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# Both are in Horizon's Cargo.lock, so a native mod may use them. png reads the mod's textures, serde_json its colours and language.
+png = "0.18"
+serde_json = "1"
