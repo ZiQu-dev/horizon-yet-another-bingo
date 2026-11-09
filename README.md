@@ -121,6 +121,35 @@ horizon-launcher native-build <path to the bingo-native folder of this repositor
 Join the server as usual. The mod registers its plugin channels with the server by itself (`minecraft:register` in
 the play phase), so no server change is needed on the client side. **Not verified in a live game for this package.**
 
+### macOS
+
+Reported from a MacBook (Apple Silicon, Horizon.app in `/Applications`). **Not verified: nobody has built this on macOS yet.**
+
+- Game folder: `~/Library/Application Support/horizon` (holds `options.txt`, `horizon-mods.txt`, `horizon-mods/`,
+  `horizon-native-mods/`).
+- Launcher data: `~/Library/Application Support/horizon-launcher`. Find the resources file with
+  `REG=$(find "$HOME/Library/Application Support/horizon-launcher" -name command-registries.json | head -1)`.
+- Native builds need Apple's Command Line Tools: `xcode-select --install`. The launcher asks for them too.
+- The launcher is inside the app: `/Applications/Horizon.app/Contents/MacOS/`. Check its file name with `ls`.
+
+```sh
+GAME="$HOME/Library/Application Support/horizon"
+LAUNCHER="/Applications/Horizon.app/Contents/MacOS/<launcher name from ls>"
+
+# 2. Prepare the assets (run from the repository's tools folder)
+cd ~/horizon-yet-another-bingo/tools
+python3 -I prepare_assets.py ~/Downloads/bingo-2.15.1+mc26.3.jar "$GAME/horizon-mods/.horizon-mod-data/bingo_native/assets" \
+    --registries "$REG" --hmod "$GAME/horizon-mods/bingo_assets.hmod"
+
+# 3. Turn on the sound mod (append, do not overwrite)
+echo "mod.bingo_assets:true" >> "$GAME/horizon-mods.txt"
+
+# 4. Build and install the mod
+"$LAUNCHER" native-build ~/horizon-yet-another-bingo/bingo-native --instance horizon --trust-native-code --profile performance
+```
+
+The steps and options are the same as above. Check the build as in step 4.
+
 ## Keys
 
 Mod keys are bound per mod on its page in **Options > Mods**, not in Options > Controls (the brief said Controls; the
