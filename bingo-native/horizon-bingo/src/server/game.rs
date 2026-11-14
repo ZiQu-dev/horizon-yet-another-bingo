@@ -53,6 +53,11 @@ impl Game {
         Self { options, status: GameStatus::Pregame, countdown_ticks: 0, playing_ticks: 0 }
     }
 
+    /// Sets or removes the time limit (counted from the start of play); takes effect from the next tick.
+    pub fn set_time_limit(&mut self, secs: Option<i32>) {
+        self.options.time_limit_secs = secs;
+    }
+
     pub fn status(&self) -> GameStatus {
         self.status
     }

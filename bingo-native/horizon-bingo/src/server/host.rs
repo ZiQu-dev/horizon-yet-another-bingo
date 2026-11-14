@@ -12,4 +12,9 @@ pub trait ServerHost {
     fn players(&self) -> Vec<Player>;
     /// The item's registry id on the wire (the `ItemStack.item` number), or `None` if the item does not exist.
     fn item_numeric_id(&self, item: &str) -> Option<i32>;
+    /// A console command (for example `team add bingo_red`), queued and run at the next server tick. Commands
+    /// that fail are only logged by the game. The default does nothing, so a test host need not implement it.
+    fn command(&mut self, _line: &str) {}
+    /// Shows or updates a boss bar for one player. `progress` is 0.0 to 1.0. `visible` false removes it.
+    fn boss_bar(&mut self, _player: u128, _id: &str, _title: &str, _progress: f32, _visible: bool) {}
 }

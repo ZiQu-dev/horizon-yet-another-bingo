@@ -208,3 +208,79 @@ fn coordinate(index: usize) -> String {
     const COLUMNS: [char; 5] = ['b', 'i', 'n', 'g', 'o'];
     format!("{}{}", COLUMNS[index % 5], index / 5 + 1)
 }
+
+// Several teams on one card (the team session). Appended; the functions above are unchanged.
+
+/// `display_cards` with one entry per team, in the order given: `(key, colour, name, players)`. `colour` is a
+/// `Formatting` name such as `RED`, `name` the team's display name, and `players` the members to show.
+pub fn display_cards_all(entries: &[(&str, &str, &str, Vec<Player>)]) -> (&'static str, Vec<u8>) {
+    let display = entries
+        .iter()
+        .map(|(key, color, name, players)| {
+            debug_assert!(FORMATTING_NAMES.contains(color), "not a Formatting name: {color}");
+            let card_display = CardDisplay {
+                team_color: Some((*color).to_owned()),
+                team_name: Some(Text::plain(name)),
+                players: players.iter().map(|p| PlayerProfile { uuid: p.uuid, name: p.name.clone() }).collect(),
+            };
+            (Some((*key).to_owned()), card_display)
+        })
+        .collect();
+    let packet = CardDisplayPacket { display };
+    ("display_cards", encode(|w| packet.write(w).expect("display_cards: a text component fails to write")))
+}
+
+/// `update_card_tiles` for one viewer of a shared card: the 25 tiles, as seen by a player of `viewer_team`.
+///
+/// `found_by` gives every team's found squares, as `(team key, square indices)`. A square is achieved for the viewer
+/// (`is_achieved`, progress 1.0) when the viewer's own team found it. `team_keys` lists the other teams that found it,
+/// in the order of `found_by`; the viewer's team is left out, as in the mod's `CardViewService`.
+/// Everything else is as in [`card_tiles`]: the tile's item, tier, name and lore, and the picture when the item exists.
+pub fn card_tiles_for(
+    viewer_team: &str,
+    card: &Card,
+    found_by: &[(&str, &[usize])],
+    item_id: &dyn Fn(&str) -> Option<i32>,
+    should_notify: bool,
+) -> (&'static str, Vec<u8>) {
+    assert_eq!(card.squares.len(), CARD_SQUARES, "a card has {CARD_SQUARES} squares");
+    let viewer_found: &[usize] = match found_by.iter().find(|entry| entry.0 == viewer_team) {
+        Some(entry) => entry.1,
+        None => &[],
+    };
+    let tiles = card
+        .squares
+        .iter()
+        .enumerate()
+        .map(|(index, objective)| {
+            let is_found = viewer_found.contains(&index);
+            let other_teams: Vec<String> = found_by
+                .iter()
+                .filter(|entry| entry.0 != viewer_team && entry.1.contains(&index))
+                .map(|entry| entry.0.to_string())
+                .collect();
+            let stack = item_id(&objective.item).map(|id| ItemStack { count: 1, item: id, added: vec![], removed: vec![] });
+            let action = match &stack {
+                Some(stack) => CardTileAction::Item(stack.clone()),
+                None => CardTileAction::None,
+            };
+            let tile = CardTile {
+                id: Some(objective.item.clone()),
+                image: CardTileImage { item: stack, is_achieved: is_found, ..CardTileImage::default() },
+                image_list: vec![],
+                action,
+                item_tier: Some(objective.tier),
+                name: Some(item_name(&objective.item)),
+                lore: vec![tile_lore(objective.tier, index)],
+                is_hidden: false,
+                is_locked: false,
+                is_flashing: false,
+                progress: if is_found { 1.0 } else { 0.0 },
+                team_keys: other_teams,
+            };
+            (index as i32, tile)
+        })
+        .collect();
+    let packet = CardTilesPacket { team_key: Some(viewer_team.to_owned()), tiles, should_notify };
+    ("update_card_tiles", encode(|w| packet.write(w).expect("update_card_tiles: a tile fails to write")))
+}

@@ -2,12 +2,14 @@
 //! `horizon-bingo`'s `server` modules; this file adapts Horizon's `Host` to their `ServerHost` and keeps the session.
 //! Each hook runs under `guarded`, and a poisoned lock is taken as it is, so one panic does not end the server's mod.
 use super::{MOD_ID, guarded, log};
+use horizon_bingo::server::commands::{parse, requires_op};
 use horizon_bingo::server::game::GameOptions;
 use horizon_bingo::server::host::ServerHost;
 use horizon_bingo::server::items::ItemIds;
+use horizon_bingo::server::ready::ReadyOptions;
 use horizon_bingo::server::session::{Session, SessionOptions};
 use horizon_bingo::server::types::Player;
-use horizon_client::mod_api::{Flow, Host, ItemStack, NativeCommand, ServerTickPhase, Text};
+use horizon_client::mod_api::{Flow, Host, ItemStack, NativeBossBar, NativeCommand, ServerTickPhase, Text};
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -19,23 +21,49 @@ use std::{
 const CHANNEL_PREFIX: &str = "yet-another-minecraft-bingo:";
 /// The command's first word, without its slash.
 const COMMAND: &str = "bingo";
-/// The operator level that starts, ends and resets a game (the original asks for `CONFIGURE_GAME`).
+/// The operator level of the commands that change a game (the original asks for `CONFIGURE_GAME`).
 const OP_LEVEL: u8 = 2;
+/// The shortcuts a player or the console may type without `bingo`.
+const SHORTCUTS: [&str; 3] = ["join", "ready", "spectator"];
+/// The usages the mod registers, each with a line that parses to what it runs. The operator level comes from
+/// `commands::requires_op`, so the rule lives in one place.
+const USAGES: [(&str, &str); 16] = [
+    ("bingo status", "status"),
+    ("bingo help", "help"),
+    ("bingo card", "card"),
+    ("bingo spectator", "spectator"),
+    ("bingo ready", "ready"),
+    ("bingo ready cancel", "ready cancel"),
+    ("bingo start", "start"),
+    ("bingo start ignore_warnings", "start ignore_warnings"),
+    ("bingo end", "end"),
+    ("bingo reset", "reset"),
+    ("bingo shuffleteams word?", "shuffleteams 2"),
+    ("bingo timelimit word?", "timelimit 5"),
+    ("bingo join word?", "join Red"),
+    ("join word?", "join Red"),
+    ("ready", "ready"),
+    ("spectator", "spectator"),
+];
+/// The most console commands queued for the next server tick; more are dropped and logged.
+const COMMAND_QUEUE_MAX: usize = 256;
 
 /// The one session of this server. Made on the first server hook.
 static SESSION: Mutex<Option<Session>> = Mutex::new(None);
+/// Console commands the session asked for (`ServerHost::command`), run after the session's tick.
+static COMMANDS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// The item registry's names, read once. `None` when the assets are missing (logged once).
 static ITEM_IDS: OnceLock<Option<ItemIds>> = OnceLock::new();
 
-/// A session that starts from the clock's time, with the default team and game options.
+/// A session that starts from the clock's time, with the default game options.
 fn new_session() -> Session {
     let seed = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64);
     Session::new(SessionOptions {
         seed,
         game: GameOptions::default(),
-        team: "bingo_red".to_owned(),
-        team_color: "RED".to_owned(),
-        team_name: "Red".to_owned(),
+        ready: ReadyOptions::default(),
+        // Teams start 200 blocks apart within 1000 of the world's origin (the original's default is 25 chunks).
+        spread: Some((200, 1000)),
     })
 }
 
@@ -82,6 +110,34 @@ impl ServerHost for ServerAdapter<'_> {
     fn item_numeric_id(&self, item: &str) -> Option<i32> {
         item_ids(&*self.host).as_ref()?.id(item)
     }
+
+    fn command(&mut self, line: &str) {
+        let mut queue = COMMANDS.lock().unwrap_or_else(PoisonError::into_inner);
+        if queue.len() < COMMAND_QUEUE_MAX {
+            queue.push(line.to_owned());
+        } else {
+            log(&format!("bingo: console command `{line}` dropped, the queue is full"));
+        }
+    }
+
+    fn boss_bar(&mut self, player: u128, id: &str, title: &str, progress: f32, visible: bool) {
+        let bar = visible.then(|| NativeBossBar {
+            name: Text::literal(title),
+            progress: progress.clamp(0.0, 1.0),
+            ..NativeBossBar::default()
+        });
+        if !self.host.boss_bar(player, bar_uuid(id), bar.as_ref()) {
+            log(&format!("bingo: boss bar {id} for {player:032x} not shown"));
+        }
+    }
+}
+
+/// The UUID of the boss bar called `id`: FNV-1a over its bytes, so each name always gives the same bar and no two
+/// names of the mod's collide in practice.
+fn bar_uuid(id: &str) -> u128 {
+    const OFFSET_BASIS: u128 = 0x6c62272e07bb014262b821756295c58d;
+    const PRIME: u128 = (1 << 88) + 0x13b;
+    id.bytes().fold(OFFSET_BASIS, |hash, byte| (hash ^ u128::from(byte)).wrapping_mul(PRIME))
 }
 
 /// The item names, loaded on the first use: BINGO_ASSETS, else the mod's data folder, as the client reads them.
@@ -110,6 +166,18 @@ pub fn server_tick(host: &mut dyn Host, phase: ServerTickPhase) {
         return;
     }
     guarded("server tick", || with_session(|s| s.tick(&mut ServerAdapter { host: &mut *host })));
+    // Outside the session's lock: a console command may run hooks that reach the session again.
+    guarded("bingo console commands", || run_queued_commands(&mut *host));
+}
+
+/// Runs the console commands queued since the last tick, in order; a failed one is logged.
+fn run_queued_commands(host: &mut dyn Host) {
+    let lines = std::mem::take(&mut *COMMANDS.lock().unwrap_or_else(PoisonError::into_inner));
+    for line in lines {
+        if !host.run_command(&line) {
+            log(&format!("bingo: console command `{line}` did not run"));
+        }
+    }
 }
 
 pub fn player_logged_in(host: &mut dyn Host, uuid: u128, name: &str) {
@@ -143,20 +211,36 @@ pub fn custom_payload_from_client(host: &mut dyn Host, uuid: u128, channel: &str
     });
 }
 
-/// The commands a player may type: `bingo status`, and `start`, `end` and `reset` for operators.
+/// The usages the commands tree gets: `bingo ...`, and the shortcuts. Operators get the ones `requires_op` names.
 pub fn register_commands(commands: &mut Vec<NativeCommand>) {
-    commands.push(NativeCommand::new("bingo status"));
-    commands.push(NativeCommand::op("bingo start", OP_LEVEL));
-    commands.push(NativeCommand::op("bingo end", OP_LEVEL));
-    commands.push(NativeCommand::op("bingo reset", OP_LEVEL));
+    for (usage, sample) in USAGES {
+        let Ok(command) = parse(sample) else {
+            log(&format!("bingo: usage `{usage}` has no parsable sample `{sample}`"));
+            continue;
+        };
+        if requires_op(&command) {
+            commands.push(NativeCommand::op(usage, OP_LEVEL));
+        } else {
+            commands.push(NativeCommand::new(usage));
+        }
+    }
 }
 
-/// A `bingo ...` command typed on the dedicated server's console; the answer goes to the console.
+/// The session's line for a typed command: the rest after `bingo`, or the whole line for a shortcut. `None` for any
+/// other command, which is left to the game.
+fn session_line(command: &str) -> Option<String> {
+    if let Some(rest) = command.strip_prefix(COMMAND).filter(|rest| rest.is_empty() || rest.starts_with(' ')) {
+        return Some(rest.trim().to_owned());
+    }
+    let word = command.split_whitespace().next()?;
+    SHORTCUTS.contains(&word).then(|| command.trim().to_owned())
+}
+
+/// A `bingo ...` command, or a shortcut, typed on the dedicated server's console; the answer goes to the console.
 pub fn perform_console_command(host: &mut dyn Host, command: &str) -> Flow {
-    let Some(rest) = command.strip_prefix(COMMAND).filter(|rest| rest.is_empty() || rest.starts_with(' ')) else {
+    let Some(line) = session_line(command) else {
         return Flow::Continue;
     };
-    let line = rest.trim().to_owned();
     let reply = guarded("bingo console command", || {
         with_session(|s| s.command(&mut ServerAdapter { host: &mut *host }, None, &line))
     });
@@ -166,12 +250,11 @@ pub fn perform_console_command(host: &mut dyn Host, command: &str) -> Flow {
     Flow::Cancel
 }
 
-/// A typed `bingo ...` command, run by the session; its answer goes to the player who typed it.
+/// A typed `bingo ...` command, or a shortcut, run by the session; its answer goes to the player who typed it.
 pub fn perform_command(host: &mut dyn Host, uuid: u128, command: &str) -> Flow {
-    let Some(rest) = command.strip_prefix(COMMAND).filter(|rest| rest.is_empty() || rest.starts_with(' ')) else {
+    let Some(line) = session_line(command) else {
         return Flow::Continue;
     };
-    let line = rest.trim().to_owned();
     let reply = guarded("bingo command", || {
         with_session(|s| s.command(&mut ServerAdapter { host: &mut *host }, Some(uuid), &line))
     });
