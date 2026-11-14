@@ -146,6 +146,21 @@ pub fn register_commands(commands: &mut Vec<NativeCommand>) {
     commands.push(NativeCommand::op("bingo reset", OP_LEVEL));
 }
 
+/// A `bingo ...` command typed on the dedicated server's console; the answer goes to the console.
+pub fn perform_console_command(host: &mut dyn Host, command: &str) -> Flow {
+    let Some(rest) = command.strip_prefix(COMMAND).filter(|rest| rest.is_empty() || rest.starts_with(' ')) else {
+        return Flow::Continue;
+    };
+    let line = rest.trim().to_owned();
+    let reply = guarded("bingo console command", || {
+        with_session(|s| s.command(&mut ServerAdapter { host: &mut *host }, None, &line))
+    });
+    if let Some(reply) = reply {
+        host.feedback(Text::literal(reply));
+    }
+    Flow::Cancel
+}
+
 /// A typed `bingo ...` command, run by the session; its answer goes to the player who typed it.
 pub fn perform_command(host: &mut dyn Host, uuid: u128, command: &str) -> Flow {
     let Some(rest) = command.strip_prefix(COMMAND).filter(|rest| rest.is_empty() || rest.starts_with(' ')) else {
