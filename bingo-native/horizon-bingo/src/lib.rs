@@ -58,6 +58,7 @@ pub mod scores_draw;
 pub mod history_ctl;
 pub mod card_images;
 pub mod sounds;
+pub mod server;
 pub mod fireworks;
 pub mod config;
 pub mod settings_screen;
