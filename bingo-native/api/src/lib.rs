@@ -11,7 +11,7 @@ use horizon_client::mod_api::{
     ClientDisconnectingEvent, ClientPacketEvent, ClientPlayerNetworkLoggingInEvent, ClientTickPostEvent,
     ClientboundPlayPacket, ConfigLoadingEvent, ConfigReloadingEvent, CustomPayloadFromClientEvent, Flow,
     GuiLayerPostEvent, Hooks, Host, HudBatch, KeyCode, NativeConfig, NativeConfigFile, NativeConfigKind,
-    NativeScreenKind, PerformCommandEvent, PerformConsoleCommandEvent, PlayerInventoryChangedEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent,
+    NativeScreenKind, PerformCommandEvent, PerformConsoleCommandEvent, ServerAboutToStartEvent, PlayerInventoryChangedEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent,
     RegisterCommandsEvent, RegisterConfigsEvent, ScreenKeyPressedPreEvent, ScreenMouseButtonPressedPreEvent,
     ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent,
     ScreenRenderPostEvent, ServerTickEvent, ServerboundPlayPacket, Text,
@@ -801,6 +801,10 @@ impl Hooks for Mod {
 
     fn perform_command(&self, host: &mut dyn Host, event: &mut PerformCommandEvent<'_>) -> Flow {
         server::perform_command(host, event.player.uuid, event.command)
+    }
+
+    fn server_about_to_start(&self, _host: &mut dyn Host, _event: &mut ServerAboutToStartEvent) {
+        server::server_about_to_start();
     }
 
     fn perform_console_command(&self, host: &mut dyn Host, event: &mut PerformConsoleCommandEvent<'_>) -> Flow {

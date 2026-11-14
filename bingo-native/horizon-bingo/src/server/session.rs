@@ -178,6 +178,7 @@ impl Session {
                     send_all(host, wire::card_reset());
                     self.card = None;
                     self.progress = TeamProgress::default();
+                    self.ready.clear();
                     self.seed = self.seed.wrapping_add(1);
                 }
             }
@@ -220,7 +221,7 @@ impl Session {
             score: self.team_score(),
             duration: Some(java_duration(self.game.elapsed_ms())),
         };
-        send_all(host, wire::game_over_v2(winner.as_deref(), won, vec![ranking]));
+        send_all(host, wire::game_over_v2(winner.as_deref(), won, self.game.elapsed_ms(), vec![ranking]));
         let line = if won {
             format!("{} won the game!", self.options.team_name)
         } else {

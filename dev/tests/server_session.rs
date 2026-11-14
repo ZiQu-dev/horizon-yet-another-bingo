@@ -521,8 +521,10 @@ fn reset_clears_the_card_and_the_next_card_uses_the_next_seed() {
     session.on_inventory(&mut host, ALICE, &HashMap::from([(names_of(&first)[1].clone(), 1)]));
     assert!(host.take().is_empty());
 
-    // Bob is still ready, so Alice's ready packet starts the next game with the card of seed 101.
+    // The reset cleared the ready flags: both ready up again to start the next game with the card of seed 101.
     session.on_packet(&mut host, ALICE, "set_ready", &READY_V1);
+    assert!(host.take().is_empty(), "one ready of two starts nothing");
+    session.on_packet(&mut host, BOB, "set_ready", &READY_V1);
     let round = host.take();
     let second = tiles_of(&payloads(&round, ALICE, "update_card_tiles")[0]);
     assert_eq!(names_of(&second), names_of_generated(&generate_card(101, &pool, DEFAULT_DISTRIBUTION)));
@@ -631,4 +633,22 @@ fn pregame_is_silent_on_ticks() {
         session.tick(&mut host);
     }
     assert!(host.take().is_empty());
+}
+
+#[test]
+fn reset_takes_everyone_out_of_ready_so_one_late_ready_does_not_restart_the_game() {
+    let mut host = FakeHost::default();
+    host.online = vec![player(ALICE, "Alice"), player(BOB, "Bob")];
+    let mut session = Session::new(options(100, 0, None));
+    session.on_packet(&mut host, ALICE, "set_ready", &READY_V1);
+    session.on_packet(&mut host, BOB, "set_ready", &READY_V1);
+    assert!(session.command(&mut host, None, "status").contains("Playing"));
+
+    session.command(&mut host, None, "reset");
+    host.take();
+    // Only Bob is ready now. Before the fix Alice's old ready still counted and this started a new game.
+    session.on_packet(&mut host, BOB, "set_ready", &READY_V1);
+    assert!(session.command(&mut host, None, "status").contains("Pregame"));
+    session.on_packet(&mut host, ALICE, "set_ready", &READY_V1);
+    assert!(session.command(&mut host, None, "status").contains("Playing"));
 }

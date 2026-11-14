@@ -94,7 +94,7 @@ fn every_builder_uses_a_server_to_client_channel_of_the_mod() {
         (wire::score_update(false, "bingo_red", TeamScore::default()).0, ScoredItemPacket::ID),
         (wire::display_cards("bingo_red", "RED", "Red", &[]).0, DISPLAY_ID),
         (wire::card_tiles("bingo_red", &fixture_card(), &[], &item_id, false).0, CardTilesPacket::ID),
-        (wire::game_over_v2(None, false, vec![]).0, GAME_OVER_V2_ID),
+        (wire::game_over_v2(None, false, 0, vec![]).0, GAME_OVER_V2_ID),
     ];
     for (path, id) in cases {
         assert_eq!(channels::id(path), id, "channel of {path}");
@@ -356,11 +356,12 @@ fn game_over_v2_carries_the_winner_the_viewers_result_and_the_ranking() {
             duration: Some("PT1M30S".into()),
         },
     ];
-    let (path, bytes) = wire::game_over_v2(Some("bingo_red"), true, scores.clone());
+    let (path, bytes) = wire::game_over_v2(Some("bingo_red"), true, 83_500, scores.clone());
     assert_eq!(path, "game_over_v2");
     let packet = decode(&bytes, GameOverPacket::read_v2).expect("decodes");
     assert_eq!(packet.winner.as_deref(), Some("bingo_red"));
     assert!(packet.is_winner);
+    assert_eq!(packet.duration.to_millis_or_zero(), 83_500, "the packet carries the game time");
     assert!(!packet.is_update, "the client opens the end screen");
     assert_eq!(packet.scores, scores);
     assert_eq!(packet.default_tab, EndScreenTab::Cards);
@@ -369,7 +370,7 @@ fn game_over_v2_carries_the_winner_the_viewers_result_and_the_ranking() {
 
 #[test]
 fn game_over_v2_without_a_winner_has_no_winner_and_no_scores() {
-    let (_, bytes) = wire::game_over_v2(None, false, vec![]);
+    let (_, bytes) = wire::game_over_v2(None, false, 0, vec![]);
     let packet = decode(&bytes, GameOverPacket::read_v2).expect("decodes");
     assert_eq!(packet.winner, None);
     assert!(!packet.is_winner);

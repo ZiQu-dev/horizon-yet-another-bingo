@@ -136,12 +136,18 @@ pub fn card_tiles(
 }
 
 /// `game_over_v2`: the end screen with the winner and the ranking. Only these fields are set: the title and the
-/// subtitle are empty, the duration is zero, `ended_at` is the epoch, and the screen opens (`is_update` false).
-/// `is_winner` tells the viewer whether they won.
-pub fn game_over_v2(winner: Option<&str>, is_winner: bool, scores: Vec<ScoreRanking>) -> (&'static str, Vec<u8>) {
+/// subtitle are empty, `ended_at` is the epoch, and the screen opens (`is_update` false).
+/// `is_winner` tells the viewer whether they won; `duration_ms` is the time the game took.
+pub fn game_over_v2(
+    winner: Option<&str>,
+    is_winner: bool,
+    duration_ms: i64,
+    scores: Vec<ScoreRanking>,
+) -> (&'static str, Vec<u8>) {
     let packet = GameOverPacket {
         winner: winner.map(str::to_owned),
         is_winner,
+        duration: JavaDuration::of_millis(duration_ms),
         scores,
         ..GameOverPacket::default()
     };

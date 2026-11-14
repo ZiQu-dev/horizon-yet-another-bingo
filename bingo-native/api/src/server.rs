@@ -45,6 +45,11 @@ fn with_session<T>(f: impl FnOnce(&mut Session) -> T) -> T {
     f(guard.get_or_insert_with(new_session))
 }
 
+/// A new server (a world opens): the old game and its players belong to the previous world.
+pub fn server_about_to_start() {
+    *SESSION.lock().unwrap_or_else(PoisonError::into_inner) = None;
+}
+
 /// Horizon's `Host` as the crate's `ServerHost`.
 struct ServerAdapter<'a> {
     host: &'a mut dyn Host,
