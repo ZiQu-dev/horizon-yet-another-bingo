@@ -9,3 +9,6 @@ pub mod scoring;
 pub mod wire;
 pub mod items;
 pub mod session;
+pub mod commands;
+pub mod ready;
+pub mod teams;
