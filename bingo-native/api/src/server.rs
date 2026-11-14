@@ -27,7 +27,7 @@ const OP_LEVEL: u8 = 2;
 const SHORTCUTS: [&str; 3] = ["join", "ready", "spectator"];
 /// The usages the mod registers, each with a line that parses to what it runs. The operator level comes from
 /// `commands::requires_op`, so the rule lives in one place.
-const USAGES: [(&str, &str); 16] = [
+const USAGES: [(&str, &str); 30] = [
     ("bingo status", "status"),
     ("bingo help", "help"),
     ("bingo card", "card"),
@@ -41,6 +41,20 @@ const USAGES: [(&str, &str); 16] = [
     ("bingo shuffleteams <teams:integer>", "shuffleteams 2"),
     ("bingo timelimit <minutes:word>", "timelimit 5"),
     ("bingo join <team:word>", "join Red"),
+    ("bingo goal lines <n:integer>", "goal lines 1"),
+    ("bingo goal items <n:integer>", "goal items 5"),
+    ("bingo goal full_card", "goal full_card"),
+    ("bingo mode <mode:word>", "mode lockout"),
+    ("bingo endwhen <when:word>", "endwhen never"),
+    ("bingo endwhen teams_win <n:integer>", "endwhen teams_win 2"),
+    ("bingo pvp <state:word>", "pvp on"),
+    ("bingo keepinventory <state:word>", "keepinventory on"),
+    ("bingo elytra <state:word>", "elytra on"),
+    ("bingo nightvision <state:word>", "nightvision on"),
+    ("bingo spawndistance <chunks:integer>", "spawndistance 25"),
+    ("bingo options", "options"),
+    ("bingo vote <choice:word>", "vote next"),
+    ("bingo resume", "resume"),
     ("join <team:word>", "join Red"),
     ("ready", "ready"),
     ("spectator", "spectator"),
@@ -62,8 +76,9 @@ fn new_session() -> Session {
         seed,
         game: GameOptions::default(),
         ready: ReadyOptions::default(),
-        // Teams start 200 blocks apart within 1000 of the world's origin (the original's default is 25 chunks).
-        spread: Some((200, 1000)),
+        // Teams start `rules.spawn_distance` chunks apart (the original's default is 25) within 1000 blocks of the origin.
+        spread: Some((0, 1000)),
+        ..SessionOptions::default()
     })
 }
 

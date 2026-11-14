@@ -7,9 +7,10 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::card_gen::{generate_card, load_pool, Pool, Rng, DEFAULT_DISTRIBUTION};
-use super::commands::{self, Command};
+use super::commands::{self, Command, VoteChoice};
 use super::game::{Event, Game, GameOptions};
 use super::host::ServerHost;
+use super::options::{EndWhen, Goal, Mode, Options};
 use super::ready::{encode_update_v2, ReadyOptions, ReadyTimer};
 use super::scoring;
 use super::teams::{self, Teams};
@@ -25,7 +26,7 @@ use crate::text::Text;
 /// The entity tag that marks the players spread at the start for the moment the command runs.
 const SPREAD_TAG: &str = "bingo_spread";
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionOptions {
     /// Seed of the first card. Each reset moves on to the next seed. The shuffles of `shuffleteams` start from it too.
     pub seed: u64,
@@ -34,6 +35,23 @@ pub struct SessionOptions {
     /// `(distance, spread)` of `spreadplayers` at the start, used when there are two teams or more. `None` leaves
     /// the players where they stand.
     pub spread: Option<(i32, i32)>,
+    /// Rules of the round: goal, mode, end condition and the toggles (changed by the `bingo` option commands).
+    pub rules: Options,
+    /// Seconds a resumed game is extended by when its time limit has run out (`extendRoundTimeLimitByMinutes`, 15 min).
+    pub extend_secs: i32,
+}
+
+impl Default for SessionOptions {
+    fn default() -> Self {
+        Self {
+            seed: 0,
+            game: GameOptions::default(),
+            ready: ReadyOptions::default(),
+            spread: None,
+            rules: Options::default(),
+            extend_secs: 15 * 60,
+        }
+    }
 }
 
 pub struct Session {
@@ -56,6 +74,16 @@ pub struct Session {
     boss_bars: BTreeSet<(u128, String)>,
     /// Server ticks so far, for the periodic packets.
     ticks: u64,
+    /// Rules of the round.
+    rules: Options,
+    /// Lockout: which team owns each square.
+    owners: HashMap<usize, String>,
+    /// Teams that reached the goal, in the order they did.
+    reached: Vec<String>,
+    /// Postgame votes by player.
+    votes: BTreeMap<u128, VoteChoice>,
+    /// Ticks with nobody online while a game runs, for the reset when everyone has left.
+    empty_ticks: u64,
 }
 
 impl Session {
@@ -74,6 +102,11 @@ impl Session {
             added_teams: Vec::new(),
             boss_bars: BTreeSet::new(),
             ticks: 0,
+            rules: options.rules.clone(),
+            owners: HashMap::new(),
+            reached: Vec::new(),
+            votes: BTreeMap::new(),
+            empty_ticks: 0,
             options,
         }
     }
@@ -84,7 +117,14 @@ impl Session {
         send(host, player.uuid, self.game_status());
         match self.game.status() {
             GameStatus::Pregame => self.send_ready_updates(host),
-            GameStatus::Playing => self.send_round(host, player.uuid),
+            GameStatus::Playing => {
+                if self.teams.team_of(player.uuid).is_none() && !self.teams.is_spectator(player.uuid) {
+                    // Joining a running game without a team: watch until `join <team>`.
+                    self.teams.spectate(player.uuid);
+                    host.command(&format!("gamemode spectator {}", player.name));
+                }
+                self.send_round(host, player.uuid);
+            }
             GameStatus::Starting | GameStatus::Postgame => {}
         }
     }
@@ -106,26 +146,57 @@ impl Session {
             return;
         }
         let Some(team) = self.teams.team_of(player) else { return };
-        let items: Vec<String> = {
+        let team = team.to_string();
+        let (items, lost) = {
             let Some(card) = self.card.as_ref() else { return };
-            let progress = self.progress.entry(team.to_string()).or_default();
-            scoring::score_inventory(card, progress, held)
-                .into_iter()
-                .map(|index| card.squares[index].item.clone())
-                .collect()
+            let progress = self.progress.entry(team.clone()).or_default();
+            let (mut gained, lost) = scoring::score_inventory_mode(card, progress, held, self.rules.mode);
+            if self.rules.mode == Mode::Lockout {
+                let claimed = scoring::claim_lockout(&mut self.owners, &team, &gained);
+                for index in gained.iter().filter(|index| !claimed.contains(index)) {
+                    progress.found.retain(|found| found != index);
+                }
+                gained = claimed;
+            }
+            let items: Vec<String> = gained.into_iter().map(|index| card.squares[index].item.clone()).collect();
+            (items, lost.len())
         };
-        if items.is_empty() {
+        if items.is_empty() && lost == 0 {
             return;
         }
 
         let finder = player_name(host, player);
-        self.send_tiles_after_find(host, team);
-        self.send_score_to_all(host, team);
+        self.send_tiles_after_find(host, &team);
+        self.send_score_to_all(host, &team);
         for item in items {
             host.broadcast(&format!("{finder} found {}", short_name(&item)));
         }
-        if let Some(winner) = self.winner() {
-            if let Ok(events) = self.game.end(Some(winner.to_string())) {
+        self.check_goals(host);
+    }
+
+    /// Notes the teams that have reached the goal (in order), and ends the game when the end condition holds. The first
+    /// team to reach the goal is the winner.
+    fn check_goals(&mut self, host: &mut dyn ServerHost) {
+        let keys: Vec<String> = self.teams.teams().into_iter().map(str::to_string).collect();
+        let mut newly = Vec::new();
+        for key in &keys {
+            let done = self.progress.get(key).is_some_and(|progress| scoring::goal_reached(progress, self.rules.goal));
+            if done && !self.reached.contains(key) {
+                self.reached.push(key.clone());
+                newly.push(key.clone());
+            } else if !done {
+                self.reached.retain(|reached| reached != key);
+            }
+        }
+        let ends = scoring::game_should_end(self.rules.end_when, self.reached.len(), keys.len());
+        if !ends {
+            for key in newly {
+                host.broadcast(&format!("{} reached the goal!", team_name(&key)));
+            }
+        }
+        if ends {
+            let winner = self.reached.first().cloned();
+            if let Ok(events) = self.game.end(winner) {
                 self.dispatch(host, events);
             }
         }
@@ -140,6 +211,12 @@ impl Session {
             _ => return,
         };
         let Ok(ready) = ready else { return };
+        if self.game.status() == GameStatus::Postgame {
+            if ready {
+                self.vote(host, player, VoteChoice::NextRound);
+            }
+            return;
+        }
         if self.game.status() != GameStatus::Pregame {
             return;
         }
@@ -151,6 +228,20 @@ impl Session {
     /// on, and its events go to everyone.
     pub fn tick(&mut self, host: &mut dyn ServerHost) {
         self.ticks += 1;
+        if self.game.status() != GameStatus::Pregame {
+            // `resetWhenEveryoneDisconnects`: a game nobody is in goes back to the lobby after a few seconds.
+            if host.players().is_empty() {
+                self.empty_ticks += 1;
+                if self.empty_ticks >= 100 {
+                    self.empty_ticks = 0;
+                    let events = self.game.reset();
+                    self.dispatch(host, events);
+                    return;
+                }
+            } else {
+                self.empty_ticks = 0;
+            }
+        }
         if self.game.status() == GameStatus::Pregame {
             self.tick_lobby(host);
             return;
@@ -195,6 +286,17 @@ impl Session {
             Command::ReadyCancel => self.cancel_ready(host),
             Command::TimeLimit(minutes) => self.set_time_limit(minutes),
             Command::Card => self.open_card(host, player),
+            Command::Goal(goal) => self.set_rule(|rules| rules.goal = goal, "goal"),
+            Command::Mode(mode) => self.set_rule(|rules| rules.mode = mode, "mode"),
+            Command::EndWhen(end_when) => self.set_rule(|rules| rules.end_when = end_when, "end condition"),
+            Command::Toggle(toggle, on) => self.set_rule(|rules| rules.set_toggle(toggle, on), "setting"),
+            Command::SpawnDistance(chunks) => self.set_rule(|rules| rules.spawn_distance = chunks, "spawn distance"),
+            Command::Options => self.options_text(),
+            Command::Vote(choice) => match player {
+                Some(player) => self.vote(host, player, choice),
+                None => "Only a player can vote.".to_string(),
+            },
+            Command::Resume => self.resume(host),
         }
     }
 
@@ -223,6 +325,8 @@ impl Session {
         let players = host.players();
         self.teams = self.plan_start(&players, ignore_warnings)?;
         self.ready.clear();
+        host.command(&format!("gamerule pvp {}", self.rules.pvp));
+        host.command(&format!("gamerule keep_inventory {}", self.rules.keep_inventory));
         self.add_teams_to_server(host, &players);
         let events = self.game.start().map_err(str::to_owned)?;
         self.dispatch(host, events);
@@ -278,7 +382,9 @@ impl Session {
             }
             self.added_teams.push(key.to_string());
         }
-        if let Some((distance, spread)) = self.options.spread {
+        if let Some((_, spread)) = self.options.spread {
+            let distance = (self.rules.spawn_distance as i32).saturating_mul(16).max(16);
+            let spread = spread.max(distance.saturating_mul(2));
             // Horizon's `spreadplayers ... true` groups remote players into one "team", so the first member of each
             // team is spread on their own and the rest of the team is teleported to them.
             let reps: Vec<(&str, &str)> = self
@@ -309,7 +415,24 @@ impl Session {
     fn begin_round(&mut self, host: &mut dyn ServerHost) {
         self.card = Some(generate_card(self.seed, &self.pool, DEFAULT_DISTRIBUTION));
         self.progress = self.teams.teams().into_iter().map(|key| (key.to_string(), TeamProgress::default())).collect();
-        for player in host.players() {
+        self.owners.clear();
+        self.reached.clear();
+        self.votes.clear();
+        let players = host.players();
+        for player in &players {
+            if self.teams.team_of(player.uuid).is_some() {
+                host.command(&format!("gamemode survival {}", player.name));
+                if self.rules.elytra {
+                    host.command(&format!("give {} elytra", player.name));
+                }
+                if self.rules.night_vision {
+                    host.command(&format!("effect give {} night_vision infinite 0 true", player.name));
+                }
+            } else {
+                host.command(&format!("gamemode spectator {}", player.name));
+            }
+        }
+        for player in &players {
             self.send_round(host, player.uuid);
         }
     }
@@ -370,6 +493,10 @@ impl Session {
                 Event::Timer { seconds_remaining } => send_all(host, wire::timer(seconds_remaining)),
                 Event::Ended { winner } => self.announce_end(host, winner),
                 Event::Reset => self.reset_round(host),
+                Event::Resumed => {
+                    send_all(host, self.game_status());
+                    host.broadcast("The game continues.");
+                }
             }
         }
     }
@@ -399,7 +526,13 @@ impl Session {
         }
         send_all(host, wire::game_reset());
         send_all(host, wire::card_reset());
+        for player in host.players() {
+            host.command(&format!("gamemode survival {}", player.name));
+        }
         self.card = None;
+        self.owners.clear();
+        self.reached.clear();
+        self.votes.clear();
         self.progress.clear();
         self.ready.clear();
         self.seed = self.seed.wrapping_add(1);
@@ -410,14 +543,9 @@ impl Session {
         wire::game_status(Some(self.game.elapsed_ms()), self.game.remaining_ms())
     }
 
-    /// The first team in the order of the presets whose progress has won the card.
-    fn winner(&self) -> Option<&'static str> {
-        self.teams.teams().into_iter().find(|key| self.progress.get(*key).is_some_and(scoring::has_won))
-    }
-
     /// Score of a team. A team with no progress yet has none.
     fn score(&self, team: &str) -> TeamScore {
-        self.progress.get(team).map_or_else(TeamScore::default, scoring::team_score)
+        self.progress.get(team).map_or_else(TeamScore::default, |progress| scoring::team_score_goal(progress, self.rules.goal))
     }
 
     /// Every team's found squares, in the order of the presets, for [`wire::card_tiles_for`].
@@ -545,12 +673,15 @@ impl Session {
 
     /// `/bingo join <team>`: the player joins the team, leaving their old one or the spectators.
     fn join_team(&mut self, host: &mut dyn ServerHost, player: Option<u128>, team: &str) -> String {
-        if self.game.status() != GameStatus::Pregame {
-            return "Teams can be changed only before the game starts.".to_string();
-        }
         let Some(player) = player else {
             return "Only a player can join a team.".to_string();
         };
+        if self.game.status() == GameStatus::Playing {
+            return self.join_midgame(host, player, team);
+        }
+        if self.game.status() != GameStatus::Pregame {
+            return "Teams can be changed only before the game starts.".to_string();
+        }
         let before = self.teams.team_of(player);
         if let Err(error) = self.teams.join(player, team) {
             return error;
@@ -623,6 +754,113 @@ impl Session {
                 self.game.set_time_limit(None);
                 "Time limit turned off".to_string()
             }
+        }
+    }
+
+    /// `join <team>` while the game runs: allowed only for a spectator (or a player with no team) and only onto a team
+    /// that already plays. The player becomes a survival player at their team's spawn.
+    fn join_midgame(&mut self, host: &mut dyn ServerHost, player: u128, team: &str) -> String {
+        if self.teams.team_of(player).is_some() {
+            return "Teams can be changed only before the game starts.".to_string();
+        }
+        let key = format!("bingo_{}", team.to_lowercase().trim_start_matches("bingo_"));
+        if !self.progress.contains_key(&key) {
+            return format!("{} is not playing in this game.", team_name(&key));
+        }
+        let teammate = self.teams.members(&key).into_iter().find_map(|member| host.players().into_iter().find(|p| p.uuid == member));
+        if let Err(error) = self.teams.join(player, &key) {
+            return error;
+        }
+        let name = player_name(host, player);
+        host.command(&format!("team join {key} {name}"));
+        host.command(&format!("gamemode survival {name}"));
+        if let Some(teammate) = teammate {
+            host.command(&format!("tp {name} {}", teammate.name));
+        }
+        self.send_round(host, player);
+        format!("You joined {}.", team_name(&key))
+    }
+
+    /// Changes one round rule. Only before the game starts.
+    fn set_rule(&mut self, change: impl FnOnce(&mut Options), what: &str) -> String {
+        if self.game.status() != GameStatus::Pregame {
+            return format!("The {what} can be changed only before the game starts.");
+        }
+        change(&mut self.rules);
+        self.options_text()
+    }
+
+    /// `/bingo options`: the rules of the round.
+    fn options_text(&self) -> String {
+        let goal = match self.rules.goal {
+            Goal::Lines(n) => format!("{n} line(s)"),
+            Goal::Items(n) => format!("{n} item(s)"),
+            Goal::FullCard => "full card".to_string(),
+        };
+        let mode = match self.rules.mode {
+            Mode::Standard => "standard",
+            Mode::Inventory => "inventory",
+            Mode::Lockout => "lockout",
+        };
+        let end = match self.rules.end_when {
+            EndWhen::Never => "never".to_string(),
+            EndWhen::FirstWin => "first win".to_string(),
+            EndWhen::TeamsWin(n) => format!("{n} teams win"),
+            EndWhen::AllWin => "all teams win".to_string(),
+        };
+        let on = |value: bool| if value { "on" } else { "off" };
+        format!(
+            "Goal: {goal}. Mode: {mode}. End: {end}. PvP: {}. Keep inventory: {}. Elytra: {}. Night vision: {}. Spawn distance: {} chunks.",
+            on(self.rules.pvp),
+            on(self.rules.keep_inventory),
+            on(self.rules.elytra),
+            on(self.rules.night_vision),
+            self.rules.spawn_distance
+        )
+    }
+
+    /// `/bingo vote`: only in Postgame. When every online player who plays has voted, the option with most votes
+    /// is carried out (a tie goes to the next round, then keep playing).
+    fn vote(&mut self, host: &mut dyn ServerHost, player: u128, choice: VoteChoice) -> String {
+        if self.game.status() != GameStatus::Postgame {
+            return "Voting is possible only after the game ends.".to_string();
+        }
+        self.votes.insert(player, choice);
+        let voters: Vec<u128> = host
+            .players()
+            .iter()
+            .map(|p| p.uuid)
+            .filter(|&uuid| !self.teams.is_spectator(uuid))
+            .collect();
+        if voters.iter().all(|uuid| self.votes.contains_key(uuid)) {
+            let count = |wanted: VoteChoice| voters.iter().filter(|uuid| self.votes.get(uuid) == Some(&wanted)).count();
+            let (next, keep, lobby) = (count(VoteChoice::NextRound), count(VoteChoice::KeepPlaying), count(VoteChoice::ReturnToLobby));
+            if keep > next && keep > lobby {
+                return self.resume(host);
+            }
+            let events = self.game.reset();
+            self.dispatch(host, events);
+            return "The vote is over: back to the lobby.".to_string();
+        }
+        format!("Vote recorded ({} of {} votes).", self.votes.len().min(voters.len()), voters.len())
+    }
+
+    /// `/bingo resume`: Postgame back to Playing. A condition that would end the game again at once is turned off.
+    fn resume(&mut self, host: &mut dyn ServerHost) -> String {
+        if self.game.status() != GameStatus::Postgame {
+            return "The game can be resumed only after it ends.".to_string();
+        }
+        let ended_by_rule = scoring::game_should_end(self.rules.end_when, self.reached.len(), self.teams.teams().len());
+        match self.game.resume(self.options.extend_secs) {
+            Ok(events) => {
+                if ended_by_rule {
+                    self.rules.end_when = EndWhen::Never;
+                }
+                self.votes.clear();
+                self.dispatch(host, events);
+                "The game continues.".to_string()
+            }
+            Err(error) => error.to_string(),
         }
     }
 

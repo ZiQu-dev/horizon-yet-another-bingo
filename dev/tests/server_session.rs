@@ -95,6 +95,7 @@ fn options(seed: u64, countdown_secs: i32, time_limit_secs: Option<i32>) -> Sess
         game: GameOptions { countdown_secs, time_limit_secs },
         ready: ReadyOptions::default(),
         spread: None,
+        ..SessionOptions::default()
     }
 }
 
@@ -251,6 +252,8 @@ fn full_game_from_start_to_game_over() {
     assert_eq!(
         host.take_commands(),
         [
+            "gamerule pvp true",
+            "gamerule keep_inventory false",
             "team add bingo_red",
             "team modify bingo_red color red",
             "team join bingo_red Alice",
@@ -569,7 +572,7 @@ fn reset_clears_the_card_and_the_next_card_uses_the_next_seed() {
     assert_eq!(count(&reset, ALICE, "card_reset"), 1);
     assert_eq!(count(&reset, ALICE, "game_status"), 1);
     assert!(run(&mut session, &mut host, None, "status").contains("Pregame"));
-    assert_eq!(host.take_commands(), ["team remove bingo_red"]);
+    assert_eq!(host.take_commands(), ["team remove bingo_red", "gamemode survival Alice"]);
 
     // The card is gone: a find now is silent.
     session.on_inventory(&mut host, ALICE, &HashMap::from([(first[1].clone(), 1)]));

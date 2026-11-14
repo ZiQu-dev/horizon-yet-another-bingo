@@ -12,3 +12,4 @@ pub mod session;
 pub mod commands;
 pub mod ready;
 pub mod teams;
+pub mod options;

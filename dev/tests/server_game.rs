@@ -23,7 +23,7 @@ fn status_changed(status: GameStatus) -> Event {
 
 #[test]
 fn default_options_are_five_seconds_and_no_limit() {
-    assert_eq!(GameOptions::default(), options(5, None));
+    assert_eq!(GameOptions::default(), options(3, None));
 }
 
 #[test]

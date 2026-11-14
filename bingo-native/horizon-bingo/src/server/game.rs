@@ -20,7 +20,7 @@ pub struct GameOptions {
 
 impl Default for GameOptions {
     fn default() -> Self {
-        Self { countdown_secs: 5, time_limit_secs: None }
+        Self { countdown_secs: 3, time_limit_secs: None }
     }
 }
 
@@ -36,6 +36,8 @@ pub enum Event {
     Ended { winner: Option<String> },
     /// The game went back to Pregame.
     Reset,
+    /// Postgame went back to Playing with the same card and timer (`/bingo resume`).
+    Resumed,
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +87,26 @@ impl Game {
             return Err("end: the game is not Playing");
         }
         Ok(self.finish(winner))
+    }
+
+    /// Postgame to Playing again, keeping the elapsed time. If the time limit has run out, it is moved to `extend_secs`
+    /// from now (`extendRoundTimeLimitByMinutes` of the original), so the game does not end on the next tick.
+    pub fn resume(&mut self, extend_secs: i32) -> Result<Vec<Event>, &'static str> {
+        if self.status != GameStatus::Postgame {
+            return Err("resume: the game is not in Postgame");
+        }
+        let elapsed_secs = (self.elapsed_ms() / 1000) as i32;
+        if let Some(limit) = self.time_limit_secs() {
+            if limit <= elapsed_secs {
+                self.options.time_limit_secs = Some(elapsed_secs.saturating_add(extend_secs.max(1)));
+            }
+        }
+        self.status = GameStatus::Playing;
+        let mut events = vec![Event::Resumed];
+        if let Some(seconds_remaining) = self.remaining_ms().map(|ms| (ms / 1000) as i32) {
+            events.push(Event::Timer { seconds_remaining });
+        }
+        Ok(events)
     }
 
     /// Any state to Pregame. The elapsed time goes back to zero.

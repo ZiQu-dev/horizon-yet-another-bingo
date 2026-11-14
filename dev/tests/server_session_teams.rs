@@ -101,6 +101,7 @@ fn options(seed: u64, countdown_secs: i32, time_limit_secs: Option<i32>) -> Sess
         game: GameOptions { countdown_secs, time_limit_secs },
         ready: ReadyOptions::default(),
         spread: None,
+        ..SessionOptions::default()
     }
 }
 
@@ -189,12 +190,16 @@ fn two_teams_share_one_card_and_each_sees_the_others_finds_as_taken_by_them() {
     assert_eq!(
         host.take_commands(),
         [
+            "gamerule pvp true",
+            "gamerule keep_inventory false",
             "team add bingo_red",
             "team modify bingo_red color red",
             "team join bingo_red Alice",
             "team add bingo_blue",
             "team modify bingo_blue color blue",
             "team join bingo_blue Bob",
+            "gamemode survival Alice",
+            "gamemode survival Bob",
         ]
     );
 
@@ -316,7 +321,9 @@ fn a_player_on_no_team_blocks_the_start_until_ignore_warnings_makes_them_a_spect
     assert!(host.take().is_empty());
 
     assert_eq!(run(&mut session, &mut host, Some(ALICE), "start ignore_warnings"), "Game started.");
-    assert_eq!(host.take_commands().len(), 6, "Carol is not added to any team");
+    let commands = host.take_commands();
+    assert_eq!(commands.iter().filter(|c| c.starts_with("team ")).count(), 6, "Carol is not added to any team");
+    assert!(commands.contains(&"gamemode spectator Carol".to_string()), "Carol watches in spectator mode");
 
     // Carol watches: both teams, no tiles, no card of her own, and no team in her scores.
     let begin = host.take();
@@ -350,7 +357,7 @@ fn shuffleteams_deals_the_players_round_robin_and_leaves_spectators_out() {
 
     assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
     let commands = host.take_commands();
-    assert_eq!(commands.len(), 6);
+    assert_eq!(commands.iter().filter(|c| c.starts_with("team ")).count(), 6);
     assert_eq!(commands.iter().filter(|c| c.starts_with("team add")).count(), 2);
     let joined: Vec<&str> = commands.iter().filter_map(|c| c.strip_prefix("team join ")).collect();
     assert_eq!(joined.len(), 2);
@@ -429,6 +436,8 @@ fn start_sends_the_team_commands_and_spreads_the_players_when_there_are_two_team
     assert_eq!(
         host.take_commands(),
         [
+            "gamerule pvp true",
+            "gamerule keep_inventory false",
             "team add bingo_red",
             "team modify bingo_red color red",
             "team join bingo_red Alice",
@@ -437,17 +446,19 @@ fn start_sends_the_team_commands_and_spreads_the_players_when_there_are_two_team
             "team join bingo_blue Bob",
             "tag Alice add bingo_spread",
             "tag Bob add bingo_spread",
-            "spreadplayers 0 0 25 10 false @a[tag=bingo_spread]",
+            "spreadplayers 0 0 400 800 false @a[tag=bingo_spread]",
             "tp @a[team=bingo_red,tag=!bingo_spread] Alice",
             "tp @a[team=bingo_blue,tag=!bingo_spread] Bob",
             "tag Alice remove bingo_spread",
             "tag Bob remove bingo_spread",
+            "gamemode survival Alice",
+            "gamemode survival Bob",
         ]
     );
 
     // The reset takes the teams that the start added back off the server.
     run(&mut session, &mut host, None, "reset");
-    assert_eq!(host.take_commands(), ["team remove bingo_red", "team remove bingo_blue"]);
+    assert_eq!(host.take_commands(), ["team remove bingo_red", "team remove bingo_blue", "gamemode survival Alice", "gamemode survival Bob"]);
 }
 
 #[test]
@@ -459,7 +470,7 @@ fn one_team_is_not_spread_and_a_pink_team_gets_its_vanilla_colour() {
     run(&mut session, &mut host, Some(ALICE), "start");
     assert_eq!(
         host.take_commands(),
-        ["team add bingo_pink", "team modify bingo_pink color light_purple", "team join bingo_pink Alice"]
+        ["gamerule pvp true", "gamerule keep_inventory false", "team add bingo_pink", "team modify bingo_pink color light_purple", "team join bingo_pink Alice", "gamemode survival Alice"]
     );
 }
 

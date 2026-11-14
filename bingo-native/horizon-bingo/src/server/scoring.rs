@@ -11,9 +11,12 @@
 //! - card completed: `team.score.lines >= goal.lines` (scoring/ScoredItemCheck.kt:186-190), then
 //!   `team.countCards() >= requiredCards` ends the game for the team (ScoredItemCheck.kt:355-363).
 //!
-//! Deviation: only the default goal `Lines(1)` is implemented, so a card is complete (`cards = 1`) once it has one line.
+//! Goals (`Goal`), card modes (`Mode`) and end rules (`EndWhen`) are the options of the round. The default
+//! (`Lines(1)`, `Standard`, `FirstWin`) is what `team_score` and `has_won` compute; `goal_reached`,
+//! `team_score_goal`, `score_inventory_mode`, `claim_lockout` and `game_should_end` take the round's options.
 use std::collections::HashMap;
 
+use super::options::{EndWhen, Goal, Mode};
 use super::types::{Card, TeamProgress, CARD_SQUARES};
 use crate::score_update::TeamScore;
 
@@ -83,4 +86,96 @@ pub fn team_score(progress: &TeamProgress) -> TeamScore {
 /// ScoredItemCheck.kt:186-190, and `Cards(1)` ends the game for the team, ScoredItemCheck.kt:355-363).
 pub fn has_won(progress: &TeamProgress) -> bool {
     team_score(progress).cards >= 1
+}
+
+/// Number of distinct squares in `found` that are on the card.
+fn items_found(found: &[usize]) -> usize {
+    squares_found(found).iter().filter(|&&found| found).count()
+}
+
+/// Whether the team has reached `goal`. `Lines(n)`: at least `n` lines. `Items(n)`: at least `n` squares.
+/// `FullCard`: all 25 squares. `Lines(0)` and `Items(0)` are false: a goal of nothing would be reached before
+/// the first square, so it is treated as no goal.
+pub fn goal_reached(progress: &TeamProgress, goal: Goal) -> bool {
+    match goal {
+        Goal::Lines(0) | Goal::Items(0) => false,
+        Goal::Lines(n) => count_lines(&progress.found) as u32 >= n,
+        Goal::Items(n) => items_found(&progress.found) as u32 >= n,
+        Goal::FullCard => items_found(&progress.found) == CARD_SQUARES,
+    }
+}
+
+/// Score of the team for the round's `goal`: as `team_score`, but `cards` is 1 once `goal_reached`.
+pub fn team_score_goal(progress: &TeamProgress, goal: Goal) -> TeamScore {
+    let score = team_score(progress);
+    let cards = if goal_reached(progress, goal) { 1 } else { 0 };
+    TeamScore { cards, ..score }
+}
+
+/// Whether the square at `index` is on the card and its item is held (count >= 1).
+fn square_held(card: &Card, index: usize, held: &HashMap<String, u32>) -> bool {
+    card.squares
+        .get(index)
+        .is_some_and(|square| held.get(&square.item).copied().unwrap_or(0) >= 1)
+}
+
+/// Scores the card in `mode` and returns `(newly found, lost)`, both as square indices.
+/// - `Standard` and `Lockout`: as `score_inventory`; nothing is lost. (Lockout ownership is `claim_lockout`.)
+/// - `Inventory`: a square counts only while its item is held. Newly held squares are added in card order;
+///   found squares whose item is no longer held are removed from `progress.found` and returned in their found
+///   order (an index that is not on the card is dropped too, since its item cannot be held).
+pub fn score_inventory_mode(
+    card: &Card,
+    progress: &mut TeamProgress,
+    held: &HashMap<String, u32>,
+    mode: Mode,
+) -> (Vec<usize>, Vec<usize>) {
+    match mode {
+        Mode::Standard | Mode::Lockout => (score_inventory(card, progress, held), Vec::new()),
+        Mode::Inventory => {
+            let mut lost = Vec::new();
+            progress.found.retain(|&index| {
+                let keep = square_held(card, index, held);
+                if !keep {
+                    lost.push(index);
+                }
+                keep
+            });
+
+            let mut newly_found = Vec::new();
+            for index in 0..card.squares.len() {
+                if !progress.found.contains(&index) && square_held(card, index, held) {
+                    progress.found.push(index);
+                    newly_found.push(index);
+                }
+            }
+            (newly_found, lost)
+        }
+    }
+}
+
+/// Lockout: gives each square in `gained` that has no owner to `team`, and returns those squares in the order given.
+/// A square the same team already owns is skipped (not returned); a square owned by another team is refused.
+pub fn claim_lockout(owners: &mut HashMap<usize, String>, team: &str, gained: &[usize]) -> Vec<usize> {
+    let mut claimed = Vec::new();
+    for &index in gained {
+        // An owned square is skipped whether the owner is `team` (already its) or another team (refused).
+        if !owners.contains_key(&index) {
+            owners.insert(index, team.to_string());
+            claimed.push(index);
+        }
+    }
+    claimed
+}
+
+/// Whether the round ends after the current state: `reached` teams have reached the goal out of `total_teams`.
+/// `Never`: never. `FirstWin`: one team. `TeamsWin(n)`: `n` teams (`n = 0` never ends the round, since `n >= 1`
+/// is required). `AllWin`: every team, and only when there is at least one team.
+pub fn game_should_end(end_when: EndWhen, teams_reached: usize, total_teams: usize) -> bool {
+    match end_when {
+        EndWhen::Never => false,
+        EndWhen::FirstWin => teams_reached >= 1,
+        EndWhen::TeamsWin(n) => n >= 1 && teams_reached >= n as usize,
+        EndWhen::AllWin => total_teams > 0 && teams_reached >= total_teams,
+    }
 }
