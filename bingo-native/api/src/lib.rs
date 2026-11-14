@@ -9,11 +9,12 @@ use horizon_bingo::host::{Argb, Host as BingoHost, scale_alpha};
 use horizon_bingo::state::SoundKey;
 use horizon_client::mod_api::{
     ClientDisconnectingEvent, ClientPacketEvent, ClientPlayerNetworkLoggingInEvent, ClientTickPostEvent,
-    ClientboundPlayPacket, ConfigLoadingEvent, ConfigReloadingEvent, Flow, GuiLayerPostEvent, Hooks, Host, HudBatch,
-    KeyCode, NativeConfig, NativeConfigFile, NativeConfigKind, NativeScreenKind, RegisterConfigsEvent,
-    ScreenKeyPressedPreEvent, ScreenMouseButtonPressedPreEvent,
+    ClientboundPlayPacket, ConfigLoadingEvent, ConfigReloadingEvent, CustomPayloadFromClientEvent, Flow,
+    GuiLayerPostEvent, Hooks, Host, HudBatch, KeyCode, NativeConfig, NativeConfigFile, NativeConfigKind,
+    NativeScreenKind, PerformCommandEvent, PlayerInventoryChangedEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent,
+    RegisterCommandsEvent, RegisterConfigsEvent, ScreenKeyPressedPreEvent, ScreenMouseButtonPressedPreEvent,
     ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent,
-    ScreenRenderPostEvent, ServerboundPlayPacket, Text,
+    ScreenRenderPostEvent, ServerTickEvent, ServerboundPlayPacket, Text,
 };
 use std::{
     collections::HashMap,
@@ -21,6 +22,8 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{Mutex, MutexGuard, PoisonError},
 };
+
+mod server;
 
 /// How many text widths are kept before the cache starts again.
 const WIDTH_CACHE_MAX: usize = 2048;
@@ -769,5 +772,34 @@ impl Hooks for Mod {
             self.lock_client().state.reset_all();
         });
         forget_widths();
+    }
+
+    /// The server side: the session advances on the server's tick, and takes its players, inventories and packets.
+    fn server_tick(&self, host: &mut dyn Host, event: &mut ServerTickEvent<'_>) {
+        server::server_tick(host, event.phase);
+    }
+
+    fn player_logged_in(&self, host: &mut dyn Host, event: &mut PlayerLoggedInEvent<'_>) {
+        server::player_logged_in(host, event.player, event.name);
+    }
+
+    fn player_logged_out(&self, host: &mut dyn Host, event: &mut PlayerLoggedOutEvent<'_>) {
+        server::player_logged_out(host, event.player);
+    }
+
+    fn player_inventory_changed(&self, host: &mut dyn Host, event: &mut PlayerInventoryChangedEvent<'_>) {
+        server::player_inventory_changed(host, event.player, event.stacks);
+    }
+
+    fn custom_payload_from_client(&self, host: &mut dyn Host, event: &mut CustomPayloadFromClientEvent<'_>) {
+        server::custom_payload_from_client(host, event.player, event.channel, event.data);
+    }
+
+    fn register_commands(&self, _host: &mut dyn Host, event: &mut RegisterCommandsEvent<'_>) {
+        server::register_commands(event.commands);
+    }
+
+    fn perform_command(&self, host: &mut dyn Host, event: &mut PerformCommandEvent<'_>) -> Flow {
+        server::perform_command(host, event.player.uuid, event.command)
     }
 }
