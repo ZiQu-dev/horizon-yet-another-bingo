@@ -22,6 +22,9 @@ use crate::ready::SetReadyPacket;
 use crate::score_update::TeamScore;
 use crate::text::Text;
 
+/// The entity tag that marks the players spread at the start for the moment the command runs.
+const SPREAD_TAG: &str = "bingo_spread";
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SessionOptions {
     /// Seed of the first card. Each reset moves on to the next seed. The shuffles of `shuffleteams` start from it too.
@@ -276,13 +279,28 @@ impl Session {
             self.added_teams.push(key.to_string());
         }
         if let Some((distance, spread)) = self.options.spread {
-            if self.teams.teams().len() >= 2 {
-                let names: Vec<&str> = players
-                    .iter()
-                    .filter(|player| !self.teams.is_spectator(player.uuid))
-                    .map(|player| player.name.as_str())
-                    .collect();
-                host.command(&format!("spreadplayers 0 0 {distance} {spread} true {}", names.join(" ")));
+            // Horizon's `spreadplayers ... true` groups remote players into one "team", so the first member of each
+            // team is spread on their own and the rest of the team is teleported to them.
+            let reps: Vec<(&str, &str)> = self
+                .teams
+                .teams()
+                .into_iter()
+                .filter_map(|key| {
+                    let rep = self.teams.members(key).into_iter().find_map(|m| players.iter().find(|p| p.uuid == m))?;
+                    Some((key, rep.name.as_str()))
+                })
+                .collect();
+            if reps.len() >= 2 {
+                for (_, name) in &reps {
+                    host.command(&format!("tag {name} add {SPREAD_TAG}"));
+                }
+                host.command(&format!("spreadplayers 0 0 {distance} {spread} false @a[tag={SPREAD_TAG}]"));
+                for (key, name) in &reps {
+                    host.command(&format!("tp @a[team={key},tag=!{SPREAD_TAG}] {name}"));
+                }
+                for (_, name) in &reps {
+                    host.command(&format!("tag {name} remove {SPREAD_TAG}"));
+                }
             }
         }
     }
@@ -300,6 +318,7 @@ impl Session {
     /// spectator), the open card and the score of every team.
     fn send_round(&self, host: &mut dyn ServerHost, player: u128) {
         let players = host.players();
+        let own = self.teams.team_of(player);
         let view: Vec<(&str, &str, &str, Vec<Player>)> = self
             .teams
             .teams()
@@ -311,12 +330,12 @@ impl Session {
                     .filter(|candidate| self.teams.team_of(candidate.uuid) == Some(key))
                     .cloned()
                     .collect();
-                (!members.is_empty()).then_some((key, preset.color, preset.name, members))
+                // A player with a team sees only their own card; a spectator sees every card.
+                (!members.is_empty() && own.map_or(true, |own| own == key)).then_some((key, preset.color, preset.name, members))
             })
             .collect();
         send(host, player, wire::display_cards_all(&view));
 
-        let own = self.teams.team_of(player);
         if let Some(team) = own {
             if let Some(tiles) = self.tiles_for(&*host, team, false) {
                 send(host, player, tiles);

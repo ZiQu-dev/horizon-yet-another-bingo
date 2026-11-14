@@ -198,16 +198,18 @@ fn two_teams_share_one_card_and_each_sees_the_others_finds_as_taken_by_them() {
         ]
     );
 
-    // Both players see both teams, each with its own members; the tiles and the open card are their own team's.
+    // Each player sees only their own team's card (the original lists only the cards a player views).
     let begin = host.take();
     let display = decode(&only(&begin, ALICE, "display_cards"), CardDisplayPacket::read).unwrap();
     let keys: Vec<Option<String>> = display.display.iter().map(|(key, _)| key.clone()).collect();
-    assert_eq!(keys, [Some("bingo_red".to_string()), Some("bingo_blue".to_string())]);
+    assert_eq!(keys, [Some("bingo_red".to_string())]);
     assert_eq!(display.display[0].1.team_color.as_deref(), Some("RED"));
-    assert_eq!(display.display[1].1.team_color.as_deref(), Some("BLUE"));
     assert_eq!(display.display[0].1.players.iter().map(|p| p.uuid).collect::<Vec<_>>(), [ALICE]);
-    assert_eq!(display.display[1].1.players.iter().map(|p| p.uuid).collect::<Vec<_>>(), [BOB]);
-    assert_eq!(decode(&only(&begin, BOB, "display_cards"), CardDisplayPacket::read).unwrap().display.len(), 2);
+    let bob = decode(&only(&begin, BOB, "display_cards"), CardDisplayPacket::read).unwrap();
+    assert_eq!(bob.display.len(), 1);
+    assert_eq!(bob.display[0].0.as_deref(), Some("bingo_blue"));
+    assert_eq!(bob.display[0].1.team_color.as_deref(), Some("BLUE"));
+    assert_eq!(bob.display[0].1.players.iter().map(|p| p.uuid).collect::<Vec<_>>(), [BOB]);
 
     assert_eq!(decode(&only(&begin, ALICE, "open_card"), CardOpenPacket::read).unwrap().team_key.as_deref(), Some("bingo_red"));
     assert_eq!(decode(&only(&begin, BOB, "open_card"), CardOpenPacket::read).unwrap().team_key.as_deref(), Some("bingo_blue"));
@@ -433,7 +435,13 @@ fn start_sends_the_team_commands_and_spreads_the_players_when_there_are_two_team
             "team add bingo_blue",
             "team modify bingo_blue color blue",
             "team join bingo_blue Bob",
-            "spreadplayers 0 0 25 10 true Alice Bob",
+            "tag Alice add bingo_spread",
+            "tag Bob add bingo_spread",
+            "spreadplayers 0 0 25 10 false @a[tag=bingo_spread]",
+            "tp @a[team=bingo_red,tag=!bingo_spread] Alice",
+            "tp @a[team=bingo_blue,tag=!bingo_spread] Bob",
+            "tag Alice remove bingo_spread",
+            "tag Bob remove bingo_spread",
         ]
     );
 
