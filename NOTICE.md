@@ -56,6 +56,11 @@ rather than Horizon's MIT licence, and:
 Still to confirm with upstream before publication: the exact copyright holders (the upstream files name none; see
 above). This is the package author's licensing choice, not legal advice.
 
+## Data from the original
+
+`bingo-native/horizon-bingo/data/items.tierlist.json` is the original mod's item tier list, copied unchanged from
+`common/src/main/resources/data/yet-another-minecraft-bingo/yet-another-minecraft-bingo/tierlists/` (LGPL-3.0).
+
 ## Links
 
 - Upstream: https://gitlab.com/horrificdev/bingo
