@@ -17,4 +17,17 @@ pub trait ServerHost {
     fn command(&mut self, _line: &str) {}
     /// Shows or updates a boss bar for one player. `progress` is 0.0 to 1.0. `visible` false removes it.
     fn boss_bar(&mut self, _player: u128, _id: &str, _title: &str, _progress: f32, _visible: bool) {}
+    /// Reads a file of the mod's data folder (for example `options.json`), or `None` if it is missing. The default
+    /// has no files, so a test host need not implement it.
+    fn read_file(&mut self, _name: &str) -> Option<String> {
+        None
+    }
+    /// Replaces a file of the mod's data folder.
+    fn write_file(&mut self, _name: &str, _content: &str) {}
+    /// Appends one line (the `\n` is added) to a file of the mod's data folder.
+    fn append_line(&mut self, _name: &str, _line: &str) {}
+    /// Wall-clock time in milliseconds since the Unix epoch, for the history. The default is 0.
+    fn now_ms(&self) -> i64 {
+        0
+    }
 }

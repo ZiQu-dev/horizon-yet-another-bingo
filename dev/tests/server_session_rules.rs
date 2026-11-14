@@ -558,3 +558,43 @@ fn a_game_with_nobody_online_goes_back_to_pregame_after_one_hundred_ticks() {
     session.tick(&mut host);
     assert!(status(&mut session, &mut host).contains("Pregame"), "the 100th empty tick resets the game");
 }
+
+#[test]
+fn a_reset_forgets_the_votes_of_the_last_game() {
+    let mut host = FakeHost::default();
+    let mut session = Session::new(options(7, 0, None));
+    lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "blue")]);
+    run(&mut session, &mut host, Some(ALICE), "start");
+    run(&mut session, &mut host, None, "end");
+    host.take();
+
+    // Alice votes in the first game; Bob has not, so the vote waits.
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "vote next"), "Vote recorded (1 of 2 votes).");
+
+    // Reset, then a second game that ends. Alice's old vote must not count for her now.
+    run(&mut session, &mut host, None, "reset");
+    run(&mut session, &mut host, None, "start");
+    run(&mut session, &mut host, None, "end");
+    host.take();
+    assert_eq!(run(&mut session, &mut host, Some(BOB), "vote keep"), "Vote recorded (1 of 2 votes).");
+    assert!(status(&mut session, &mut host).contains("Postgame"), "only Bob has voted in this game");
+}
+
+#[test]
+fn a_resume_forgets_the_votes_before_it() {
+    let mut host = FakeHost::default();
+    let mut session = Session::new(options(7, 0, None));
+    lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "blue")]);
+    run(&mut session, &mut host, Some(ALICE), "start");
+    run(&mut session, &mut host, None, "end");
+    host.take();
+
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "vote keep"), "Vote recorded (1 of 2 votes).");
+    assert_eq!(run(&mut session, &mut host, None, "resume"), "The game continues.");
+    run(&mut session, &mut host, None, "end");
+    host.take();
+
+    // Alice's vote from before the resume is gone: Bob's vote alone is 1 of 2.
+    assert_eq!(run(&mut session, &mut host, Some(BOB), "vote keep"), "Vote recorded (1 of 2 votes).");
+    assert!(status(&mut session, &mut host).contains("Postgame"));
+}

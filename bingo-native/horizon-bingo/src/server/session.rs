@@ -12,6 +12,7 @@ use super::game::{Event, Game, GameOptions};
 use super::host::ServerHost;
 use super::options::{EndWhen, Goal, Mode, Options};
 use super::ready::{encode_update_v2, ReadyOptions, ReadyTimer};
+use super::store::{self, HistoryEntry, HistoryPlayer, HistoryTeam};
 use super::scoring;
 use super::teams::{self, Teams};
 use super::types::{Card, Player, TeamProgress};
@@ -20,11 +21,16 @@ use crate::buf::decode;
 use crate::game::GameStatus;
 use crate::game_over::ScoreRanking;
 use crate::ready::SetReadyPacket;
+use crate::update_settings::PlayerSettings;
 use crate::score_update::TeamScore;
 use crate::text::Text;
 
 /// The entity tag that marks the players spread at the start for the moment the command runs.
 const SPREAD_TAG: &str = "bingo_spread";
+/// Files in the mod's data folder.
+const OPTIONS_FILE: &str = "options.json";
+const SETTINGS_FILE: &str = "player-settings.json";
+const HISTORY_FILE: &str = "history.jsonl";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionOptions {
@@ -84,6 +90,14 @@ pub struct Session {
     votes: BTreeMap<u128, VoteChoice>,
     /// Ticks with nobody online while a game runs, for the reset when everyone has left.
     empty_ticks: u64,
+    /// The data files have been read.
+    loaded: bool,
+    /// Settings players sent (`update_settings`); a player who sent none has the defaults.
+    settings: HashMap<u128, PlayerSettings>,
+    /// Finished games, oldest first, from `history.jsonl`.
+    history: Vec<HistoryEntry>,
+    /// The game was ended by `/bingo end`, not by a win or the time limit.
+    forfeit: bool,
 }
 
 impl Session {
@@ -107,13 +121,36 @@ impl Session {
             reached: Vec::new(),
             votes: BTreeMap::new(),
             empty_ticks: 0,
+            loaded: false,
+            settings: HashMap::new(),
+            history: Vec::new(),
+            forfeit: false,
             options,
+        }
+    }
+
+    /// Reads the saved options, the players' settings and the history, once, on the first call of any hook. A missing
+    /// or damaged file leaves the defaults.
+    fn ensure_loaded(&mut self, host: &mut dyn ServerHost) {
+        if self.loaded {
+            return;
+        }
+        self.loaded = true;
+        if let Some(text) = host.read_file(OPTIONS_FILE) {
+            self.rules = store::options_from_json(&text);
+        }
+        if let Some(text) = host.read_file(SETTINGS_FILE) {
+            self.settings = store::settings_from_json(&text);
+        }
+        if let Some(text) = host.read_file(HISTORY_FILE) {
+            self.history = store::parse_history(&text);
         }
     }
 
     /// A player joins. They get the game status. Before play they get the ready screen; during play they get the whole
     /// current game as it is now: the teams, their tiles, the open card and each team's score.
     pub fn on_join(&mut self, host: &mut dyn ServerHost, player: &Player) {
+        self.ensure_loaded(host);
         send(host, player.uuid, self.game_status());
         match self.game.status() {
             GameStatus::Pregame => self.send_ready_updates(host),
@@ -169,9 +206,23 @@ impl Session {
         self.send_tiles_after_find(host, &team);
         self.send_score_to_all(host, &team);
         for item in items {
-            host.broadcast(&format!("{finder} found {}", short_name(&item)));
+            self.announce_find(host, &format!("{finder} found {}", short_name(&item)));
         }
         self.check_goals(host);
+    }
+
+    /// A chat line about a find, for the players who keep `itemMessages` on (the default). It is one broadcast when
+    /// everyone does.
+    fn announce_find(&self, host: &mut dyn ServerHost, line: &str) {
+        let wants = |uuid: u128| self.settings.get(&uuid).map_or(true, |settings| settings.item_messages);
+        let players = host.players();
+        if players.iter().all(|player| wants(player.uuid)) {
+            host.broadcast(line);
+        } else {
+            for player in players.iter().filter(|player| wants(player.uuid)) {
+                host.tell(player.uuid, line);
+            }
+        }
     }
 
     /// Notes the teams that have reached the goal (in order), and ends the game when the end condition holds. The first
@@ -205,6 +256,13 @@ impl Session {
     /// A packet from a player on the channel `yet-another-minecraft-bingo:<path>`. Only the ready packets are handled,
     /// and only before play. A payload that does not decode is ignored.
     pub fn on_packet(&mut self, host: &mut dyn ServerHost, player: u128, path: &str, data: &[u8]) {
+        if path == "update_settings" {
+            if let Ok(settings) = decode(data, PlayerSettings::read) {
+                self.settings.insert(player, settings);
+                host.write_file(SETTINGS_FILE, &store::settings_to_json(&self.settings));
+            }
+            return;
+        }
         let ready = match path {
             "set_ready" => decode(data, SetReadyPacket::read_v1).map(|packet| packet.is_ready),
             "set_ready_v2" => decode(data, SetReadyPacket::read_v2).map(|packet| packet.is_ready),
@@ -227,6 +285,7 @@ impl Session {
     /// One server tick. Before play, the ready timer runs and starts the game when it ends. Otherwise the game moves
     /// on, and its events go to everyone.
     pub fn tick(&mut self, host: &mut dyn ServerHost) {
+        self.ensure_loaded(host);
         self.ticks += 1;
         if self.game.status() != GameStatus::Pregame {
             // `resetWhenEveryoneDisconnects`: a game nobody is in goes back to the lobby after a few seconds.
@@ -256,6 +315,7 @@ impl Session {
     /// Runs a command typed by `player` (or the console, `None`) and returns the text to answer with. `line` is what
     /// follows the word `bingo`. Who may run a command is for the caller to check (see [`commands::requires_op`]).
     pub fn command(&mut self, host: &mut dyn ServerHost, player: Option<u128>, line: &str) -> String {
+        self.ensure_loaded(host);
         let command = match commands::parse(line) {
             Ok(command) => command,
             Err(error) => return error,
@@ -269,6 +329,7 @@ impl Session {
             },
             Command::End => match self.game.end(None) {
                 Ok(events) => {
+                    self.forfeit = true;
                     self.dispatch(host, events);
                     "Game ended.".to_string()
                 }
@@ -286,17 +347,18 @@ impl Session {
             Command::ReadyCancel => self.cancel_ready(host),
             Command::TimeLimit(minutes) => self.set_time_limit(minutes),
             Command::Card => self.open_card(host, player),
-            Command::Goal(goal) => self.set_rule(|rules| rules.goal = goal, "goal"),
-            Command::Mode(mode) => self.set_rule(|rules| rules.mode = mode, "mode"),
-            Command::EndWhen(end_when) => self.set_rule(|rules| rules.end_when = end_when, "end condition"),
-            Command::Toggle(toggle, on) => self.set_rule(|rules| rules.set_toggle(toggle, on), "setting"),
-            Command::SpawnDistance(chunks) => self.set_rule(|rules| rules.spawn_distance = chunks, "spawn distance"),
+            Command::Goal(goal) => self.set_rule(host, |rules| rules.goal = goal, "goal"),
+            Command::Mode(mode) => self.set_rule(host, |rules| rules.mode = mode, "mode"),
+            Command::EndWhen(end_when) => self.set_rule(host, |rules| rules.end_when = end_when, "end condition"),
+            Command::Toggle(toggle, on) => self.set_rule(host, |rules| rules.set_toggle(toggle, on), "setting"),
+            Command::SpawnDistance(chunks) => self.set_rule(host, |rules| rules.spawn_distance = chunks, "spawn distance"),
             Command::Options => self.options_text(),
             Command::Vote(choice) => match player {
                 Some(player) => self.vote(host, player, choice),
                 None => "Only a player can vote.".to_string(),
             },
             Command::Resume => self.resume(host),
+            Command::Stats => self.stats(host, player),
         }
     }
 
@@ -418,6 +480,7 @@ impl Session {
         self.owners.clear();
         self.reached.clear();
         self.votes.clear();
+        self.forfeit = false;
         let players = host.players();
         for player in &players {
             if self.teams.team_of(player.uuid).is_some() {
@@ -504,6 +567,7 @@ impl Session {
     /// The game ended: the end screen with the ranking of every team goes to each player, who wins if their team does.
     fn announce_end(&mut self, host: &mut dyn ServerHost, winner: Option<String>) {
         self.hide_boss_bars(host);
+        self.record_game(host, winner.as_deref());
         let ranking = self.ranking();
         let duration = self.game.elapsed_ms();
         for player in host.players() {
@@ -617,7 +681,9 @@ impl Session {
         for key in self.teams.teams() {
             let id = format!("bingo:{key}");
             for member in self.teams.members(key) {
-                if online.contains(&member) {
+                // A player who sent no settings sees the bar; one who turned `bossbar` off does not.
+                let wants = self.settings.get(&member).map_or(true, |settings| settings.bossbar);
+                if online.contains(&member) && wants {
                     host.boss_bar(member, &id, &title, progress, true);
                     self.boss_bars.insert((member, id.clone()));
                 }
@@ -757,6 +823,48 @@ impl Session {
         }
     }
 
+    /// `/bingo stats`: the caller's games, wins, best winning time and items, from the history.
+    fn stats(&self, host: &dyn ServerHost, player: Option<u128>) -> String {
+        let Some(player) = player else {
+            return "Only a player has statistics.".to_string();
+        };
+        store::stats_text(&player_name(host, player), &store::player_stats(&self.history, player))
+    }
+
+    /// Records the finished game: one line in the history file, and in memory for `stats`.
+    fn record_game(&mut self, host: &mut dyn ServerHost, winner: Option<&str>) {
+        let ended_at_ms = host.now_ms();
+        let players = host.players();
+        let teams = self
+            .teams
+            .teams()
+            .into_iter()
+            .map(|key| {
+                let score = self.score(key);
+                HistoryTeam { key: key.to_string(), name: team_name(key).to_string(), items: score.items, lines: score.lines, won: winner == Some(key) }
+            })
+            .collect();
+        let players = players
+            .iter()
+            .filter_map(|player| {
+                let team = self.teams.team_of(player.uuid)?;
+                let items = self.progress.get(team).map_or(0, |progress| progress.found.len() as i32);
+                Some(HistoryPlayer { uuid: player.uuid, name: player.name.clone(), team: team.to_string(), items })
+            })
+            .collect();
+        let entry = HistoryEntry {
+            id: (u128::from(self.seed) << 64) | ended_at_ms.max(0) as u128,
+            ended_at_ms,
+            duration_ms: self.game.elapsed_ms(),
+            winner: winner.map(str::to_string),
+            forfeit: self.forfeit,
+            teams,
+            players,
+        };
+        host.append_line(HISTORY_FILE, &store::entry_to_line(&entry));
+        self.history.push(entry);
+    }
+
     /// `join <team>` while the game runs: allowed only for a spectator (or a player with no team) and only onto a team
     /// that already plays. The player becomes a survival player at their team's spawn.
     fn join_midgame(&mut self, host: &mut dyn ServerHost, player: u128, team: &str) -> String {
@@ -782,11 +890,12 @@ impl Session {
     }
 
     /// Changes one round rule. Only before the game starts.
-    fn set_rule(&mut self, change: impl FnOnce(&mut Options), what: &str) -> String {
+    fn set_rule(&mut self, host: &mut dyn ServerHost, change: impl FnOnce(&mut Options), what: &str) -> String {
         if self.game.status() != GameStatus::Pregame {
             return format!("The {what} can be changed only before the game starts.");
         }
         change(&mut self.rules);
+        host.write_file(OPTIONS_FILE, &store::options_to_json(&self.rules));
         self.options_text()
     }
 

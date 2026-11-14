@@ -708,3 +708,28 @@ fn before_play_the_ready_screen_is_sent_every_ten_ticks_and_nothing_else() {
     assert_eq!(sent.len(), 10, "ticks 10, 20, ..., 100");
     assert!(sent.iter().all(|s| s.path == "ready_timer_update_v2" && s.player == ALICE));
 }
+
+#[test]
+fn resume_after_the_time_limit_gives_fifteen_more_minutes_from_the_elapsed_time() {
+    let mut host = FakeHost::default();
+    let mut session = Session::new(options(7, 0, Some(60)));
+    host.online = vec![player(ALICE, "Alice")];
+    run(&mut session, &mut host, Some(ALICE), "start");
+    host.take();
+    for _ in 0..1200 {
+        session.tick(&mut host);
+    }
+    assert!(run(&mut session, &mut host, None, "status").contains("Postgame"));
+    host.take();
+
+    // The limit moves to 60 s played plus 15 minutes, so 900 s are left at the resume.
+    assert_eq!(run(&mut session, &mut host, None, "resume"), "The game continues.");
+    let resumed = host.take();
+    assert_eq!(decode(&only(&resumed, ALICE, "timer"), TimerPacket::read).unwrap().seconds_remaining, 900);
+
+    // Ten seconds later the game is still running; with no extension it would end on the first tick.
+    for _ in 0..200 {
+        session.tick(&mut host);
+    }
+    assert!(run(&mut session, &mut host, None, "status").contains("Playing"), "the resumed game does not end again");
+}

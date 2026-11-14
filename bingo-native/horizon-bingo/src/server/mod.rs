@@ -13,3 +13,4 @@ pub mod commands;
 pub mod ready;
 pub mod teams;
 pub mod options;
+pub mod store;

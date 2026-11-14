@@ -35,6 +35,8 @@ pub enum Command {
     Vote(VoteChoice),
     /// Extends a round that has reached its end.
     Resume,
+    /// Your own game statistics.
+    Stats,
 }
 
 /// The answer to the end-of-round vote: play another round, keep playing, or return to the lobby.
@@ -45,7 +47,7 @@ pub enum VoteChoice {
     ReturnToLobby,
 }
 
-const USAGE: &str = "start [ignore_warnings] | end | reset | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | options | vote next|keep|lobby | resume";
+const USAGE: &str = "start [ignore_warnings] | end | reset | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | options | vote next|keep|lobby | resume | stats";
 
 const SPAWN_DISTANCE_MAX: u32 = 1000;
 
@@ -68,6 +70,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "reset" => no_args(name, &args, Command::Reset),
         "spectator" => no_args(name, &args, Command::Spectator),
         "card" => no_args(name, &args, Command::Card),
+        "stats" => no_args(name, &args, Command::Stats),
         "options" => no_args(name, &args, Command::Options),
         "resume" => no_args(name, &args, Command::Resume),
         "start" => match args.as_slice() {
@@ -165,7 +168,8 @@ pub fn requires_op(command: &Command) -> bool {
         | Command::Ready
         | Command::Card
         | Command::Options
-        | Command::Vote(_) => false,
+        | Command::Vote(_)
+        | Command::Stats => false,
     }
 }
 

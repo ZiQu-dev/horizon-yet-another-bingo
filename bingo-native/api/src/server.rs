@@ -27,7 +27,7 @@ const OP_LEVEL: u8 = 2;
 const SHORTCUTS: [&str; 3] = ["join", "ready", "spectator"];
 /// The usages the mod registers, each with a line that parses to what it runs. The operator level comes from
 /// `commands::requires_op`, so the rule lives in one place.
-const USAGES: [(&str, &str); 30] = [
+const USAGES: [(&str, &str); 31] = [
     ("bingo status", "status"),
     ("bingo help", "help"),
     ("bingo card", "card"),
@@ -55,6 +55,7 @@ const USAGES: [(&str, &str); 30] = [
     ("bingo options", "options"),
     ("bingo vote <choice:word>", "vote next"),
     ("bingo resume", "resume"),
+    ("bingo stats", "stats"),
     ("join <team:word>", "join Red"),
     ("ready", "ready"),
     ("spectator", "spectator"),
@@ -132,6 +133,34 @@ impl ServerHost for ServerAdapter<'_> {
             queue.push(line.to_owned());
         } else {
             log(&format!("bingo: console command `{line}` dropped, the queue is full"));
+        }
+    }
+
+    fn now_ms(&self) -> i64 {
+        SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
+    }
+
+    fn read_file(&mut self, name: &str) -> Option<String> {
+        std::fs::read_to_string(self.host.data_dir(MOD_ID).join(name)).ok()
+    }
+
+    fn write_file(&mut self, name: &str, content: &str) {
+        let dir = self.host.data_dir(MOD_ID);
+        let result = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(dir.join(name), content));
+        if let Err(e) = result {
+            log(&format!("bingo: {name} not written: {e}"));
+        }
+    }
+
+    fn append_line(&mut self, name: &str, line: &str) {
+        use std::io::Write;
+        let dir = self.host.data_dir(MOD_ID);
+        let result = std::fs::create_dir_all(&dir).and_then(|()| {
+            let mut file = std::fs::OpenOptions::new().create(true).append(true).open(dir.join(name))?;
+            writeln!(file, "{line}")
+        });
+        if let Err(e) = result {
+            log(&format!("bingo: {name} not appended: {e}"));
         }
     }
 
@@ -270,6 +299,12 @@ pub fn perform_command(host: &mut dyn Host, uuid: u128, command: &str) -> Flow {
     let Some(line) = session_line(command) else {
         return Flow::Continue;
     };
+    // Horizon checks a command's operator level on its first word only, and `bingo` also has commands for everyone,
+    // so the commands that need an operator are checked here.
+    if parse(&line).is_ok_and(|command| requires_op(&command)) && !host.has_permission(uuid, "bingo.op", OP_LEVEL) {
+        let _ = host.tell(uuid, Text::literal("You must be an operator to use this command.".to_string()));
+        return Flow::Cancel;
+    }
     let reply = guarded("bingo command", || {
         with_session(|s| s.command(&mut ServerAdapter { host: &mut *host }, Some(uuid), &line))
     });
