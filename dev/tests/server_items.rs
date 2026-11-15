@@ -62,3 +62,16 @@ fn load_reads_the_file_and_reports_a_missing_one() {
     let error = ItemIds::load(&missing).err().expect("the file does not exist");
     assert!(error.contains("server_items_no_such_file.txt"), "the error names the file: {error}");
 }
+
+#[test]
+fn the_missing_names_warning_names_the_path_the_reason_and_the_lost_icons() {
+    use horizon_bingo::server::items::missing_names_warning;
+    let text = missing_names_warning(
+        Path::new("/srv/game/horizon-mods/.horizon-mod-data/bingo_native/assets/item_names.txt"),
+        "No such file or directory (os error 2)",
+    );
+    assert!(text.starts_with("item_names.txt not loaded from /srv/game/horizon-mods/.horizon-mod-data/bingo_native/assets/item_names.txt"));
+    assert!(text.contains("(No such file or directory (os error 2))"), "{text}");
+    assert!(text.contains("will have no item icons"), "{text}");
+    assert!(text.contains("BINGO_ASSETS"), "the warning says how to fix it: {text}");
+}

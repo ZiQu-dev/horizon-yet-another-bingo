@@ -689,6 +689,11 @@ impl Session {
         self.send_ready_updates(host);
     }
 
+    /// Whether the game has ended and waits for the players' votes: the only time a plain chat vote counts.
+    pub fn is_postgame(&self) -> bool {
+        self.game.status() == GameStatus::Postgame
+    }
+
     /// One server tick. Before play, the ready timer runs and starts the game when it ends. Otherwise the game moves
     /// on, and its events go to everyone.
     pub fn tick(&mut self, host: &mut dyn ServerHost) {
@@ -724,10 +729,15 @@ impl Session {
     /// follows the word `bingo`. Who may run a command is for the caller to check (see [`commands::requires_op`]).
     pub fn command(&mut self, host: &mut dyn ServerHost, player: Option<u128>, line: &str) -> String {
         self.ensure_loaded(host);
-        let command = match commands::parse(line) {
-            Ok(command) => command,
-            Err(error) => return error,
-        };
+        match commands::parse(line) {
+            Ok(command) => self.run(host, player, command),
+            Err(error) => error,
+        }
+    }
+
+    /// Runs a command already parsed (by [`commands::parse`] or [`commands::chat_shortcut`]), as [`Session::command`]
+    /// does after parsing. It does not load the saved files: a server tick does that before any call here.
+    pub fn run(&mut self, host: &mut dyn ServerHost, player: Option<u128>, command: Command) -> String {
         match command {
             Command::Help => format!("Usage: bingo {}", commands::usage()),
             Command::Status => self.status_text(),

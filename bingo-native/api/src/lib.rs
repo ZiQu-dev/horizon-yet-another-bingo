@@ -11,7 +11,7 @@ use horizon_client::mod_api::{
     ClientDisconnectingEvent, ClientPacketEvent, ClientPlayerNetworkLoggingInEvent, ClientTickPostEvent,
     ClientboundPlayPacket, ConfigLoadingEvent, ConfigReloadingEvent, CustomPayloadFromClientEvent, Flow,
     GuiLayerPostEvent, Hooks, Host, HudBatch, KeyCode, NativeConfig, NativeConfigFile, NativeConfigKind,
-    NativeScreenKind, PerformCommandEvent, PerformConsoleCommandEvent, ServerAboutToStartEvent, PlayerInventoryChangedEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent,
+    NativeScreenKind, PerformCommandEvent, PerformConsoleCommandEvent, PlayerChatEvent, ServerAboutToStartEvent, PlayerInventoryChangedEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent,
     RegisterCommandsEvent, RegisterConfigsEvent, ScreenKeyPressedPreEvent, ScreenMouseButtonPressedPreEvent,
     ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent,
     ScreenRenderPostEvent, ServerTickEvent, ServerboundPlayPacket, Text,
@@ -781,6 +781,11 @@ impl Hooks for Mod {
 
     fn player_logged_in(&self, host: &mut dyn Host, event: &mut PlayerLoggedInEvent<'_>) {
         server::player_logged_in(host, event.player, event.name);
+    }
+
+    /// Plain chat votes in Postgame (`vote lobby`, `vote next`, `vote keep`); every other line is left alone.
+    fn player_chat(&self, event: &mut PlayerChatEvent<'_>) -> Flow {
+        server::player_chat(event.player, event.message)
     }
 
     fn player_logged_out(&self, host: &mut dyn Host, event: &mut PlayerLoggedOutEvent<'_>) {

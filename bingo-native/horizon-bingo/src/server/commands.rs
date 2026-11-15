@@ -157,6 +157,17 @@ pub fn parse(line: &str) -> Result<Command, String> {
     }
 }
 
+/// A plain chat line that is a vote, typed without `bingo`: `vote lobby`, `vote next` or `vote keep`, ignoring case and
+/// the spaces at either end. Nothing else is a shortcut, so `vote return` or `bingo vote lobby` give `None`.
+pub fn chat_shortcut(message: &str) -> Option<Command> {
+    match message.trim().to_lowercase().as_str() {
+        "vote next" => Some(Command::Vote(VoteChoice::NextRound)),
+        "vote keep" => Some(Command::Vote(VoteChoice::KeepPlaying)),
+        "vote lobby" => Some(Command::Vote(VoteChoice::ReturnToLobby)),
+        _ => None,
+    }
+}
+
 /// Whether the command needs operator rights. Start, end, reset, shuffleteams, ready cancel, timelimit, the round
 /// settings (goal, mode, card modes, endwhen, toggles, spawndistance) and resume do; the rest are open to every player.
 pub fn requires_op(command: &Command) -> bool {

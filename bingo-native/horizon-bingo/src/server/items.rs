@@ -40,3 +40,17 @@ impl ItemIds {
         Ok(Self::from_names(&text))
     }
 }
+
+/// The warning the server logs once when the item names cannot be read: the path searched, why it failed (`reason`, the
+/// read error), and that cards then have no item icons.
+pub fn missing_names_warning(path: &Path, reason: &str) -> String {
+    format!(
+        "item_names.txt not loaded from {} ({reason}): bingo cards will have no item icons. Copy item_names.txt into the \
+         mod's assets folder, or set BINGO_ASSETS to a folder that has it. tools/prepare_assets.py makes it from your own \
+         copy of the original mod jar.",
+        path.display()
+    )
+}
+
+/// The line an operator sees with `status` or `start` while the item names are missing.
+pub const NO_ICONS_NOTE: &str = "No item icons: item_names.txt is missing, see the server log.";

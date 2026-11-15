@@ -217,6 +217,26 @@ Set them in the game's environment. None is needed to play.
 - `BINGO_H0_DUMP`: a folder to write the first three payloads of each server channel as hex, to `<channel>.<n>.hex`.
   The name `H0` is the internal name of the debug hook. Off unless set; it writes files, so use a scratch folder.
 
+## Server
+
+The bundle's server half (`api/src/server.rs`) runs wherever the mod is installed: install the same bundle on the server.
+
+- **Item names.** The server needs `item_names.txt` in the mod's assets folder, `<game dir>/horizon-mods/.horizon-mod-data/bingo_native/assets/`, or in the folder named by `BINGO_ASSETS`. `tools/prepare_assets.py` writes it from your own copy of the original mod jar (Install, step 2). Without it the server still runs, but cards have no item icons. The server log then gets one WARNING line, at the first tick, with the path it searched, and `bingo status` and `bingo start` add a note saying so.
+- **Launcher.** Launcher version 0.2.6x or newer.
+- **Clients.** The original Fabric mod 2.15.1 clients work too: a real Fabric client with the original mod joined this server and played a full game (card with icons, score messages, end screen) in a live test.
+- **Commands.** Players and the console type `bingo <command>`. `join <team>`, `ready` and `spectator` also work without `bingo`. Commands that change a game need operator level 2: `start`, `end`, `reset`, `shuffleteams`, `ready cancel`, `timelimit`, `goal`, `mode`, `endwhen`, `pvp`, `keepinventory`, `elytra`, `nightvision`, `spawndistance`, `playto`, `stalemate` and `resume`. `bingo help` lists the usages:
+
+  ```
+  start [ignore_warnings] | end | reset | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout|hidden_items on|off|consume_items on|off | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | playto cards <n>|infinite|replace_goals | stalemate end_game|reroll_card|do_nothing | options | vote next|keep|lobby | resume | stats
+  ```
+
+- **Votes.** When a game ends (Postgame), `bingo vote next|keep|lobby` votes. A plain chat line `vote next`, `vote keep` or `vote lobby` (no `bingo`, any letter case) is the same vote and is not shown to the other players. The vote is carried out once every online player who plays has voted.
+- **Files.** In the mod's data folder, `<game dir>/horizon-mods/.horizon-mod-data/bingo_native/`:
+  - `options.json`: the round options, written on each change.
+  - `player-settings.json`: the players' settings, written when they change.
+  - `history.jsonl`: one line per finished game, appended when the game ends.
+  - `game-state.json`: the game in progress, rewritten as it goes on. It is emptied when a game ends. A server that restarts during a game restores it; a game in Postgame is not restored.
+
 ## Tests
 
 The integration tests (579 at the time of writing) and the recorded captures and oracle rows live in `dev/`. From the

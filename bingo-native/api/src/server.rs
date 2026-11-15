@@ -2,10 +2,10 @@
 //! `horizon-bingo`'s `server` modules; this file adapts Horizon's `Host` to their `ServerHost` and keeps the session.
 //! Each hook runs under `guarded`, and a poisoned lock is taken as it is, so one panic does not end the server's mod.
 use super::{MOD_ID, guarded, log};
-use horizon_bingo::server::commands::{parse, requires_op};
+use horizon_bingo::server::commands::{Command, chat_shortcut, parse, requires_op};
 use horizon_bingo::server::game::GameOptions;
 use horizon_bingo::server::host::ServerHost;
-use horizon_bingo::server::items::ItemIds;
+use horizon_bingo::server::items::{ItemIds, NO_ICONS_NOTE, missing_names_warning};
 use horizon_bingo::server::ready::ReadyOptions;
 use horizon_bingo::server::session::{Session, SessionOptions};
 use horizon_bingo::server::types::Player;
@@ -71,6 +71,9 @@ const COMMAND_QUEUE_MAX: usize = 256;
 
 /// The one session of this server. Made on the first server hook.
 static SESSION: Mutex<Option<Session>> = Mutex::new(None);
+/// Votes typed in chat (`vote lobby` and the rest) during Postgame, with the player who typed each. The chat hook has no
+/// host and a vote needs one, so they run on the next server tick, in order.
+static CHAT_VOTES: Mutex<Vec<(u128, Command)>> = Mutex::new(Vec::new());
 /// Console commands the session asked for (`ServerHost::command`), run after the session's tick.
 static COMMANDS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// The item registry's names, read once. `None` when the assets are missing (logged once).
@@ -98,6 +101,7 @@ fn with_session<T>(f: impl FnOnce(&mut Session) -> T) -> T {
 /// A new server (a world opens): the old game and its players belong to the previous world.
 pub fn server_about_to_start() {
     *SESSION.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    CHAT_VOTES.lock().unwrap_or_else(PoisonError::into_inner).clear();
 }
 
 /// Horizon's `Host` as the crate's `ServerHost`.
@@ -205,9 +209,17 @@ fn load_item_ids(host: &dyn Host) -> Option<ItemIds> {
         Ok(text) => Some(ItemIds::from_names(&text)),
         Err(e) => {
             log(&format!("bingo: item ids not loaded from {}: {e}", path.display()));
+            // Always on, not only with BINGO_H0_LOG: an operator has to see that the cards have no icons.
+            horizon_client::logging::write_as(MOD_ID, ::log::Level::Warn, &missing_names_warning(&path, &e.to_string()));
             None
         }
     }
+}
+
+/// The line for an operator's `status` or `start` while the item names are missing; `None` otherwise.
+fn names_note(host: &dyn Host, line: &str) -> Option<&'static str> {
+    let word = line.split_whitespace().next()?.to_lowercase();
+    (matches!(word.as_str(), "status" | "start") && item_ids(host).is_none()).then_some(NO_ICONS_NOTE)
 }
 
 /// The authoritative tick: the session advances once per server tick that starts.
@@ -215,9 +227,46 @@ pub fn server_tick(host: &mut dyn Host, phase: ServerTickPhase) {
     if !matches!(phase, ServerTickPhase::ServerTickStart { .. }) {
         return;
     }
+    // The item names are read on the first tick, so a missing file is reported when the server starts.
+    let _ = item_ids(&*host);
     guarded("server tick", || with_session(|s| s.tick(&mut ServerAdapter { host: &mut *host })));
+    guarded("bingo chat votes", || run_chat_votes(&mut *host));
     // Outside the session's lock: a console command may run hooks that reach the session again.
     guarded("bingo console commands", || run_queued_commands(&mut *host));
+}
+
+/// Runs the chat votes queued since the last tick, in the order they were typed; each voter is told the answer, as a
+/// typed `bingo vote` is.
+fn run_chat_votes(host: &mut dyn Host) {
+    let votes = std::mem::take(&mut *CHAT_VOTES.lock().unwrap_or_else(PoisonError::into_inner));
+    for (uuid, command) in votes {
+        let reply = guarded("bingo chat vote", || {
+            with_session(|s| s.run(&mut ServerAdapter { host: &mut *host }, Some(uuid), command))
+        });
+        if let Some(reply) = reply {
+            let _ = host.tell(uuid, Text::literal(reply));
+        }
+    }
+}
+
+/// A player's chat line, before anyone sees it. In Postgame a plain `vote lobby`, `vote next` or `vote keep` is that
+/// player's vote: it is cancelled here, so nobody sees it, and runs on the next tick. Any other line goes on unchanged.
+pub fn player_chat(player: u128, message: &str) -> Flow {
+    let Some(command) = chat_shortcut(message) else {
+        return Flow::Continue;
+    };
+    if !guarded("player chat", || with_session(|s| s.is_postgame())).unwrap_or(false) {
+        return Flow::Continue;
+    }
+    guarded("player chat", || {
+        let mut votes = CHAT_VOTES.lock().unwrap_or_else(PoisonError::into_inner);
+        if votes.len() < COMMAND_QUEUE_MAX {
+            votes.push((player, command));
+        } else {
+            log(&format!("bingo: chat vote from {player:032x} dropped, the queue is full"));
+        }
+    });
+    Flow::Cancel
 }
 
 /// Runs the console commands queued since the last tick, in order; a failed one is logged.
@@ -297,6 +346,9 @@ pub fn perform_console_command(host: &mut dyn Host, command: &str) -> Flow {
     if let Some(reply) = reply {
         host.feedback(Text::literal(reply));
     }
+    if let Some(note) = names_note(&*host, &line) {
+        host.feedback(Text::literal(note));
+    }
     Flow::Cancel
 }
 
@@ -316,6 +368,9 @@ pub fn perform_command(host: &mut dyn Host, uuid: u128, command: &str) -> Flow {
     });
     if let Some(reply) = reply {
         let _ = host.tell(uuid, Text::literal(reply));
+    }
+    if let Some(note) = names_note(&*host, &line) {
+        let _ = host.tell(uuid, Text::literal(note));
     }
     Flow::Cancel
 }
