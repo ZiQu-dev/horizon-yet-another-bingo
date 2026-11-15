@@ -55,6 +55,8 @@ pub enum Command {
     TeamCount(usize),
     /// Another online player's game statistics (`stats <player>`, operators only).
     StatsOf(String),
+    /// The lobby menu (a chest). Opened for a player by the mod's adapter; a console has no chest.
+    Menu,
 }
 
 /// The answer to the end-of-round vote: play another round, keep playing, or return to the lobby.
@@ -65,7 +67,7 @@ pub enum VoteChoice {
     ReturnToLobby,
 }
 
-const USAGE: &str = "start [ignore_warnings] | end | reset | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout|hidden_items on|off|consume_items on|off | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | playto cards <n>|infinite|replace_goals | stalemate end_game|reroll_card|do_nothing | options | vote next|keep|lobby | resume | stats [player] | difficulty easy|medium|hard|extreme|impossible | difficulty <S> <A> <B> <C> <D> | reroll | teams <n> | autoshuffle on|off";
+const USAGE: &str = "start [ignore_warnings] | end | reset | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout|hidden_items on|off|consume_items on|off | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | playto cards <n>|infinite|replace_goals | stalemate end_game|reroll_card|do_nothing | options | vote next|keep|lobby | resume | stats [player] | difficulty easy|medium|hard|extreme|impossible | difficulty <S> <A> <B> <C> <D> | reroll | teams <n> | autoshuffle on|off | menu";
 
 const SPAWN_DISTANCE_MAX: u32 = 1000;
 
@@ -104,6 +106,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
             [player] => Ok(Command::StatsOf(player.to_string())),
             _ => Err("Too many arguments for 'stats'. Usage: stats [player]".to_string()),
         },
+        "menu" => no_args(name, &args, Command::Menu),
         "options" => no_args(name, &args, Command::Options),
         "resume" => no_args(name, &args, Command::Resume),
         "start" => match args.as_slice() {
@@ -224,7 +227,8 @@ pub fn requires_op(command: &Command) -> bool {
         | Command::Card
         | Command::Options
         | Command::Vote(_)
-        | Command::Stats => false,
+        | Command::Stats
+        | Command::Menu => false,
     }
 }
 

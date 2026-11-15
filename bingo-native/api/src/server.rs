@@ -6,8 +6,10 @@ use horizon_bingo::server::commands::{Command, chat_shortcut, parse, requires_op
 use horizon_bingo::server::game::GameOptions;
 use horizon_bingo::server::host::ServerHost;
 use horizon_bingo::server::items::{ItemIds, NO_ICONS_NOTE, missing_names_warning};
+use horizon_bingo::server::menu::{self, Menus, Outcome, Page, View};
 use horizon_bingo::server::ready::ReadyOptions;
 use horizon_bingo::server::session::{Session, SessionOptions};
+use horizon_bingo::server::options::Options;
 use horizon_bingo::server::types::Player;
 use horizon_client::mod_api::{Flow, Host, ItemStack, NativeBossBar, NativeCommand, ServerTickPhase, Text};
 use std::{
@@ -27,7 +29,7 @@ const OP_LEVEL: u8 = 2;
 const SHORTCUTS: [&str; 3] = ["join", "ready", "spectator"];
 /// The usages the mod registers, each with a line that parses to what it runs. The operator level comes from
 /// `commands::requires_op`, so the rule lives in one place.
-const USAGES: [(&str, &str); 43] = [
+const USAGES: [(&str, &str); 44] = [
     ("bingo status", "status"),
     ("bingo help", "help"),
     ("bingo card", "card"),
@@ -68,6 +70,7 @@ const USAGES: [(&str, &str); 43] = [
     ("bingo teams <n:integer>", "teams 3"),
     ("bingo autoshuffle <state:word>", "autoshuffle on"),
     ("bingo stats <player:word>", "stats Alice"),
+    ("bingo menu", "menu"),
     ("join <team:word>", "join Red"),
     ("ready", "ready"),
     ("spectator", "spectator"),
@@ -82,6 +85,8 @@ static SESSION: Mutex<Option<Session>> = Mutex::new(None);
 static CHAT_VOTES: Mutex<Vec<(u128, Command)>> = Mutex::new(Vec::new());
 /// Console commands the session asked for (`ServerHost::command`), run after the session's tick.
 static COMMANDS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// The lobby menus open now, by player and window (`bingo menu`). Only the mod's menu is in here.
+static LOBBY_MENUS: Mutex<Menus> = Mutex::new(Menus::new());
 /// The item registry's names, read once. `None` when the assets are missing (logged once).
 static ITEM_IDS: OnceLock<Option<ItemIds>> = OnceLock::new();
 
@@ -142,6 +147,7 @@ fn with_session<T>(f: impl FnOnce(&mut Session) -> T) -> T {
 pub fn server_about_to_start() {
     *SESSION.lock().unwrap_or_else(PoisonError::into_inner) = None;
     CHAT_VOTES.lock().unwrap_or_else(PoisonError::into_inner).clear();
+    LOBBY_MENUS.lock().unwrap_or_else(PoisonError::into_inner).clear();
 }
 
 /// Horizon's `Host` as the crate's `ServerHost`.
@@ -414,6 +420,11 @@ pub fn perform_command(host: &mut dyn Host, uuid: u128, command: &str) -> Flow {
     let Some(line) = session_line(command) else {
         return Flow::Continue;
     };
+    // `bingo menu` opens a chest, which only the host can do: any player may open it.
+    if line.eq_ignore_ascii_case("menu") {
+        open_lobby_menu(host, uuid);
+        return Flow::Cancel;
+    }
     // Horizon checks a command's operator level on its first word only, and `bingo` also has commands for everyone,
     // so the commands that need an operator are checked here.
     if parse(&line).is_ok_and(|command| requires_op(&command)) && !host.has_permission(uuid, "bingo.op", OP_LEVEL) {
@@ -430,4 +441,96 @@ pub fn perform_command(host: &mut dyn Host, uuid: u128, command: &str) -> Flow {
         let _ = host.tell(uuid, Text::literal(note));
     }
     Flow::Cancel
+}
+
+/// The lobby menu's rows and title, as the chest shows them.
+const MENU_TITLE: &str = "Bingo";
+
+/// The rules, whether the round is still pregame, and whether the player may run operator commands: what the menu shows.
+fn menu_view(host: &dyn Host, uuid: u128) -> (Options, bool, bool) {
+    let (rules, pregame) = with_session(|s| (s.rules().clone(), s.is_pregame()));
+    (rules, pregame, host.has_permission(uuid, "bingo.op", OP_LEVEL))
+}
+
+/// The items of a menu page, as the chest holds them: the slots' items read from their SNBT.
+fn menu_items(host: &dyn Host, page: &Page, rules: &Options, pregame: bool, operator: bool) -> Vec<Option<ItemStack>> {
+    let view = View { rules, pregame, operator };
+    menu::contents(page, &view)
+        .into_iter()
+        .map(|slot| slot.and_then(|slot| host.item_from_snbt(&menu::item_snbt(&slot))))
+        .collect()
+}
+
+/// `bingo menu`: opens the lobby menu on its root page for the player.
+fn open_lobby_menu(host: &mut dyn Host, uuid: u128) {
+    let (rules, pregame, operator) = menu_view(&*host, uuid);
+    let items = menu_items(&*host, &Page::Root, &rules, pregame, operator);
+    match host.open_menu(uuid, menu::ROWS, Text::literal(MENU_TITLE), items) {
+        Some(window) => LOBBY_MENUS.lock().unwrap_or_else(PoisonError::into_inner).open(uuid, window, Page::Root),
+        None => {
+            let _ = host.tell(uuid, Text::literal("The menu could not be opened.".to_string()));
+        }
+    }
+}
+
+/// Shows `page` in the player's open lobby menu, refreshing its items. False if that window is not the lobby menu.
+fn show_lobby_page(host: &mut dyn Host, uuid: u128, window: i32, page: Page) -> bool {
+    let (rules, pregame, operator) = menu_view(&*host, uuid);
+    let items = menu_items(&*host, &page, &rules, pregame, operator);
+    if !LOBBY_MENUS.lock().unwrap_or_else(PoisonError::into_inner).turn(uuid, window, page) {
+        return false;
+    }
+    host.set_menu_items(uuid, items);
+    true
+}
+
+/// A click in a menu the mod opened (`native_open_menu`): the lobby menu's slots run their outcome. Only a click that
+/// picks up or shift-clicks a slot of the chest counts; the player's inventory and drags do nothing.
+pub fn menu_clicked(host: &mut dyn Host, uuid: u128, window: i32, slot: i32, mode: i32) {
+    if !matches!(mode, 0 | 1) {
+        return;
+    }
+    let Ok(slot) = usize::try_from(slot) else { return };
+    if slot >= menu::SLOTS {
+        return;
+    }
+    let Some(page) = LOBBY_MENUS.lock().unwrap_or_else(PoisonError::into_inner).page(uuid, window) else { return };
+    let (rules, pregame, operator) = menu_view(&*host, uuid);
+    let view = View { rules: &rules, pregame, operator };
+    match menu::click(&page, slot, &view) {
+        Outcome::Nothing => {}
+        Outcome::Show(next) => {
+            show_lobby_page(host, uuid, window, next);
+        }
+        Outcome::Close => {
+            LOBBY_MENUS.lock().unwrap_or_else(PoisonError::into_inner).close(uuid, window);
+            host.close_menu(uuid);
+        }
+        Outcome::Tell(text) => {
+            let _ = host.tell(uuid, Text::literal(text));
+        }
+        Outcome::Run(line) => {
+            let reply = guarded("bingo menu command", || {
+                with_session(|s| s.command(&mut ServerAdapter { host: &mut *host }, Some(uuid), &line))
+            })
+            .unwrap_or_default();
+            if menu::start_refused(&line, &reply) {
+                // The start was refused: its reason is the warnings page, which offers the start anyway.
+                show_lobby_page(host, uuid, window, Page::Warnings(reply));
+            } else {
+                if !reply.is_empty() {
+                    let _ = host.tell(uuid, Text::literal(reply));
+                }
+                let page = LOBBY_MENUS.lock().unwrap_or_else(PoisonError::into_inner).page(uuid, window);
+                if let Some(page) = page {
+                    show_lobby_page(host, uuid, window, page);
+                }
+            }
+        }
+    }
+}
+
+/// The player's menu window closed: a lobby menu it was is forgotten.
+pub fn menu_closed(uuid: u128, window: i32) {
+    LOBBY_MENUS.lock().unwrap_or_else(PoisonError::into_inner).close(uuid, window);
 }

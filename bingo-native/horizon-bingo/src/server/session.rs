@@ -706,6 +706,16 @@ impl Session {
         self.send_ready_updates(host);
     }
 
+    /// The round options (`/bingo options`), for the lobby menu.
+    pub fn rules(&self) -> &Options {
+        &self.rules
+    }
+
+    /// Whether no game has started yet (`Pregame`): the only time the round options can change.
+    pub fn is_pregame(&self) -> bool {
+        self.game.status() == GameStatus::Pregame
+    }
+
     /// Whether the game has ended and waits for the players' votes: the only time a plain chat vote counts.
     pub fn is_postgame(&self) -> bool {
         self.game.status() == GameStatus::Postgame
@@ -821,6 +831,7 @@ impl Session {
             Command::Resume => self.resume(host),
             Command::Stats => self.stats(host, player),
             Command::StatsOf(name) => self.stats_of_player(host, &name),
+            Command::Menu => "The menu opens in a player's game chat: type bingo menu in game.".to_string(),
         }
     }
 

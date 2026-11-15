@@ -21,3 +21,4 @@ pub mod difficulty;
 pub mod stats;
 pub mod objectives;
 pub mod map_render;
+pub mod menu;

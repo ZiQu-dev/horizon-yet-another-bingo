@@ -10,7 +10,7 @@ use horizon_bingo::state::SoundKey;
 use horizon_client::mod_api::{
     ClientDisconnectingEvent, ClientPacketEvent, ClientPlayerNetworkLoggingInEvent, ClientTickPostEvent,
     ClientboundPlayPacket, ConfigLoadingEvent, ConfigReloadingEvent, CustomPayloadFromClientEvent, Flow,
-    GuiLayerPostEvent, Hooks, Host, HudBatch, KeyCode, NativeConfig, NativeConfigFile, NativeConfigKind,
+    GuiLayerPostEvent, Hooks, Host, HudBatch, KeyCode, MenuClickedEvent, MenuClosedEvent, NativeConfig, NativeConfigFile, NativeConfigKind,
     NativeScreenKind, PerformCommandEvent, PerformConsoleCommandEvent, PlayerChatEvent, ServerAboutToStartEvent, PlayerInventoryChangedEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent,
     RegisterCommandsEvent, RegisterConfigsEvent, ScreenKeyPressedPreEvent, ScreenMouseButtonPressedPreEvent,
     ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent,
@@ -810,6 +810,14 @@ impl Hooks for Mod {
 
     fn server_about_to_start(&self, _host: &mut dyn Host, _event: &mut ServerAboutToStartEvent) {
         server::server_about_to_start();
+    }
+
+    fn menu_clicked(&self, host: &mut dyn Host, event: &mut MenuClickedEvent) {
+        server::menu_clicked(host, event.uuid, event.window, event.slot, event.mode);
+    }
+
+    fn menu_closed(&self, _host: &mut dyn Host, event: &mut MenuClosedEvent) {
+        server::menu_closed(event.uuid, event.window);
     }
 
     fn perform_console_command(&self, host: &mut dyn Host, event: &mut PerformConsoleCommandEvent<'_>) -> Flow {
