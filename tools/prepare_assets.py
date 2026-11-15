@@ -17,6 +17,15 @@ NS_DIR = "assets/yet-another-minecraft-bingo/"
 # Vanilla item tags the card pool expands (#minecraft:music_discs, #c:...). Read from the jar if it has them, else from
 # Horizon's prepared data folder beside --registries.
 TAG_NAMESPACES = ("minecraft", "c")
+# The map card's pictures: item pictures under images/ (16x16, made from the vanilla textures by the mod's build) and
+# the overlays at the jar root (the mod's own resources). Written to item_icons/ and map/.
+ICON_DIR = "yet-another-minecraft-bingo/images/"
+MAP_DIR = "yet-another-minecraft-bingo/"
+MAP_FILES = (
+    "image_fallback.png", "image_frame_advancement.png", "image_frame_forbidden.png", "image_hidden.png",
+    "image_hidden_s.png", "image_hidden_a.png", "image_hidden_b.png", "image_hidden_c.png", "image_hidden_d.png",
+    "numbers.png",
+)
 
 
 MANIFEST = """id = "bingo_assets"
@@ -82,6 +91,8 @@ def main() -> int:
             "  item_names.txt         item ids in registry order, from the \"items\" list of --registries\n"
             "  tags/item/<ns>/*.json  vanilla item tags (minecraft, c) the card pool expands; from the jar, else from\n"
             "                         the data folder beside --registries\n"
+            "  item_icons/**/*.png    the card's item pictures (yet-another-minecraft-bingo/images/, when the jar has them)\n"
+            "  map/*.png              the map card's overlays (image_*.png and numbers.png), when the jar has them\n"
             "\n"
             "Example:\n"
             "  python3 -I prepare_assets.py yet-another-minecraft-bingo.jar <out dir> \\\n"
@@ -124,6 +135,21 @@ def main() -> int:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(z.read(n))
         (out / "card_colors.json").write_bytes(z.read(COLORS))
+        # Map card pictures: optional, so a jar without them still prepares the rest.
+        icons = 0
+        for n in names:
+            if n.startswith(ICON_DIR) and n.endswith(".png"):
+                dest = out / "item_icons" / n[len(ICON_DIR):]
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(z.read(n))
+                icons += 1
+        maps = 0
+        for name in MAP_FILES:
+            if MAP_DIR + name in names:
+                (out / "map").mkdir(parents=True, exist_ok=True)
+                (out / "map" / name).write_bytes(z.read(MAP_DIR + name))
+                maps += 1
+        print(f"{icons} item pictures, {maps} map overlays")
         (out / "lang").mkdir(parents=True, exist_ok=True)
         (out / "lang" / "en_us.json").write_bytes(z.read(LANG))
         langs = 0
