@@ -11,6 +11,11 @@ use super::commands::{self, Command, VoteChoice};
 use super::game::{Event, Game, GameOptions, GameSnapshot};
 use super::hidden_consume::{self, CardMode, HeldStack, Sight, TileView};
 use super::host::ServerHost;
+use super::multicard::{
+    complete_card, finish_card_on_goal, reroll_card, round_ends, settle_pending, stalemate_action, stalemate_reason,
+    team_score, CardCompletion, CardState, Completion, CompletionOutcome, EndCause, Rules, StalemateAction,
+    StalemateBehavior, TeamRound, WinCondition,
+};
 use super::options::{EndWhen, Goal, Mode, Options};
 use super::ready::{encode_update_v2, ReadyOptions, ReadyTimer};
 use super::store::{self, HistoryEntry, HistoryPlayer, HistoryTeam};
@@ -40,6 +45,10 @@ const HISTORY_FILE: &str = "history.jsonl";
 const GAME_STATE_FILE: &str = "game-state.json";
 /// Format version of `game-state.json`.
 const GAME_STATE_VERSION: u64 = 1;
+/// Milliseconds per server tick, to count the ticks a card has been in play.
+const MS_PER_TICK: i64 = 50;
+/// The chat line when a stalemate rerolls a card.
+const REROLL_NOTICE: &str = "A stalemate: every team on the card gets a new card.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionOptions {
@@ -79,9 +88,18 @@ pub struct Session {
     rng: Rng,
     teams: Teams,
     ready: ReadyTimer,
-    /// The one card every team plays. Made when play begins.
-    card: Option<Card>,
-    /// Progress of each team that plays, by `BingoTeamKey.id`.
+    /// The cards of the round, in the order they were made. The first is made when play begins; the others are made as
+    /// teams need them (`multicard`). A one-card round has one entry, and every team plays it.
+    cards: Vec<Card>,
+    /// The playing tick each card was made at. A card completed within 3 ticks of it ends a multi-card game.
+    card_started: Vec<u64>,
+    /// The card index each team plays, by `BingoTeamKey.id`.
+    team_card: BTreeMap<String, usize>,
+    /// Each team's completions of cards, `(card index, counts as a win)`, in the order they happened.
+    completions: BTreeMap<String, Vec<(usize, bool)>>,
+    /// Teams that have finished the round, with the time in milliseconds they finished.
+    finished: BTreeMap<String, u64>,
+    /// Progress of each team that plays, by `BingoTeamKey.id`, on the card it plays.
     progress: BTreeMap<String, TeamProgress>,
     /// Teams added to the server's team list by the start, removed again on reset.
     added_teams: Vec<String>,
@@ -91,8 +109,8 @@ pub struct Session {
     ticks: u64,
     /// Rules of the round.
     rules: Options,
-    /// Lockout: which team owns each square.
-    owners: HashMap<usize, String>,
+    /// Lockout: which team owns each square, one map per card (indexed like `cards`).
+    owners: Vec<HashMap<usize, String>>,
     /// Squares each team has seen (`teamsSeen`), by team key: a square is seen once a player of the team holds its item.
     /// It only grows during a round. Hidden-items mode reads it; it is saved only while that mode is on.
     seen: BTreeMap<String, Vec<usize>>,
@@ -126,13 +144,17 @@ impl Session {
             rng: Rng::new(seed),
             teams: Teams::new(),
             ready: ReadyTimer::new(options.ready),
-            card: None,
+            cards: Vec::new(),
+            card_started: Vec::new(),
+            team_card: BTreeMap::new(),
+            completions: BTreeMap::new(),
+            finished: BTreeMap::new(),
             progress: BTreeMap::new(),
             added_teams: Vec::new(),
             boss_bars: BTreeSet::new(),
             ticks: 0,
             rules: options.rules.clone(),
-            owners: HashMap::new(),
+            owners: Vec::new(),
             seen: BTreeMap::new(),
             reached: Vec::new(),
             votes: BTreeMap::new(),
@@ -176,16 +198,20 @@ impl Session {
     pub fn snapshot_json(&self) -> String {
         let game = self.game.snapshot();
         let rules = serde_json::from_str::<Value>(&store::options_to_json(&self.rules)).expect("round options are JSON");
-        let card = match &self.card {
-            Some(card) => Value::Array(
-                card.squares.iter().map(|square| json!({ "item": square.item, "tier": square.tier.name() })).collect(),
-            ),
+        let card = match self.cards.first() {
+            Some(card) => card_value(card),
             None => Value::Null,
         };
         let progress: BTreeMap<&str, &Vec<usize>> =
             self.progress.iter().map(|(team, progress)| (team.as_str(), &progress.found)).collect();
         let seen: BTreeMap<&str, &Vec<usize>> = self.seen.iter().map(|(team, squares)| (team.as_str(), squares)).collect();
-        let owners: BTreeMap<String, &String> = self.owners.iter().map(|(square, team)| (square.to_string(), team)).collect();
+        // Squares are numbered over the cards as card * 25 + square, so a one-card round keeps the numbers it always had.
+        let owners: BTreeMap<String, &String> = self
+            .owners
+            .iter()
+            .enumerate()
+            .flat_map(|(index, map)| map.iter().map(move |(square, team)| ((index * CARD_SQUARES + square).to_string(), team)))
+            .collect();
         let votes: BTreeMap<String, &str> =
             self.votes.iter().map(|(&player, &choice)| (store::uuid_hex(player), vote_name(choice))).collect();
         let (members, spectators) = self.teams.parts();
@@ -209,6 +235,15 @@ impl Session {
             "members": members,
             "spectators": spectators,
         });
+        // Written only for a round that is multi-card or has more than one card, so a one-card round keeps its text.
+        if self.is_multi() || self.cards.len() > 1 {
+            let cards: Vec<Value> = self.cards.iter().map(card_value).collect();
+            value["cards"] = json!(cards);
+            value["cardStarted"] = json!(self.card_started);
+            value["teamCard"] = json!(self.team_card);
+            value["completions"] = json!(self.completions);
+            value["finished"] = json!(self.finished);
+        }
         if self.rules.hidden_consume.hidden_items {
             value["seen"] = json!(seen);
         }
@@ -224,7 +259,11 @@ impl Session {
         self.seed = saved.seed;
         self.rules = saved.rules;
         self.added_teams = saved.added_teams;
-        self.card = saved.card;
+        self.cards = saved.cards;
+        self.card_started = saved.card_started;
+        self.team_card = saved.team_card;
+        self.completions = saved.completions;
+        self.finished = saved.finished;
         self.progress = saved.progress;
         self.owners = saved.owners;
         self.seen = saved.seen;
@@ -291,12 +330,14 @@ impl Session {
         // Only a player on a team scores; the save after the finds covers the squares and the goals reached.
         let team = team.to_string();
         let newly_seen = self.record_seen(&team, held);
+        let index = self.card_index_of(&team);
         let (items, lost) = {
-            let Some(card) = self.card.as_ref() else { return };
+            let Some(card) = self.cards.get(index) else { return };
             let progress = self.progress.entry(team.clone()).or_default();
             let (mut gained, lost) = scoring::score_inventory_mode(card, progress, held, self.rules.mode);
             if self.rules.mode == Mode::Lockout {
-                let claimed = scoring::claim_lockout(&mut self.owners, &team, &gained);
+                let Some(owners) = self.owners.get_mut(index) else { return };
+                let claimed = scoring::claim_lockout(owners, &team, &gained);
                 for index in gained.iter().filter(|index| !claimed.contains(index)) {
                     progress.found.retain(|found| found != index);
                 }
@@ -337,18 +378,29 @@ impl Session {
         }
     }
 
-    /// Notes the teams that have reached the goal (in order), and ends the game when the end condition holds. The first
-    /// team to reach the goal is the winner.
+    /// Notes the teams that have reached the goal, and ends the game when the end condition holds. In a one-card round
+    /// (`Cards(1)`, `ReplaceGoals`) the first team to reach the goal is the winner. A multi-card round goes to
+    /// `check_cards`. Either way the stalemate is checked after the goals (`close_cards`).
     fn check_goals(&mut self, host: &mut dyn ServerHost) {
+        if self.is_multi() {
+            return self.check_cards(host);
+        }
         let keys: Vec<String> = self.teams.teams().into_iter().map(str::to_string).collect();
+        let at = self.elapsed_ms_u64();
         let mut newly = Vec::new();
         for key in &keys {
             let done = self.progress.get(key).is_some_and(|progress| scoring::goal_reached(progress, self.rules.goal));
             if done && !self.reached.contains(key) {
                 self.reached.push(key.clone());
+                self.finished.insert(key.clone(), at);
+                self.completions.entry(key.clone()).or_default().push((0, true));
                 newly.push(key.clone());
             } else if !done {
                 self.reached.retain(|reached| reached != key);
+                self.finished.remove(key);
+                if let Some(list) = self.completions.get_mut(key) {
+                    list.retain(|&(card, won)| !(card == 0 && won));
+                }
             }
         }
         let ends = scoring::game_should_end(self.rules.end_when, self.reached.len(), keys.len());
@@ -358,11 +410,235 @@ impl Session {
             }
         }
         if ends {
-            let winner = self.reached.first().cloned();
-            if let Ok(events) = self.game.end(winner) {
-                self.dispatch(host, events);
+            self.end_game(host, self.reached.first().cloned());
+            return;
+        }
+        let rounds = self.rounds_view();
+        self.close_cards(host, rounds, Vec::new(), false);
+    }
+
+    /// The goal part of a multi-card round. On each card, the first team that plays it and has reached the goal
+    /// completes it; then the rest that reached it do, as far as the end rule lets them (`finish_card_on_goal`). A
+    /// card completed within 3 ticks of being made ends the game with an error, which forfeits it.
+    fn check_cards(&mut self, host: &mut dyn ServerHost) {
+        let rules = self.round_rules();
+        let at = self.elapsed_ms_u64();
+        let mut rounds = self.rounds_view();
+        let mut notices = Vec::new();
+        let mut immediate = false;
+        'cards: for index in 0..self.cards.len() {
+            let card_ticks = self.card_ticks(index);
+            while let Some(finish) = finish_card_on_goal(&mut rounds, &rules, index, card_ticks, Some(index + 1), at) {
+                let outcomes = std::iter::once(finish.outcome).chain(finish.skipped.iter().map(|(_, outcome)| *outcome));
+                if outcomes.clone().any(|outcome| outcome == CompletionOutcome::ImmediateEnd) {
+                    immediate = true;
+                    break 'cards;
+                }
+                notices.push(completion_notice(&rounds[finish.winner], &rules));
             }
         }
+        self.close_cards(host, rounds, notices, immediate);
+    }
+
+    /// What follows the goals of a score event, for both kinds of round. Each card's stalemate is checked and its
+    /// behaviour carried out (`stalemate_action`). The teams with no card get one (`settle_pending`). The rounds are
+    /// written back, and the teams whose card changed are sent theirs. Then the chat lines go out, and the round ends
+    /// on a stalemate, on an immediate end, or when its end rule holds.
+    fn close_cards(&mut self, host: &mut dyn ServerHost, mut rounds: Vec<TeamRound>, mut notices: Vec<String>, mut immediate: bool) {
+        let rules = self.round_rules();
+        let now = self.card_clock();
+        let at = self.elapsed_ms_u64();
+        let behaviour = self.rules.stalemate;
+        let mut stalemate_end = None;
+        if !immediate {
+            for index in 0..self.cards.len() {
+                let owners = self.owners.get(index).cloned().unwrap_or_default();
+                let reason = stalemate_reason(&self.cards[index], index, &rounds, &owners, &rules, true);
+                match stalemate_action(reason.as_ref(), behaviour) {
+                    StalemateAction::Nothing => {}
+                    StalemateAction::WinCard { team, reason } => {
+                        if let Some(i) = rounds.iter().position(|round| round.key == team) {
+                            let score = team_score(rules.goal, &rounds[i].progress, rounds[i].count_cards());
+                            let completion = Completion {
+                                card_index: index,
+                                is_winner: true,
+                                stalemate: Some(reason),
+                                completed_at: at,
+                                score,
+                            };
+                            let outcome = complete_card(&mut rounds[i], &rules, self.card_ticks(index), Some(index + 1), completion);
+                            immediate |= outcome == CompletionOutcome::ImmediateEnd;
+                            notices.push(completion_notice(&rounds[i], &rules));
+                        }
+                    }
+                    StalemateAction::EndGame(cause) => {
+                        stalemate_end = Some(cause);
+                        break;
+                    }
+                    StalemateAction::RerollCard => {
+                        let outcomes = reroll_card(&mut rounds, &rules, index, self.card_ticks(index), Some(index + 1), at);
+                        immediate |= outcomes.iter().any(|(_, outcome)| *outcome == CompletionOutcome::ImmediateEnd);
+                        notices.push(REROLL_NOTICE.to_string());
+                    }
+                }
+            }
+        }
+
+        settle_pending(&mut rounds, self.cards.len(), || self.make_card(now));
+        let changed = self.apply_rounds(rounds);
+        for team in &changed {
+            self.send_new_card(host, team);
+        }
+        for line in &notices {
+            host.broadcast(line);
+        }
+        if let Some(cause) = stalemate_end {
+            host.broadcast(stalemate_text(cause));
+            self.end_game(host, None);
+            return;
+        }
+        if immediate {
+            self.forfeit = true;
+            self.end_game(host, None);
+            return;
+        }
+        let ends = if self.is_multi() {
+            round_ends(self.rules.end_when, &self.rounds_view())
+        } else {
+            scoring::game_should_end(self.rules.end_when, self.reached.len(), self.teams.teams().len())
+        };
+        if ends {
+            self.end_game(host, self.reached.first().cloned());
+        }
+    }
+
+    /// Ends the game with `winner` (`None` for nobody), through the game's own end.
+    fn end_game(&mut self, host: &mut dyn ServerHost, winner: Option<String>) {
+        if let Ok(events) = self.game.end(winner) {
+            self.dispatch(host, events);
+        }
+    }
+
+    /// Every team's round as `multicard` takes it: the card it plays (or its finish), its completions and its progress.
+    fn rounds_view(&self) -> Vec<TeamRound> {
+        self.teams
+            .teams()
+            .into_iter()
+            .map(|key| {
+                let state = match self.finished.get(key) {
+                    Some(&completed_at) => CardState::Finished { completed_at },
+                    None => CardState::Playing(self.card_index_of(key)),
+                };
+                let mut round = TeamRound::new(key, state);
+                round.completed = self
+                    .completions
+                    .get(key)
+                    .map(|list| {
+                        list.iter()
+                            .map(|&(card_index, is_winner)| CardCompletion {
+                                card_index,
+                                is_winner,
+                                stalemate: None,
+                                completed_at: 0,
+                                score: TeamScore::default(),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                round.progress = self.progress.get(key).cloned().unwrap_or_default();
+                round
+            })
+            .collect()
+    }
+
+    /// Writes the rounds back into the session. A team whose card changed starts it fresh: its seen squares go. Returns
+    /// the teams whose card changed, so that they are sent it.
+    fn apply_rounds(&mut self, rounds: Vec<TeamRound>) -> Vec<String> {
+        let mut changed = Vec::new();
+        for round in rounds {
+            let key = round.key;
+            match round.state {
+                CardState::Playing(index) => {
+                    if self.card_index_of(&key) != index {
+                        self.seen.remove(&key);
+                        changed.push(key.clone());
+                    }
+                    self.team_card.insert(key.clone(), index);
+                }
+                CardState::Finished { completed_at } => {
+                    self.finished.insert(key.clone(), completed_at);
+                    if !self.reached.contains(&key) {
+                        self.reached.push(key.clone());
+                    }
+                }
+                CardState::Pending(_) => {}
+            }
+            let completions = round.completed.iter().map(|done| (done.card_index, done.is_winner)).collect();
+            self.completions.insert(key.clone(), completions);
+            self.progress.insert(key, round.progress);
+        }
+        changed
+    }
+
+    /// Makes the next card of the round, seeded with the round's seed plus 31 times its index. Returns its index.
+    fn make_card(&mut self, now: u64) -> usize {
+        let index = self.cards.len();
+        let seed = self.seed.wrapping_add(31 * index as u64);
+        self.cards.push(generate_card(seed, &self.pool, DEFAULT_DISTRIBUTION));
+        self.owners.push(HashMap::new());
+        self.card_started.push(now);
+        index
+    }
+
+    /// A team's new card: each of its members gets the card reset and the tiles of the card the team now plays.
+    fn send_new_card(&self, host: &mut dyn ServerHost, team: &str) {
+        for player in host.players() {
+            if self.teams.team_of(player.uuid) != Some(team) {
+                continue;
+            }
+            send(host, player.uuid, wire::card_reset());
+            if let Some(tiles) = self.tiles_for(&*host, team, false) {
+                send(host, player.uuid, tiles);
+            }
+        }
+    }
+
+    /// The elapsed playing time in milliseconds, as an unsigned count.
+    fn elapsed_ms_u64(&self) -> u64 {
+        self.game.elapsed_ms().max(0) as u64
+    }
+
+    /// The playing ticks so far: the clock the cards are timed by.
+    fn card_clock(&self) -> u64 {
+        self.elapsed_ms_u64() / MS_PER_TICK as u64
+    }
+
+    /// The index of the card a team plays (0 for a team with none yet).
+    fn card_index_of(&self, team: &str) -> usize {
+        self.team_card.get(team).copied().unwrap_or(0)
+    }
+
+    /// The card a team plays.
+    fn card_of(&self, team: &str) -> Option<&Card> {
+        self.cards.get(self.card_index_of(team))
+    }
+
+    /// A round whose win condition is more than one card, or endless. `ReplaceGoals` plays as one card.
+    fn is_multi(&self) -> bool {
+        !matches!(self.rules.win_condition, WinCondition::Cards(1) | WinCondition::ReplaceGoals)
+    }
+
+    fn round_rules(&self) -> Rules {
+        Rules::new(&self.rules, self.rules.win_condition)
+    }
+
+    /// The ticks a card has been in play, for the rule that a card completed within 3 ticks ends the game. A one-card
+    /// round has no such rule, so its cards get the largest count.
+    fn card_ticks(&self, index: usize) -> u64 {
+        if !self.is_multi() {
+            return u64::MAX;
+        }
+        self.card_clock().saturating_sub(self.card_started.get(index).copied().unwrap_or(0))
     }
 
     /// A packet from a player on the channel `yet-another-minecraft-bingo:<path>`. Only the ready packets are handled,
@@ -486,6 +762,8 @@ impl Session {
             Command::EndWhen(end_when) => self.set_rule(host, |rules| rules.end_when = end_when, "end condition"),
             Command::Toggle(toggle, on) => self.set_rule(host, |rules| rules.set_toggle(toggle, on), "setting"),
             Command::SpawnDistance(chunks) => self.set_rule(host, |rules| rules.spawn_distance = chunks, "spawn distance"),
+            Command::PlayTo(win) => self.set_rule(host, |rules| rules.win_condition = win, "win condition"),
+            Command::Stalemate(behaviour) => self.set_rule(host, |rules| rules.stalemate = behaviour, "stalemate behaviour"),
             Command::Options => self.options_text(),
             Command::Vote(choice) => match player {
                 Some(player) => self.vote(host, player, choice),
@@ -609,11 +887,15 @@ impl Session {
 
     /// Makes the card and shows the game to everyone online.
     fn begin_round(&mut self, host: &mut dyn ServerHost) {
-        self.card = Some(generate_card(self.seed, &self.pool, DEFAULT_DISTRIBUTION));
+        self.cards = vec![generate_card(self.seed, &self.pool, DEFAULT_DISTRIBUTION)];
+        self.card_started = vec![0];
+        self.team_card = self.teams.teams().into_iter().map(|key| (key.to_string(), 0)).collect();
+        self.completions.clear();
+        self.finished.clear();
         // The game starts: the first save of it. Scoring, joins and the time limit save again from here on.
         self.save_playing(host);
         self.progress = self.teams.teams().into_iter().map(|key| (key.to_string(), TeamProgress::default())).collect();
-        self.owners.clear();
+        self.owners = vec![HashMap::new()];
         self.seen.clear();
         self.reached.clear();
         self.votes.clear();
@@ -742,7 +1024,11 @@ impl Session {
         for player in host.players() {
             host.command(&format!("gamemode survival {}", player.name));
         }
-        self.card = None;
+        self.cards.clear();
+        self.card_started.clear();
+        self.team_card.clear();
+        self.completions.clear();
+        self.finished.clear();
         self.owners.clear();
         self.seen.clear();
         self.reached.clear();
@@ -762,19 +1048,22 @@ impl Session {
         self.progress.get(team).map_or_else(TeamScore::default, |progress| scoring::team_score_goal(progress, self.rules.goal))
     }
 
-    /// Every team's found squares, in the order of the presets, for [`wire::card_tiles_for`].
-    fn found_by(&self) -> Vec<(&'static str, &[usize])> {
+    /// Every team's found squares on card `index`, in the order of the presets, for [`wire::card_tiles_seen`]. Teams on
+    /// another card are left out: their squares are not on this one.
+    fn found_on(&self, index: usize) -> Vec<(&'static str, &[usize])> {
         self.teams
             .teams()
             .into_iter()
+            .filter(|&key| self.card_index_of(key) == index)
             .filter_map(|key| self.progress.get(key).map(|progress| (key, progress.found.as_slice())))
             .collect()
     }
 
     /// The tiles of a viewer's team. `None` before play, when there is no card.
     fn tiles_for(&self, host: &dyn ServerHost, viewer: &str, should_notify: bool) -> Option<(&'static str, Vec<u8>)> {
-        let card = self.card.as_ref()?;
-        let found = self.found_by();
+        let index = self.card_index_of(viewer);
+        let card = self.cards.get(index)?;
+        let found = self.found_on(index);
         let item_id = |item: &str| host.item_numeric_id(item);
         let views = self.views_for(Some(viewer));
         Some(wire::card_tiles_seen(viewer, card, &found, &views, &item_id, should_notify))
@@ -783,7 +1072,11 @@ impl Session {
     /// Every square as `viewer` sees it (hidden-items mode, see `hidden_consume::tile_views`). `None` is a player on no
     /// team, who sees every square hidden. Postgame shows all.
     fn views_for(&self, viewer: Option<&str>) -> Vec<TileView> {
-        let Some(card) = self.card.as_ref() else { return Vec::new() };
+        let card = match viewer {
+            Some(team) => self.card_of(team),
+            None => self.cards.first(),
+        };
+        let Some(card) = card else { return Vec::new() };
         let none: &[usize] = &[];
         let sight = viewer.map(|team| Sight {
             seen: self.seen.get(team).map_or(none, |squares| squares.as_slice()),
@@ -796,7 +1089,7 @@ impl Session {
 
     /// Adds the squares whose items `held` holds to the team's seen squares. Returns whether any square was new.
     fn record_seen(&mut self, team: &str, held: &HashMap<String, u32>) -> bool {
-        let Some(card) = self.card.as_ref() else { return false };
+        let Some(card) = self.card_of(team) else { return false };
         let holding: Vec<usize> = card
             .squares
             .iter()
@@ -1121,14 +1414,32 @@ impl Session {
             EndWhen::AllWin => "all teams win".to_string(),
         };
         let on = |value: bool| if value { "on" } else { "off" };
-        format!(
+        let mut text = format!(
             "Goal: {goal}. Mode: {mode}. End: {end}. PvP: {}. Keep inventory: {}. Elytra: {}. Night vision: {}. Spawn distance: {} chunks.",
             on(self.rules.pvp),
             on(self.rules.keep_inventory),
             on(self.rules.elytra),
             on(self.rules.night_vision),
             self.rules.spawn_distance
-        )
+        );
+        // The win condition and the stalemate behaviour are named only when they are not the defaults.
+        if self.rules.win_condition != WinCondition::default() {
+            let win = match self.rules.win_condition {
+                WinCondition::Cards(n) => format!("{n} cards"),
+                WinCondition::Infinite => "infinite".to_string(),
+                WinCondition::ReplaceGoals => "replace goals".to_string(),
+            };
+            text.push_str(&format!(" Win: {win}."));
+        }
+        if self.rules.stalemate != StalemateBehavior::default() {
+            let behaviour = match self.rules.stalemate {
+                StalemateBehavior::EndGame => "end game",
+                StalemateBehavior::RerollCard => "reroll card",
+                StalemateBehavior::Nothing => "do nothing",
+            };
+            text.push_str(&format!(" Stalemate: {behaviour}."));
+        }
+        text
     }
 
     /// `/bingo vote`: only in Postgame. When every online player who plays has voted, the option with most votes
@@ -1162,7 +1473,11 @@ impl Session {
         if self.game.status() != GameStatus::Postgame {
             return "The game can be resumed only after it ends.".to_string();
         }
-        let ended_by_rule = scoring::game_should_end(self.rules.end_when, self.reached.len(), self.teams.teams().len());
+        let ended_by_rule = if self.is_multi() {
+            round_ends(self.rules.end_when, &self.rounds_view())
+        } else {
+            scoring::game_should_end(self.rules.end_when, self.reached.len(), self.teams.teams().len())
+        };
         match self.game.resume(self.options.extend_secs) {
             Ok(events) => {
                 if ended_by_rule {
@@ -1189,15 +1504,53 @@ impl Session {
     }
 }
 
+/// A card as `card_value` writes it: its squares, each an item and a tier.
+fn card_value(card: &Card) -> Value {
+    Value::Array(card.squares.iter().map(|square| json!({ "item": square.item, "tier": square.tier.name() })).collect())
+}
+
+/// A card read from its squares, as `card_value` writes them.
+fn parse_card(value: &Value) -> Result<Card, String> {
+    let squares = value.as_array().ok_or("a card is not a list")?.iter().map(parse_square).collect::<Result<Vec<_>, _>>()?;
+    if squares.len() != CARD_SQUARES {
+        return Err(format!("a card has {CARD_SQUARES} squares, not {}", squares.len()));
+    }
+    Ok(Card { squares })
+}
+
+/// The chat line when a team completes a card: `Red completed card 1/2!`, or `Red completed card 1!` when the win has
+/// no number of cards (`Infinite`).
+fn completion_notice(round: &TeamRound, rules: &Rules) -> String {
+    let name = team_name(&round.key);
+    let done = round.count_cards();
+    match rules.win.required_cards() {
+        Some(total) => format!("{name} completed card {done}/{total}!"),
+        None => format!("{name} completed card {done}!"),
+    }
+}
+
+/// The chat line for a stalemate that ends the game.
+fn stalemate_text(cause: EndCause) -> &'static str {
+    match cause {
+        EndCause::Stalemate => "A stalemate: no team can win the card, so the game ends.",
+        EndCause::Lockout => "A stalemate: every square is claimed and no team leads, so the game ends.",
+        EndCause::ImpossibleGoal => "A stalemate: no team can reach the goal, so the game ends.",
+    }
+}
+
 /// A snapshot read and checked in full, ready to be applied to a session.
 struct SavedGame {
     game: GameSnapshot,
     seed: u64,
     rules: Options,
     added_teams: Vec<String>,
-    card: Option<Card>,
+    cards: Vec<Card>,
+    card_started: Vec<u64>,
+    team_card: BTreeMap<String, usize>,
+    completions: BTreeMap<String, Vec<(usize, bool)>>,
+    finished: BTreeMap<String, u64>,
     progress: BTreeMap<String, TeamProgress>,
-    owners: HashMap<usize, String>,
+    owners: Vec<HashMap<usize, String>>,
     seen: BTreeMap<String, Vec<usize>>,
     reached: Vec<String>,
     votes: BTreeMap<u128, VoteChoice>,
@@ -1240,18 +1593,46 @@ fn parse_snapshot(text: &str) -> Result<SavedGame, String> {
 
     let card = match field(object, "card")? {
         Value::Null => None,
-        Value::Array(squares) => {
-            let squares = squares.iter().map(parse_square).collect::<Result<Vec<_>, _>>()?;
-            if squares.len() != CARD_SQUARES {
-                return Err(format!("a card has {CARD_SQUARES} squares, not {}", squares.len()));
-            }
-            Some(Card { squares })
-        }
+        value @ Value::Array(_) => Some(parse_card(value)?),
         _ => return Err("\"card\" is neither null nor a list".to_string()),
     };
     let needs_card = matches!(status, GameStatus::Playing | GameStatus::Postgame);
     if card.is_some() != needs_card {
         return Err(format!("phase {phase} does not go with the card the snapshot has"));
+    }
+
+    // A round with several cards, or a multi-card round, writes its cards and the state of each team on them. Any
+    // other snapshot is a one-card round: its one card is `card`, and the state comes from the older keys.
+    let grouped = object.contains_key("cards");
+    let cards: Vec<Card> = if grouped {
+        array_field(object, "cards")?.iter().map(parse_card).collect::<Result<Vec<_>, _>>()?
+    } else {
+        card.into_iter().collect()
+    };
+    if cards.is_empty() == needs_card {
+        return Err(format!("phase {phase} does not go with the cards the snapshot has"));
+    }
+    let card_started: Vec<u64> = if grouped {
+        array_field(object, "cardStarted")?
+            .iter()
+            .map(|tick| tick.as_u64().ok_or("a card's start is not a whole number"))
+            .collect::<Result<Vec<u64>, &str>>()?
+    } else {
+        vec![0; cards.len()]
+    };
+    if card_started.len() != cards.len() {
+        return Err("\"cardStarted\" does not match the cards".to_string());
+    }
+    let mut team_card = BTreeMap::new();
+    if grouped {
+        for (team, index) in object_field(object, "teamCard")? {
+            let index = index
+                .as_u64()
+                .and_then(|n| usize::try_from(n).ok())
+                .filter(|&n| n < cards.len())
+                .ok_or_else(|| format!("team {team} plays a card that is not in the round"))?;
+            team_card.insert(team_key(team)?, index);
+        }
     }
 
     let mut progress = BTreeMap::new();
@@ -1280,19 +1661,50 @@ fn parse_snapshot(text: &str) -> Result<SavedGame, String> {
         }
     }
 
-    let mut owners = HashMap::new();
+    let mut owners: Vec<HashMap<usize, String>> = vec![HashMap::new(); cards.len()];
     for (square, team) in object_field(object, "owners")? {
         let index = square.parse::<usize>().map_err(|_| format!("owner square \"{square}\" is not a number"))?;
-        if index >= CARD_SQUARES {
+        let (card_index, slot) = (index / CARD_SQUARES, index % CARD_SQUARES);
+        if card_index >= cards.len() {
             return Err(format!("owner square {index} is off the card"));
         }
-        owners.insert(index, team_key(team_text(team)?)?);
+        owners[card_index].insert(slot, team_key(team_text(team)?)?);
     }
 
     let reached = str_list(array_field(object, "reached")?)?
         .iter()
         .map(|team| team_key(team))
         .collect::<Result<Vec<_>, _>>()?;
+
+    // The completions and the finish times are written with the cards; a one-card round has them only as its reached
+    // teams, each of which completed card 0 as a win and finished at once (the time is not kept, so it is 0).
+    let (completions, finished): (BTreeMap<String, Vec<(usize, bool)>>, BTreeMap<String, u64>) = if grouped {
+        let mut completions = BTreeMap::new();
+        for (team, list) in object_field(object, "completions")? {
+            let mut done = Vec::new();
+            for entry in list.as_array().ok_or("a team's completions are not a list")? {
+                let pair = entry.as_array().filter(|pair| pair.len() == 2).ok_or("a completion is not a pair")?;
+                let index = pair[0]
+                    .as_u64()
+                    .and_then(|n| usize::try_from(n).ok())
+                    .filter(|&n| n < cards.len())
+                    .ok_or("a completion is of a card that is not in the round")?;
+                let won = pair[1].as_bool().ok_or("a completion's win is not a flag")?;
+                done.push((index, won));
+            }
+            completions.insert(team_key(team)?, done);
+        }
+        let mut finished = BTreeMap::new();
+        for (team, at) in object_field(object, "finished")? {
+            let at = at.as_u64().ok_or("a team's finish time is not a whole number")?;
+            finished.insert(team_key(team)?, at);
+        }
+        (completions, finished)
+    } else {
+        let completions = reached.iter().map(|team| (team.clone(), vec![(0, true)])).collect();
+        let finished = reached.iter().map(|team| (team.clone(), 0)).collect();
+        (completions, finished)
+    };
 
     let mut votes = BTreeMap::new();
     for (player, choice) in object_field(object, "votes")? {
@@ -1316,7 +1728,11 @@ fn parse_snapshot(text: &str) -> Result<SavedGame, String> {
         seed,
         rules,
         added_teams,
-        card,
+        cards,
+        card_started,
+        team_card,
+        completions,
+        finished,
         progress,
         owners,
         seen,

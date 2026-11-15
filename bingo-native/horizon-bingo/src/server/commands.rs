@@ -2,6 +2,7 @@
 //! who may run the result (see [`requires_op`]). Command and keyword words ignore case; team names are kept as typed.
 
 use super::hidden_consume::CardMode;
+use super::multicard::{StalemateBehavior, WinCondition};
 use super::options::{EndWhen, Goal, Mode, Toggle};
 
 /// One parsed command.
@@ -32,6 +33,10 @@ pub enum Command {
     Toggle(Toggle, bool),
     /// Distance between team spawns in chunks, 1 to 1000.
     SpawnDistance(u32),
+    /// `playto cards <n>`, `playto infinite` or `playto replace_goals`: the win condition.
+    PlayTo(WinCondition),
+    /// `stalemate end_game|reroll_card|do_nothing`: what a stalemate does.
+    Stalemate(StalemateBehavior),
     /// Show the current round options.
     Options,
     /// A player's vote at the end of a round.
@@ -50,7 +55,7 @@ pub enum VoteChoice {
     ReturnToLobby,
 }
 
-const USAGE: &str = "start [ignore_warnings] | end | reset | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout|hidden_items on|off|consume_items on|off | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | options | vote next|keep|lobby | resume | stats";
+const USAGE: &str = "start [ignore_warnings] | end | reset | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout|hidden_items on|off|consume_items on|off | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | playto cards <n>|infinite|replace_goals | stalemate end_game|reroll_card|do_nothing | options | vote next|keep|lobby | resume | stats";
 
 const SPAWN_DISTANCE_MAX: u32 = 1000;
 
@@ -124,6 +129,8 @@ pub fn parse(line: &str) -> Result<Command, String> {
             _ => Err("Too many arguments for 'mode'. Usage: mode standard|inventory|lockout".to_string()),
         },
         "endwhen" => parse_end_when(&args),
+        "playto" => parse_play_to(&args),
+        "stalemate" => parse_stalemate(&args),
         "pvp" => parse_toggle(name, Toggle::Pvp, &args),
         "keepinventory" => parse_toggle(name, Toggle::KeepInventory, &args),
         "elytra" => parse_toggle(name, Toggle::Elytra, &args),
@@ -166,6 +173,8 @@ pub fn requires_op(command: &Command) -> bool {
         | Command::EndWhen(_)
         | Command::Toggle(..)
         | Command::SpawnDistance(_)
+        | Command::PlayTo(_)
+        | Command::Stalemate(_)
         | Command::Resume => true,
         Command::Help
         | Command::Status
@@ -235,6 +244,34 @@ fn parse_end_when(args: &[&str]) -> Result<Command, String> {
         }
         [kind, _] => Err(format!("Unknown endwhen '{kind}'. {END_WHEN_USAGE}")),
         _ => Err(format!("Too many arguments for 'endwhen'. {END_WHEN_USAGE}")),
+    }
+}
+
+fn parse_play_to(args: &[&str]) -> Result<Command, String> {
+    const PLAY_TO_USAGE: &str = "Usage: playto cards <n>|infinite|replace_goals";
+    match args {
+        [] => Err(PLAY_TO_USAGE.to_string()),
+        [kind] if kind.eq_ignore_ascii_case("cards") => Err("Usage: playto cards <n>".to_string()),
+        [kind, value] if kind.eq_ignore_ascii_case("cards") => {
+            Ok(Command::PlayTo(WinCondition::Cards(positive_count("playto cards", value, "a number of cards")?)))
+        }
+        [kind] if kind.eq_ignore_ascii_case("infinite") => Ok(Command::PlayTo(WinCondition::Infinite)),
+        [kind] if kind.eq_ignore_ascii_case("replace_goals") => Ok(Command::PlayTo(WinCondition::ReplaceGoals)),
+        [kind, ..] => Err(format!("Unknown playto '{kind}'. {PLAY_TO_USAGE}")),
+    }
+}
+
+fn parse_stalemate(args: &[&str]) -> Result<Command, String> {
+    const STALEMATE_USAGE: &str = "Usage: stalemate end_game|reroll_card|do_nothing";
+    match args {
+        [] => Err(STALEMATE_USAGE.to_string()),
+        [value] => match value.to_lowercase().as_str() {
+            "end_game" => Ok(Command::Stalemate(StalemateBehavior::EndGame)),
+            "reroll_card" => Ok(Command::Stalemate(StalemateBehavior::RerollCard)),
+            "do_nothing" => Ok(Command::Stalemate(StalemateBehavior::Nothing)),
+            _ => Err(format!("Unknown stalemate '{value}'. {STALEMATE_USAGE}")),
+        },
+        _ => Err(format!("Too many arguments for 'stalemate'. {STALEMATE_USAGE}")),
     }
 }
 

@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, HashMap};
 use serde_json::{json, Map, Value};
 
 use crate::server::hidden_consume::HiddenConsume;
+use crate::server::multicard::{StalemateBehavior, WinCondition};
 use crate::server::options::{EndWhen, Goal, Mode, Options};
 use crate::update_settings::PlayerSettings;
 
@@ -41,6 +42,14 @@ pub fn options_to_json(o: &Options) -> String {
         "nightVision": o.night_vision,
         "spawnDistance": o.spawn_distance,
     });
+    // The multi-card and stalemate settings are written only when they differ from the defaults, so a round without
+    // them keeps the text it always had.
+    if o.win_condition != WinCondition::default() {
+        value["winCondition"] = o.win_condition.to_json();
+    }
+    if o.stalemate != StalemateBehavior::default() {
+        value["stalemate"] = o.stalemate.to_json();
+    }
     // The card flags are written only when one is on, so a round without them keeps the text it always had.
     if o.hidden_consume != HiddenConsume::default() {
         if let Value::Object(object) = &mut value {
@@ -72,6 +81,8 @@ pub fn options_from_json(s: &str) -> Options {
             .and_then(|n| u32::try_from(n).ok())
             .unwrap_or(d.spawn_distance),
         hidden_consume: HiddenConsume::read_from(&root),
+        win_condition: root.get("winCondition").and_then(WinCondition::from_json).unwrap_or(d.win_condition),
+        stalemate: root.get("stalemate").and_then(StalemateBehavior::from_json).unwrap_or(d.stalemate),
     }
 }
 

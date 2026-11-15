@@ -1,10 +1,11 @@
 //! Round options of the server: what `/bingo goal`, `mode`, `endwhen` and the toggles set.
 //! Names and defaults follow options/BingoOptions.kt and options/BingoCardOptions.kt of the original
 //! (goal `Lines(1)`, end `FirstWin`, pvp on, keep inventory off, elytra off, night vision off, spawn distance 25 chunks).
-//! Deviations: only one card per round (win condition `Cards(1)`). The hidden-items and consume-items flags are in
-//! `hidden_consume` (see `hidden_consume.rs`).
+//! The win condition (`play_to`, default `Cards(1)`) and the stalemate behaviour (default end game) are in `multicard`.
+//! The hidden-items and consume-items flags are in `hidden_consume` (see `hidden_consume.rs`).
 
 use super::hidden_consume::HiddenConsume;
+use super::multicard::{StalemateBehavior, WinCondition};
 
 /// What a team must reach on its card (`BingoGoal`: `Items(n)`, `Lines(n)`; `FullCard` is `Items(25)`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +56,10 @@ pub struct Options {
     pub spawn_distance: u32,
     /// Hidden-items and consume-items flags of the card, both off by default.
     pub hidden_consume: HiddenConsume,
+    /// How many cards a team completes to win (`play_to`), default one card.
+    pub win_condition: WinCondition,
+    /// What a stalemate does (`stalemate`), default end the game.
+    pub stalemate: StalemateBehavior,
 }
 
 impl Default for Options {
@@ -69,6 +74,8 @@ impl Default for Options {
             night_vision: false,
             spawn_distance: 25,
             hidden_consume: HiddenConsume::default(),
+            win_condition: WinCondition::default(),
+            stalemate: StalemateBehavior::default(),
         }
     }
 }
