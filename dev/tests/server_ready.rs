@@ -11,8 +11,9 @@ const B: u128 = 2;
 const C: u128 = 3;
 const D: u128 = 4;
 
+/// The mod's start rule: more than one player online (`players.size > 1`), so `min_players` is 2.
 fn timer(timer_secs: i32) -> ReadyTimer {
-    ReadyTimer::new(ReadyOptions { timer_secs, min_players: 1 })
+    ReadyTimer::new(ReadyOptions { timer_secs, min_players: 2 })
 }
 
 /// Calls `tick` for call numbers `from..=to` and returns the numbers of the calls that reported the end.
@@ -21,11 +22,15 @@ fn run(timer: &mut ReadyTimer, online: &[u128], eligible: bool, from: u32, to: u
 }
 
 #[test]
-fn lone_ready_player_ends_on_the_second_call() {
-    // Ready share 1 of 1 makes the countdown 0 ms, so the call after the start (elapsed 50 ms) ends it.
+fn lone_ready_player_never_starts_the_countdown() {
+    // ReadyService.kt:74 needs players.size > 1, so one online player keeps the timer stopped however long they wait.
     let mut t = timer(10);
     t.set_ready(A, true);
-    assert_eq!(run(&mut t, &[A], true, 1, 3), vec![2]);
+    assert!(run(&mut t, &[A], true, 1, 200).is_empty());
+    assert!(!t.update_packet(A, &[A], "lobby", GameStatus::Pregame).is_running);
+    // The second player makes two online: call 201 starts the countdown from zero, and with A ready (share 1 of 2)
+    // it is half of 10000 ms, so it ends on call 301.
+    assert_eq!(run(&mut t, &[A, B], true, 201, 400), vec![301]);
 }
 
 #[test]

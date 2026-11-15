@@ -13,8 +13,8 @@
 //! The countdown is `(1 - ready / online) * total - elapsed`, with the ratio in `f32` as in Kotlin, so a ratio
 //! of one third gives the same truncated milliseconds as the mod.
 //!
-//! Deliberate deviation: the mod starts only with more than one player (`players.size > 1`). Here `min_players`
-//! defaults to 1 so a single player can play alone. The other conditions (teams, options) belong to the caller and
+//! The start needs more than one player online, as the mod's `ReadyService.isConditionSatisfied` (line 74) has it:
+//! `players.size > 1`. `min_players` defaults to 2. The other conditions (teams, options) belong to the caller and
 //! arrive as the `eligible` argument.
 
 use std::collections::HashSet;
@@ -32,13 +32,14 @@ pub const TICK_MILLIS: i64 = 50;
 pub struct ReadyOptions {
     /// Length of the countdown with no one ready. `startWhenReadySeconds` in the mod, 600 by default.
     pub timer_secs: i32,
-    /// Fewest players online for the timer to run. A deliberate change from the mod's `> 1`, so one player can start.
+    /// Fewest players online for the timer to run. The mod's `players.size > 1` (`ReadyService.kt:74`), so 2: a lone
+    /// player cannot start a countdown.
     pub min_players: usize,
 }
 
 impl Default for ReadyOptions {
     fn default() -> Self {
-        Self { timer_secs: 600, min_players: 1 }
+        Self { timer_secs: 600, min_players: 2 }
     }
 }
 

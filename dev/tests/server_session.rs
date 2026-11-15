@@ -733,3 +733,87 @@ fn resume_after_the_time_limit_gives_fifteen_more_minutes_from_the_elapsed_time(
     }
     assert!(run(&mut session, &mut host, None, "status").contains("Playing"), "the resumed game does not end again");
 }
+
+/// Session options with a ready countdown of `timer_secs` and the mod's minimum of two players (the default).
+fn ready_options(seed: u64, timer_secs: i32) -> SessionOptions {
+    SessionOptions {
+        ready: ReadyOptions { timer_secs, ..ReadyOptions::default() },
+        ..options(seed, 0, None)
+    }
+}
+
+#[test]
+fn a_lone_ready_player_never_starts_the_countdown() {
+    // ReadyService.kt:74 needs players.size > 1. Alice is ready on a team and waits 200 ticks with nobody else online.
+    let mut host = FakeHost::default();
+    let mut session = Session::new(ready_options(7, 10));
+    lobby(&mut host, &mut session, &[(ALICE, "Alice")], &[(ALICE, "red")]);
+    session.on_packet(&mut host, ALICE, "set_ready", &READY_V1);
+    host.take();
+
+    for _ in 0..200 {
+        session.tick(&mut host);
+    }
+    assert!(run(&mut session, &mut host, None, "status").contains("Pregame"), "one player cannot start");
+    let sent = host.take();
+    let packets = payloads(&sent, ALICE, "ready_timer_update_v2");
+    assert_eq!(packets.len(), 20, "ticks 10, 20, ..., 200");
+    assert!(packets.iter().all(|p| !ready_of(p).is_running), "the countdown never runs");
+}
+
+#[test]
+fn a_player_leaving_cancels_the_countdown_and_the_ready_flags_and_the_return_restarts_it() {
+    // Timer 10 s. Ticks 1..=50 run the countdown (Alice ready, Bob online). Bob leaves before tick 51.
+    let mut host = FakeHost::default();
+    let mut session = Session::new(ready_options(7, 10));
+    lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "red")]);
+    session.on_packet(&mut host, ALICE, "set_ready", &READY_V1);
+    for _ in 0..50 {
+        session.tick(&mut host);
+    }
+    assert!(run(&mut session, &mut host, None, "status").contains("Pregame"));
+
+    host.online = vec![player(ALICE, "Alice")];
+    session.on_leave(&mut host, BOB);
+    host.take();
+    // Tick 51 finds one player online: the countdown stops and Alice's ready flag goes with it.
+    session.tick(&mut host);
+    assert!(run(&mut session, &mut host, None, "status").contains("Pregame"));
+    for _ in 0..9 {
+        session.tick(&mut host);
+    }
+    // Tick 60 sends the ready screen: not running, Alice not ready.
+    let sent = host.take();
+    let screen = ready_of(&only(&sent, ALICE, "ready_timer_update_v2"));
+    assert!(!screen.is_running, "the countdown stopped");
+    assert!(!screen.is_ready, "the reset cleared Alice's ready flag");
+    assert_eq!(screen.total_players, 1);
+
+    // Bob returns on his team, and Alice readies again. Tick 61 starts the countdown from zero (share 1 of 2: 5000 ms,
+    // which is 100 ticks), so it ends on tick 161, not before.
+    host.online = vec![player(ALICE, "Alice"), player(BOB, "Bob")];
+    session.on_join(&mut host, &player(BOB, "Bob"));
+    assert!(run(&mut session, &mut host, Some(BOB), "join red").starts_with("You joined"));
+    session.on_packet(&mut host, ALICE, "set_ready", &READY_V1);
+    host.take();
+    for _ in 61..=160 {
+        session.tick(&mut host);
+    }
+    assert!(run(&mut session, &mut host, None, "status").contains("Pregame"), "tick 160 is 50 ms short");
+    session.tick(&mut host);
+    assert!(run(&mut session, &mut host, None, "status").contains("Playing"), "tick 161 ends the countdown");
+}
+
+#[test]
+fn an_operator_can_start_a_lone_player_without_any_ready_countdown() {
+    // `bingo start` has no player-count check (GameCommands.kt:37-46). One player on no team joins bingo_red.
+    let mut host = FakeHost::default();
+    let mut session = Session::new(ready_options(7, 10));
+    host.online = vec![player(ALICE, "Alice")];
+    session.on_join(&mut host, &player(ALICE, "Alice"));
+    host.take();
+
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    assert!(run(&mut session, &mut host, None, "status").contains("Playing"));
+    assert!(host.take_commands().contains(&"team add bingo_red".to_string()));
+}
