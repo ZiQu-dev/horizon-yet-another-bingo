@@ -80,6 +80,10 @@ pub fn options_to_json(o: &Options) -> String {
     if let Value::Object(object) = &mut value {
         o.kit.write_into(object);
     }
+    // The advanced squares are written only when on, so a round without them keeps the text it always had.
+    if o.objectives {
+        value["objectives"] = Value::Bool(true);
+    }
     serde_json::to_string_pretty(&value).expect("a JSON value always serializes")
 }
 
@@ -118,6 +122,7 @@ pub fn options_from_json(s: &str) -> Options {
         team_chat: flag(&root, "teamChat", d.team_chat),
         sidebar: flag(&root, "sidebar", d.sidebar),
         kit: Kit::read_from(&root),
+        objectives: flag(&root, "objectives", d.objectives),
     }
 }
 

@@ -4,7 +4,7 @@
 //!
 //! Mirrors the original's `/bingo` commands, team rules, ready timer and scoring (`orig-teams-commands.md`). Pure logic:
 //! everything goes out through [`ServerHost`], and the events of [`Game`] are turned into packets here.
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use super::card_gen::{self, generate_card, load_pool, replace_squares, Pool, Rng};
 use super::commands::{self, Command, VoteChoice};
@@ -19,6 +19,7 @@ use super::multicard::{
     team_score, CardCompletion, CardState, Completion, CompletionOutcome, EndCause, Rules, StalemateAction,
     StalemateBehavior, TeamRound, WinCondition,
 };
+use super::objectives::{self, Runtime};
 use super::options::{EndWhen, Goal, Mode, Options};
 use super::ready::{encode_update_v2, ReadyOptions, ReadyTimer};
 use super::stats::{self, Captures};
@@ -55,6 +56,8 @@ const MS_PER_TICK: i64 = 50;
 const REROLL_NOTICE: &str = "A stalemate: every team on the card gets a new card.";
 /// Mixed into the seed of the auto shuffle at the start, so it does not repeat the card's own shuffles.
 const AUTO_SHUFFLE_SALT: u64 = 0x5EED_7EA5_0000_0001;
+/// Server ticks between two reads of the objective squares that no event reports (stats, advancements): one second.
+const OBJECTIVE_POLL_TICKS: u64 = 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionOptions {
@@ -142,6 +145,13 @@ pub struct Session {
     await_rejoin: bool,
     /// Items each player found this round, for the history and `stats` (see `stats::Captures`).
     captures: Captures,
+    /// Each card's objective state (`objectives::Runtime`), indexed like `cards`. Read by a card with objective squares.
+    objective_runtime: Vec<Runtime>,
+    /// Each player's inventory as last reported (`on_inventory`), by player: what the objective squares are read from.
+    held: HashMap<u128, HashMap<String, u32>>,
+    /// Players whose inventory has been reported since the session started. An objective round is scored only once every
+    /// online member has been reported, so a restored game never reads an unknown inventory as an empty one.
+    reported: HashSet<u128>,
 }
 
 impl Session {
@@ -182,6 +192,9 @@ impl Session {
             forfeit: false,
             await_rejoin: false,
             captures: Captures::default(),
+            objective_runtime: Vec::new(),
+            held: HashMap::new(),
+            reported: HashSet::new(),
             options,
         }
     }
@@ -275,6 +288,10 @@ impl Session {
             value["seen"] = json!(seen);
         }
         value["captures"] = self.captures.to_json();
+        // Written only by a round with objective squares, so the text of the plain rounds does not change.
+        if self.cards.iter().any(|card| objectives::card_squares(card).is_some()) {
+            value["objectiveRuntime"] = Value::Array(self.objective_runtime.iter().map(Runtime::to_json).collect());
+        }
         serde_json::to_string_pretty(&value).expect("a JSON value always serializes")
     }
 
@@ -301,6 +318,17 @@ impl Session {
         self.teams = saved.teams;
         // Read apart from the snapshot itself: a game saved before the ledger existed has none.
         self.captures = serde_json::from_str::<Value>(text).ok().and_then(|value| value.get("captures").map(Captures::from_json)).unwrap_or_default();
+        let saved_value = serde_json::from_str::<Value>(text).ok();
+        self.objective_runtime = (0..self.cards.len())
+            .map(|index| {
+                saved_value
+                    .as_ref()
+                    .and_then(|value| value.get("objectiveRuntime"))
+                    .and_then(|list| list.get(index))
+                    .map(Runtime::from_json)
+                    .unwrap_or_default()
+            })
+            .collect();
         self.boss_bars.clear();
         self.forfeit = false;
         self.empty_ticks = 0;
@@ -354,12 +382,19 @@ impl Session {
     /// A player's inventory, as a map from item id to count. Only during play, and only for a player on a team: squares
     /// found now are scored for their team and announced. A team that completes a line wins and ends the game.
     pub fn on_inventory(&mut self, host: &mut dyn ServerHost, player: u128, held: &HashMap<String, u32>) {
+        // Kept whatever the phase: the objective squares read it once play begins.
+        self.held.insert(player, held.clone());
+        self.reported.insert(player);
         if self.game.status() != GameStatus::Playing {
             return;
         }
         let Some(team) = self.teams.team_of(player) else { return };
         // Only a player on a team scores; the save after the finds covers the squares and the goals reached.
         let team = team.to_string();
+        if self.card_objectives(self.card_index_of(&team)).is_some() {
+            self.apply_objectives(host, Some(player), &team);
+            return;
+        }
         let newly_seen = self.record_seen(&team, held);
         let index = self.card_index_of(&team);
         let (items, lost) = {
@@ -624,6 +659,7 @@ impl Session {
         let pool = self.card_pool();
         self.cards.push(generate_card(seed, &pool, self.rules.tier_counts));
         self.owners.push(HashMap::new());
+        self.objective_runtime.push(Runtime::default());
         self.card_started.push(now);
         index
     }
@@ -750,6 +786,9 @@ impl Session {
         }
         let events = self.game.tick();
         self.dispatch(host, events);
+        if self.game.status() == GameStatus::Playing && self.ticks % OBJECTIVE_POLL_TICKS == 0 {
+            self.poll_objectives(host);
+        }
         if self.game.status() == GameStatus::Playing && self.ticks % 10 == 0 {
             self.send_boss_bars(host);
         }
@@ -842,7 +881,13 @@ impl Session {
     /// The pool the cards are drawn from: the tiers without the kit's items, which the original keeps off the cards
     /// (`excludeSpawnKitItemsFromCards`). With no kit it is the built-in pool.
     fn card_pool(&self) -> Pool {
-        kit::pool_without(&self.pool, &self.rules.kit.names())
+        let pool = kit::pool_without(&self.pool, &self.rules.kit.names());
+        // `objectives` adds the advanced squares of the original's tier lists; off, the pool is the plain one.
+        if self.rules.objectives {
+            objectives::with_objectives(&pool)
+        } else {
+            pool
+        }
     }
 
     /// `bingo kit`: shows the kit, or changes it before the game starts and saves the options.
@@ -1012,6 +1057,7 @@ impl Session {
         self.captures.clear();
         self.persistent.clear();
         self.owners = vec![HashMap::new()];
+        self.objective_runtime = vec![Runtime::default()];
         self.seen.clear();
         self.reached.clear();
         self.votes.clear();
@@ -1155,6 +1201,7 @@ impl Session {
         self.votes.clear();
         self.progress.clear();
         self.persistent.clear();
+        self.objective_runtime.clear();
         self.ready.clear();
         self.seed = self.seed.wrapping_add(1);
         self.send_ready_updates(host);
@@ -1236,6 +1283,9 @@ impl Session {
         if let Some(card) = self.cards.first_mut() {
             replace_squares(seed, &pool, card, &indices);
         }
+        if let Some(runtime) = self.objective_runtime.first_mut() {
+            runtime.forget(&indices);
+        }
         for progress in self.progress.values_mut() {
             progress.found.retain(|square| !replaced.contains(square));
         }
@@ -1266,6 +1316,12 @@ impl Session {
     fn tiles_for(&self, host: &dyn ServerHost, viewer: &str, should_notify: bool) -> Option<(&'static str, Vec<u8>)> {
         let index = self.card_index_of(viewer);
         let card = self.cards.get(index)?;
+        if let Some(squares) = self.card_objectives(index) {
+            let none: &[usize] = &[];
+            let found = self.progress.get(viewer).map_or(none, |progress| progress.found.as_slice());
+            let item_id = |item: &str| host.item_numeric_id(item);
+            return objectives::card_from_objectives(viewer, &squares, found, &item_id, &objectives::Tags::new(), should_notify).ok();
+        }
         let found = self.found_on(index);
         let item_id = |item: &str| host.item_numeric_id(item);
         let views = self.views_for(Some(viewer));
@@ -1288,6 +1344,73 @@ impl Session {
         });
         let postgame = self.game.status() == GameStatus::Postgame;
         hidden_consume::tile_views(card, self.rules.hidden_consume, false, sight, postgame)
+    }
+
+    /// The squares of card `index` when it has objective squares (see `objectives::card_squares`), else `None`.
+    fn card_objectives(&self, index: usize) -> Option<Vec<objectives::Square>> {
+        self.cards.get(index).and_then(objectives::card_squares)
+    }
+
+    /// Scores the objective squares of a team's card from what its members hold now, their statistics and their
+    /// advancements (`objectives::update_team`). Lockout gives each new square to the team when no team has it. A
+    /// square found is announced and sent to the team, the goals are checked and the game is saved. Nothing happens
+    /// until every online member's inventory has been reported.
+    fn apply_objectives(&mut self, host: &mut dyn ServerHost, finder: Option<u128>, team: &str) {
+        let index = self.card_index_of(team);
+        let Some(squares) = self.card_objectives(index) else { return };
+        let members = self.teams.members(team);
+        let online: Vec<u128> = host.players().iter().map(|player| player.uuid).collect();
+        if members.is_empty() || online.iter().any(|uuid| members.contains(uuid) && !self.reported.contains(uuid)) {
+            return;
+        }
+        let before: Vec<usize> = self.progress.get(team).map(|progress| progress.found.clone()).unwrap_or_default();
+        let mut found = before.clone();
+        let inventory_mode = self.rules.mode == Mode::Inventory;
+        let tags = objectives::Tags::new();
+        if self.objective_runtime.len() <= index {
+            self.objective_runtime.resize_with(index + 1, Runtime::default);
+        }
+        let newly = {
+            let facts = objectives::HostFacts { held: &self.held, host: &*host };
+            let ctx = objectives::Ctx { facts: &facts, tags: &tags };
+            let runtime = &mut self.objective_runtime[index];
+            objectives::update_team(&squares, &mut found, &members, &ctx, runtime, inventory_mode)
+        };
+        let claimed: Vec<usize> = if self.rules.mode == Mode::Lockout {
+            let Some(owners) = self.owners.get_mut(index) else { return };
+            scoring::claim_lockout(owners, team, &newly)
+        } else {
+            newly.clone()
+        };
+        found.retain(|square| !newly.contains(square) || claimed.contains(square));
+        if found == before {
+            return;
+        }
+        let removed: Vec<usize> = before.iter().filter(|square| !found.contains(square)).copied().collect();
+        self.progress.entry(team.to_string()).or_default().found = found;
+        let who = finder.unwrap_or(members[0]);
+        self.captures.gained(team, who, &claimed);
+        self.captures.lost(team, &removed);
+        let name = player_name(&*host, who);
+        for square in &claimed {
+            let label = objectives::describe(&squares[*square].objective);
+            self.announce_find(host, &format!("{name} found {label}"));
+        }
+        self.send_tiles_after_find(host, team);
+        self.send_score_to_all(host, team);
+        self.check_goals(host);
+        self.save_playing(host);
+    }
+
+    /// Scores the objective squares of every team's card: the poll of [`OBJECTIVE_POLL_TICKS`].
+    fn poll_objectives(&mut self, host: &mut dyn ServerHost) {
+        let teams: Vec<String> = self.teams.teams().into_iter().map(str::to_string).collect();
+        for team in teams {
+            if self.game.status() != GameStatus::Playing {
+                break;
+            }
+            self.apply_objectives(host, None, &team);
+        }
     }
 
     /// Adds the squares whose items `held` holds to the team's seen squares. Returns whether any square was new.

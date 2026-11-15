@@ -18,9 +18,14 @@
 //! - retention (objective/ObjectiveService.kt, `getPlayers`): captures are kept in standard mode and dropped in inventory
 //!   mode, except for the kinds above that are not retained at all. Lockout is for the caller: the squares that
 //!   [`update_team`] returns go through `scoring::claim_lockout`, as the item squares do.
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::OnceLock;
 
+use serde_json::{json, Value};
+
+use super::card_gen::Pool;
 use super::host::ServerHost;
+use super::pool;
 use super::types::{Card, CARD_SQUARES};
 use crate::buf::Writer;
 use crate::card_tile::{CardTile, TierLabel};
@@ -29,6 +34,7 @@ use crate::card_tile_image::{CardTileImage, Decoration, ItemStyle};
 use crate::item::ItemStack;
 use crate::text::Text;
 use crate::update_card_tiles::CardTilesPacket;
+use super::wire;
 
 /// Item tags of the round: a tag key with its `#` (`#minecraft:banners`) to the item ids it holds. A tag missing here
 /// has no items.
@@ -243,7 +249,7 @@ pub fn update_team(
 }
 
 /// The name of an objective for a tile's id and a `not` tile's text.
-fn describe(objective: &Objective) -> String {
+pub fn describe(objective: &Objective) -> String {
     match objective {
         Objective::Item { item } => item.clone(),
         Objective::OneOf { entries, .. } | Objective::AllOf { entries, .. } => entries.join(", "),
@@ -257,8 +263,9 @@ fn stack(item: &str, item_id: &dyn Fn(&str) -> Option<i32>) -> Option<ItemStack>
     item_id(item).map(|id| ItemStack { count: 1, item: id, added: vec![], removed: vec![] })
 }
 
-/// One square as the client's tile. `is_found` is the team's state for the square.
-fn to_tile(team: &str, square: &Square, is_found: bool, item_id: &dyn Fn(&str) -> Option<i32>, tags: &Tags) -> CardTile {
+/// One square as the client's tile. `is_found` is the team's state for the square; `index` is its place on the card.
+/// An item square is built as `wire::card_tiles` builds it, so a card of plain items reads the same either way.
+fn to_tile(team: &str, square: &Square, index: usize, is_found: bool, item_id: &dyn Fn(&str) -> Option<i32>, tags: &Tags) -> CardTile {
     let mut image = CardTileImage { is_achieved: is_found, ..CardTileImage::default() };
     let mut image_list = Vec::new();
     let mut action = CardTileAction::None;
@@ -268,7 +275,7 @@ fn to_tile(team: &str, square: &Square, is_found: bool, item_id: &dyn Fn(&str) -
             if let Some(stack) = &image.item {
                 action = CardTileAction::Item(stack.clone());
             }
-            item.clone()
+            wire::item_name(item)
         }
         Objective::OneOf { entries, .. } | Objective::AllOf { entries, .. } => {
             let items = expand(entries, tags);
@@ -285,23 +292,23 @@ fn to_tile(team: &str, square: &Square, is_found: bool, item_id: &dyn Fn(&str) -
                 })
                 .collect();
             let label = if is_one_of { "One of" } else { "All of" };
-            format!("{label}: {}", items.join(", "))
+            Text::plain(&format!("{label}: {}", items.join(", ")))
         }
         Objective::Inverse { of, .. } => {
             if let Objective::Item { item } = of.as_ref() {
                 image.item = stack(item, item_id);
             }
             image.decoration = Decoration::Forbidden;
-            format!("Not {}", describe(of))
+            Text::plain(&format!("Not {}", describe(of)))
         }
         Objective::Stats { stat_type, stat_name, min, .. } => {
             image.decoration = Decoration::Advancement;
-            format!("{}: {min}", stat_name.as_deref().unwrap_or(stat_type))
+            Text::plain(&format!("{}: {min}", stat_name.as_deref().unwrap_or(stat_type)))
         }
         Objective::Advancement { id, .. } => {
             image.decoration = Decoration::Advancement;
             action = CardTileAction::Advancement(id.clone());
-            id.clone()
+            Text::plain(id)
         }
     };
     CardTile {
@@ -310,8 +317,8 @@ fn to_tile(team: &str, square: &Square, is_found: bool, item_id: &dyn Fn(&str) -
         image_list,
         action,
         item_tier: Some(square.tier),
-        name: Some(Text::plain(&name)),
-        lore: vec![],
+        name: Some(name),
+        lore: vec![wire::tile_lore(square.tier, index)],
         is_hidden: false,
         is_locked: false,
         is_flashing: false,
@@ -336,10 +343,182 @@ pub fn card_from_objectives(
     let tiles = squares
         .iter()
         .enumerate()
-        .map(|(index, square)| (index as i32, to_tile(team, square, found.contains(&index), item_id, tags)))
+        .map(|(index, square)| (index as i32, to_tile(team, square, index, found.contains(&index), item_id, tags)))
         .collect();
     let packet = CardTilesPacket { team_key: Some(team.to_owned()), tiles, should_notify };
     let mut writer = Writer::default();
     packet.write(&mut writer).map_err(|e| format!("update_card_tiles: {e:?}"))?;
     Ok(("update_card_tiles", writer.into_bytes()))
+}
+
+// ---- Cards with objective squares ----
+//
+// A card of plain items is a card of [`Objective::Item`] squares, and the session scores it as it always did. A card
+// with advanced squares holds, in place of each such square's item, the key `objective:<id>`: an advancement id
+// (`minecraft:adventure/arbalistic`) or a challenge of the original (`yet-another-minecraft-bingo:challenge/...`, read
+// from `data/objectives.json`). The key is the square's only record, so the objective is read back from it when a
+// game is restored and nothing can drift apart.
+
+/// The prefix of the key an objective square holds in its card's item.
+pub const KEY_PREFIX: &str = "objective:";
+/// The original's challenge objectives the port can score, as `data/objectives.json` gives them (generated from the
+/// original's `objectives/challenge/*.json`; NBT and component checks and the item counts are left out).
+const CATALOG_JSON: &str = include_str!("../../data/objectives.json");
+
+/// The challenge objectives by id, read once.
+fn catalog() -> &'static HashMap<String, Objective> {
+    static CATALOG: OnceLock<HashMap<String, Objective>> = OnceLock::new();
+    CATALOG.get_or_init(|| {
+        let root: Value = serde_json::from_str(CATALOG_JSON).expect("data/objectives.json is JSON");
+        let object = root.as_object().expect("data/objectives.json is an object");
+        object
+            .iter()
+            .filter_map(|(id, value)| parse_objective(value).map(|objective| (id.clone(), objective)))
+            .collect()
+    })
+}
+
+/// One objective of the catalog's form: `{"type": "item", "item"}`, `{"type": "one_of" | "all_of", "entries"}`,
+/// `{"type": "inverse", "of"}` (permanent, as the original's default), or `{"type": "stats", "statType", "statName"?}`
+/// (relative, `min` 1, `max` unbounded, as the original's defaults). `None` for anything else.
+fn parse_objective(value: &Value) -> Option<Objective> {
+    let text = |key: &str| value.get(key).and_then(Value::as_str).map(str::to_string);
+    let entries = || -> Option<Vec<String>> {
+        value.get("entries")?.as_array()?.iter().map(|entry| entry.as_str().map(str::to_string)).collect()
+    };
+    match value.get("type")?.as_str()? {
+        "item" => Some(Objective::Item { item: text("item")? }),
+        "one_of" => Some(Objective::OneOf { entries: entries()?, permanent: false }),
+        "all_of" => Some(Objective::AllOf { entries: entries()?, permanent: false }),
+        "inverse" => {
+            let of = value.get("of")?;
+            // `of` may be a bare item id, as `never_get_flint_and_steel` writes it.
+            let of = match of.as_str() {
+                Some(item) => Objective::Item { item: item.to_string() },
+                None => parse_objective(of)?,
+            };
+            Some(Objective::Inverse { of: Box::new(of), permanent: true })
+        }
+        "stats" => Some(Objective::Stats {
+            stat_type: text("statType")?,
+            stat_name: text("statName"),
+            min: 1,
+            max: i64::MAX,
+            relative: true,
+            permanent: false,
+        }),
+        _ => None,
+    }
+}
+
+/// The objective a square key stands for, or `None` for a key that is neither a catalog id nor a vanilla advancement.
+pub fn objective_of_key(key: &str) -> Option<Objective> {
+    let id = key.strip_prefix(KEY_PREFIX)?;
+    if let Some(objective) = catalog().get(id) {
+        return Some(objective.clone());
+    }
+    id.starts_with("minecraft:").then(|| Objective::Advancement { id: id.to_string(), permanent: false })
+}
+
+/// The key a pool entry of the original's tier lists becomes, when it can be scored: every advancement, and every
+/// challenge the catalog has. `None` for plain items and for challenges the port cannot score.
+fn key_for_entry(entry: &str) -> Option<String> {
+    let key = format!("{KEY_PREFIX}{entry}");
+    objective_of_key(&key).map(|_| key)
+}
+
+/// The pool with the advanced squares added: each advancement and each scorable challenge of the original's tier lists
+/// joins the tier it has in its list, with weight 1. The item entries are left as they are.
+pub fn with_objectives(pool: &Pool) -> Pool {
+    let mut pool = pool.clone();
+    for (name, json) in pool::TIER_LISTS {
+        if name != "advancements" && name != "challenge" {
+            continue;
+        }
+        let Ok(list) = pool::parse_tier_list(json) else { continue };
+        for (tier, entries) in list.tiers.iter().enumerate() {
+            for entry in entries {
+                let Some(key) = key_for_entry(entry) else { continue };
+                if !pool.tiers[tier].contains(&key) {
+                    pool.tiers[tier].push(key);
+                    pool.weights[tier].push(1.0);
+                }
+            }
+        }
+    }
+    pool
+}
+
+/// The squares of a card with objective squares, or `None` for a card of plain items (the session scores those as
+/// it always has). Each square is its key's objective, or a plain item for an item.
+pub fn card_squares(card: &Card) -> Option<Vec<Square>> {
+    if !card.squares.iter().any(|square| square.item.starts_with(KEY_PREFIX)) {
+        return None;
+    }
+    Some(
+        card.squares
+            .iter()
+            .map(|square| Square {
+                objective: objective_of_key(&square.item).unwrap_or_else(|| Objective::Item { item: square.item.clone() }),
+                tier: square.tier,
+            })
+            .collect(),
+    )
+}
+
+impl Runtime {
+    /// Forgets the squares `squares` (a square replaced by another objective starts afresh: its permanent holders and
+    /// its statistic baseline go).
+    pub fn forget(&mut self, squares: &[usize]) {
+        self.once.retain(|square, _| !squares.contains(square));
+        self.baseline.retain(|(square, _), _| !squares.contains(square));
+    }
+
+    /// The runtime as JSON, for `game-state.json`: the players each permanent square has been held by, and each
+    /// relative stat's baseline. Sorted, so the same state gives the same text.
+    pub fn to_json(&self) -> Value {
+        let once: BTreeMap<usize, Vec<String>> = self
+            .once
+            .iter()
+            .map(|(&square, players)| {
+                let mut hex: Vec<String> = players.iter().map(|&player| format!("{player:032x}")).collect();
+                hex.sort();
+                (square, hex)
+            })
+            .collect();
+        let baseline: BTreeMap<(usize, String), i64> = self
+            .baseline
+            .iter()
+            .map(|(&(square, player), &value)| ((square, format!("{player:032x}")), value))
+            .collect();
+        let baseline: Vec<Value> = baseline
+            .into_iter()
+            .map(|((square, player), value)| json!({ "square": square, "player": player, "value": value }))
+            .collect();
+        json!({ "once": once, "baseline": baseline })
+    }
+
+    /// Reads [`Runtime::to_json`]. Entries that do not parse are left out.
+    pub fn from_json(value: &Value) -> Self {
+        let mut runtime = Runtime::default();
+        let hex = |text: &str| u128::from_str_radix(text, 16).ok();
+        if let Some(object) = value.get("once").and_then(Value::as_object) {
+            for (key, list) in object {
+                let (Ok(square), Some(list)) = (key.parse::<usize>(), list.as_array()) else { continue };
+                let set = runtime.once.entry(square).or_default();
+                set.extend(list.iter().filter_map(Value::as_str).filter_map(hex));
+            }
+        }
+        if let Some(list) = value.get("baseline").and_then(Value::as_array) {
+            for entry in list {
+                let square = entry.get("square").and_then(Value::as_u64);
+                let player = entry.get("player").and_then(Value::as_str).and_then(hex);
+                let stat = entry.get("value").and_then(Value::as_i64);
+                if let (Some(square), Some(player), Some(stat)) = (square, player, stat) {
+                    runtime.baseline.insert((square as usize, player), stat);
+                }
+            }
+        }
+        runtime
+    }
 }

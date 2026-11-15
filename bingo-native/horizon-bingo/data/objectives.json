@@ -1,0 +1,413 @@
+{
+ "yet-another-minecraft-bingo:challenge/all_chicken_eggs": {
+  "entries": [
+   "minecraft:brown_egg",
+   "minecraft:blue_egg",
+   "minecraft:egg"
+  ],
+  "type": "all_of"
+ },
+ "yet-another-minecraft-bingo:challenge/all_copper_armor": {
+  "entries": [
+   "minecraft:copper_boots",
+   "minecraft:copper_chestplate",
+   "minecraft:copper_helmet",
+   "minecraft:copper_leggings"
+  ],
+  "type": "all_of"
+ },
+ "yet-another-minecraft-bingo:challenge/all_copper_tools": {
+  "entries": [
+   "minecraft:copper_axe",
+   "minecraft:copper_hoe",
+   "minecraft:copper_pickaxe",
+   "minecraft:copper_shovel",
+   "minecraft:copper_spear",
+   "minecraft:copper_sword"
+  ],
+  "type": "all_of"
+ },
+ "yet-another-minecraft-bingo:challenge/all_diamond_armor": {
+  "entries": [
+   "minecraft:diamond_boots",
+   "minecraft:diamond_chestplate",
+   "minecraft:diamond_helmet",
+   "minecraft:diamond_leggings"
+  ],
+  "type": "all_of"
+ },
+ "yet-another-minecraft-bingo:challenge/all_diamond_tools": {
+  "entries": [
+   "minecraft:diamond_axe",
+   "minecraft:diamond_hoe",
+   "minecraft:diamond_pickaxe",
+   "minecraft:diamond_shovel",
+   "minecraft:diamond_spear",
+   "minecraft:diamond_sword"
+  ],
+  "type": "all_of"
+ },
+ "yet-another-minecraft-bingo:challenge/all_dyes": {
+  "entries": [
+   "minecraft:black_dye",
+   "minecraft:blue_dye",
+   "minecraft:brown_dye",
+   "minecraft:cyan_dye",
+   "minecraft:gray_dye",
+   "minecraft:green_dye",
+   "minecraft:light_blue_dye",
+   "minecraft:light_gray_dye",
+   "minecraft:lime_dye",
+   "minecraft:magenta_dye",
+   "minecraft:orange_dye",
+   "minecraft:pink_dye",
+   "minecraft:purple_dye",
+   "minecraft:red_dye",
+   "minecraft:white_dye",
+   "minecraft:yellow_dye"
+  ],
+  "type": "all_of"
+ },
+ "yet-another-minecraft-bingo:challenge/all_explorer_maps": {
+  "entries": [
+   "minecraft:abandoned_camp_map",
+   "minecraft:buried_ancient_city_map",
+   "minecraft:buried_mineshaft_map",
+   "minecraft:buried_treasure_map",
+   "minecraft:buried_trial_chambers_map",
+   "minecraft:desert_pyramid_map",
+   "minecraft:jungle_pyramid_map",
+   "minecraft:warm_ocean_ruins_map",
+   "minecraft:woodland_mansion_map"
+  ],
+  "type": "all_of"
+ },
+ "yet-another-minecraft-bingo:challenge/all_filled_buckets": {
+  "entries": [
+   "minecraft:lava_bucket",
+   "minecraft:milk_bucket",
+   "minecraft:water_bucket",
+   "minecraft:powder_snow_bucket"
+  ],
+  "type": "all_of"
+ },
+ "yet-another-minecraft-bingo:challenge/all_golden_armor": {
+  "entries": [
+   "minecraft:golden_boots",
+   "minecraft:golden_chestplate",
+   "minecraft:golden_helmet",
+   "minecraft:golden_leggings"
+  ],
+  "type": "all_of"
+ },
+ "yet-another-minecraft-bingo:challenge/all_golden_tools": {
+  "entries": [
+   "minecraft:golden_axe",
+   "minecraft:golden_hoe",
+   "minecraft:golden_pickaxe",
+   "minecraft:golden_shovel",
+   "minecraft:golden_spear",
+   "minecraft:golden_sword"
+  ],
+  "type": "all_of"
+ },
+ "yet-another-minecraft-bingo:challenge/all_iron_armor": {
+  "entries": [
+   "minecraft:iron_boots",
+   "minecraft:iron_chestplate",
+   "minecraft:iron_helmet",
+   "minecraft:iron_leggings"
+  ],
+  "type": "all_of"
+ },
+ "yet-another-minecraft-bingo:challenge/all_iron_tools": {
+  "entries": [
+   "minecraft:iron_axe",
+   "minecraft:iron_hoe",
+   "minecraft:iron_pickaxe",
+   "minecraft:iron_shovel",
+   "minecraft:iron_spear",
+   "minecraft:iron_sword"
+  ],
+  "type": "all_of"
+ },
+ "yet-another-minecraft-bingo:challenge/all_leather_armor": {
+  "entries": [
+   "minecraft:leather_boots",
+   "minecraft:leather_chestplate",
+   "minecraft:leather_helmet",
+   "minecraft:leather_leggings"
+  ],
+  "type": "all_of"
+ },
+ "yet-another-minecraft-bingo:challenge/all_seeds": {
+  "entries": [
+   "minecraft:wheat_seeds",
+   "minecraft:melon_seeds",
+   "minecraft:pumpkin_seeds",
+   "minecraft:beetroot_seeds"
+  ],
+  "type": "all_of"
+ },
+ "yet-another-minecraft-bingo:challenge/all_stone_tools": {
+  "entries": [
+   "minecraft:stone_axe",
+   "minecraft:stone_hoe",
+   "minecraft:stone_pickaxe",
+   "minecraft:stone_shovel",
+   "minecraft:stone_spear",
+   "minecraft:stone_sword"
+  ],
+  "type": "all_of"
+ },
+ "yet-another-minecraft-bingo:challenge/all_wooden_tools": {
+  "entries": [
+   "minecraft:wooden_axe",
+   "minecraft:wooden_hoe",
+   "minecraft:wooden_pickaxe",
+   "minecraft:wooden_shovel",
+   "minecraft:wooden_spear",
+   "minecraft:wooden_sword"
+  ],
+  "type": "all_of"
+ },
+ "yet-another-minecraft-bingo:challenge/never_get_flint_and_steel": {
+  "of": {
+   "item": "minecraft:flint_and_steel",
+   "type": "item"
+  },
+  "type": "inverse"
+ },
+ "yet-another-minecraft-bingo:challenge/never_get_kelp": {
+  "of": {
+   "item": "minecraft:kelp",
+   "type": "item"
+  },
+  "type": "inverse"
+ },
+ "yet-another-minecraft-bingo:challenge/never_get_poppy": {
+  "of": {
+   "item": "minecraft:poppy",
+   "type": "item"
+  },
+  "type": "inverse"
+ },
+ "yet-another-minecraft-bingo:challenge/never_get_shield": {
+  "of": {
+   "item": "minecraft:shield",
+   "type": "item"
+  },
+  "type": "inverse"
+ },
+ "yet-another-minecraft-bingo:challenge/never_get_wheat_seeds": {
+  "of": {
+   "item": "minecraft:wheat_seeds",
+   "type": "item"
+  },
+  "type": "inverse"
+ },
+ "yet-another-minecraft-bingo:challenge/never_killed_by_creeper": {
+  "of": {
+   "statName": "minecraft:creeper",
+   "statType": "minecraft:killed_by",
+   "type": "stats"
+  },
+  "type": "inverse"
+ },
+ "yet-another-minecraft-bingo:challenge/never_killed_by_skeleton": {
+  "of": {
+   "statName": "minecraft:skeleton",
+   "statType": "minecraft:killed_by",
+   "type": "stats"
+  },
+  "type": "inverse"
+ },
+ "yet-another-minecraft-bingo:challenge/never_killed_by_zombie": {
+  "of": {
+   "statName": "minecraft:zombie",
+   "statType": "minecraft:killed_by",
+   "type": "stats"
+  },
+  "type": "inverse"
+ },
+ "yet-another-minecraft-bingo:challenge/never_sleep_in_bed": {
+  "statName": "minecraft:sleep_in_bed",
+  "statType": "minecraft:custom",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_broken_golden_axe": {
+  "statName": "minecraft:golden_axe",
+  "statType": "minecraft:broken",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_broken_golden_hoe": {
+  "statName": "minecraft:golden_hoe",
+  "statType": "minecraft:broken",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_broken_golden_pickaxe": {
+  "statName": "minecraft:golden_pickaxe",
+  "statType": "minecraft:broken",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_broken_golden_shovel": {
+  "statName": "minecraft:golden_shovel",
+  "statType": "minecraft:broken",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_broken_golden_sword": {
+  "statName": "minecraft:golden_sword",
+  "statType": "minecraft:broken",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_broken_wooden_axe": {
+  "statName": "minecraft:wooden_axe",
+  "statType": "minecraft:broken",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_broken_wooden_hoe": {
+  "statName": "minecraft:wooden_hoe",
+  "statType": "minecraft:broken",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_broken_wooden_pickaxe": {
+  "statName": "minecraft:wooden_pickaxe",
+  "statType": "minecraft:broken",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_broken_wooden_shovel": {
+  "statName": "minecraft:wooden_shovel",
+  "statType": "minecraft:broken",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_broken_wooden_sword": {
+  "statName": "minecraft:wooden_sword",
+  "statType": "minecraft:broken",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_custom_bell_ring": {
+  "statName": "minecraft:bell_ring",
+  "statType": "minecraft:custom",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_custom_deaths": {
+  "statName": "minecraft:deaths",
+  "statType": "minecraft:custom",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_custom_fish_caught": {
+  "statName": "minecraft:fish_caught",
+  "statType": "minecraft:custom",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_custom_raid_trigger": {
+  "statName": "minecraft:raid_trigger",
+  "statType": "minecraft:custom",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_custom_raid_win": {
+  "statName": "minecraft:raid_win",
+  "statType": "minecraft:custom",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_custom_ride_boat": {
+  "statName": "minecraft:boat_one_cm",
+  "statType": "minecraft:custom",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_custom_ride_horse": {
+  "statName": "minecraft:horse_one_cm",
+  "statType": "minecraft:custom",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_custom_ride_minecart": {
+  "statName": "minecraft:minecart_one_cm",
+  "statType": "minecraft:custom",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_custom_ride_pig": {
+  "statName": "minecraft:pig_one_cm",
+  "statType": "minecraft:custom",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_custom_ride_strider": {
+  "statName": "minecraft:strider_one_cm",
+  "statType": "minecraft:custom",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_custom_target_hit": {
+  "statName": "minecraft:target_hit",
+  "statType": "minecraft:custom",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_custom_traded_with_villager": {
+  "statName": "minecraft:traded_with_villager",
+  "statType": "minecraft:custom",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_killed_by_warden": {
+  "statName": "minecraft:warden",
+  "statType": "minecraft:killed_by",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_killed_creaking": {
+  "statName": "minecraft:creaking",
+  "statType": "minecraft:killed",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_killed_creeper": {
+  "statName": "minecraft:creeper",
+  "statType": "minecraft:killed",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_killed_drowned": {
+  "statName": "minecraft:drowned",
+  "statType": "minecraft:killed",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_killed_guardian": {
+  "statName": "minecraft:guardian",
+  "statType": "minecraft:killed",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_killed_hoglin": {
+  "statName": "minecraft:hoglin",
+  "statType": "minecraft:killed",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_killed_iron_golem": {
+  "statName": "minecraft:iron_golem",
+  "statType": "minecraft:killed",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_killed_piglin": {
+  "statName": "minecraft:piglin",
+  "statType": "minecraft:killed",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_killed_piglin_brute": {
+  "statName": "minecraft:piglin_brute",
+  "statType": "minecraft:killed",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_killed_skeleton": {
+  "statName": "minecraft:skeleton",
+  "statType": "minecraft:killed",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_killed_wither_skeleton": {
+  "statName": "minecraft:wither_skeleton",
+  "statType": "minecraft:killed",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_killed_zombie": {
+  "statName": "minecraft:zombie",
+  "statType": "minecraft:killed",
+  "type": "stats"
+ },
+ "yet-another-minecraft-bingo:challenge/stat_killed_zombified_piglin": {
+  "statName": "minecraft:zombified_piglin",
+  "statType": "minecraft:killed",
+  "type": "stats"
+ }
+}

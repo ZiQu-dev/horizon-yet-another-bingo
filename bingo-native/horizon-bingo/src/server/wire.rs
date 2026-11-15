@@ -180,7 +180,7 @@ pub fn game_over_v2_with(
 
 /// The tile name: a translation key of the vanilla item, with the id path as fallback. A non-vanilla id is
 /// plain text.
-fn item_name(item: &str) -> Text {
+pub(super) fn item_name(item: &str) -> Text {
     match item.strip_prefix("minecraft:") {
         Some(path) => Text(Nbt::compound(vec![
             ("translate", Nbt::string(&format!("item.minecraft.{path}"))),
@@ -191,7 +191,7 @@ fn item_name(item: &str) -> Text {
 }
 
 /// The one-line lore of a tile: tier, list, coordinate, as in the mod's `CardViewService`.
-fn tile_lore(tier: TierLabel, index: usize) -> Text {
+pub(super) fn tile_lore(tier: TierLabel, index: usize) -> Text {
     let separator = || Nbt::compound(vec![("color", Nbt::string("gray")), ("text", Nbt::string(" • "))]);
     let tier_key = format!("bingo.tier.{}", tier.name().to_lowercase());
     let coordinate = coordinate(index);

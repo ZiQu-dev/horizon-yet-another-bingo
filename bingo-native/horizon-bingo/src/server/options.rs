@@ -79,6 +79,9 @@ pub struct Options {
     pub sidebar: bool,
     /// The starting kit of team players (`bingo kit`), empty by default.
     pub kit: Kit,
+    /// Advanced squares on the cards: the advancements and scorable challenges of the original's tier lists are drawn
+    /// with the items (`objectives`, in `options.json` only when on). Off by default: the cards are then all items.
+    pub objectives: bool,
 }
 
 impl Default for Options {
@@ -101,6 +104,7 @@ impl Default for Options {
             team_chat: true,
             sidebar: true,
             kit: Kit::default(),
+            objectives: false,
         }
     }
 }
