@@ -77,6 +77,28 @@ impl Rng {
     }
 }
 
+/// Draws new items for the squares `indices` of `card`, each square keeping its tier. No item is on the card twice, and
+/// a drawn item is not drawn again. A tier that runs out takes from the next easier tier, as [`generate_card`] does. A
+/// square that no tier can fill keeps its item.
+pub fn replace_squares(seed: u64, pool: &Pool, card: &mut Card, indices: &[usize]) {
+    let mut rng = Rng::new(seed);
+    let mut used: Vec<String> = card.squares.iter().map(|square| square.item.clone()).collect();
+    for &index in indices {
+        let Some(tier) = card.squares.get(index).map(|square| square.tier) else { continue };
+        let first = TIER_LABELS.iter().position(|label| *label == tier).unwrap_or(TIER_LABELS.len() - 1);
+        for source in first..TIER_LABELS.len() {
+            let candidates: Vec<&String> = pool.tiers[source].iter().filter(|item| !used.contains(item)).collect();
+            if candidates.is_empty() {
+                continue;
+            }
+            let item = candidates[rng.next_below(candidates.len())].clone();
+            used.push(item.clone());
+            card.squares[index] = Objective { item, tier };
+            break;
+        }
+    }
+}
+
 /// Builds a card: `distribution[i]` squares of tier `i`, no item twice. A tier that runs out of items takes
 /// them from the next easier tier (the square keeps its own tier). Panics if the pool cannot fill the card.
 pub fn generate_card(seed: u64, pool: &Pool, distribution: [usize; 5]) -> Card {

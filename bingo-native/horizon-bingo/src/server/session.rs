@@ -6,7 +6,7 @@
 //! everything goes out through [`ServerHost`], and the events of [`Game`] are turned into packets here.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use super::card_gen::{generate_card, load_pool, Pool, Rng, DEFAULT_DISTRIBUTION};
+use super::card_gen::{generate_card, load_pool, replace_squares, Pool, Rng, DEFAULT_DISTRIBUTION};
 use super::commands::{self, Command, VoteChoice};
 use super::game::{Event, Game, GameOptions, GameSnapshot};
 use super::hidden_consume::{self, CardMode, HeldStack, Sight, TileView};
@@ -101,6 +101,9 @@ pub struct Session {
     finished: BTreeMap<String, u64>,
     /// Progress of each team that plays, by `BingoTeamKey.id`, on the card it plays.
     progress: BTreeMap<String, TeamProgress>,
+    /// `ReplaceGoals`: the score each team has from the goals already replaced (`persistentScore`), by `BingoTeamKey.id`.
+    /// Empty in the other rounds.
+    persistent: BTreeMap<String, TeamScore>,
     /// Teams added to the server's team list by the start, removed again on reset.
     added_teams: Vec<String>,
     /// Boss bars shown, as (player, bar id), so they can be hidden at the end.
@@ -150,6 +153,7 @@ impl Session {
             completions: BTreeMap::new(),
             finished: BTreeMap::new(),
             progress: BTreeMap::new(),
+            persistent: BTreeMap::new(),
             added_teams: Vec::new(),
             boss_bars: BTreeSet::new(),
             ticks: 0,
@@ -244,6 +248,15 @@ impl Session {
             value["completions"] = json!(self.completions);
             value["finished"] = json!(self.finished);
         }
+        // Written only by a ReplaceGoals round, so the text of the other rounds does not change.
+        if self.rules.win_condition == WinCondition::ReplaceGoals {
+            let persistent: BTreeMap<&str, Value> = self
+                .persistent
+                .iter()
+                .map(|(team, score)| (team.as_str(), json!({ "items": score.items, "lines": score.lines })))
+                .collect();
+            value["persistent"] = json!(persistent);
+        }
         if self.rules.hidden_consume.hidden_items {
             value["seen"] = json!(seen);
         }
@@ -265,6 +278,7 @@ impl Session {
         self.completions = saved.completions;
         self.finished = saved.finished;
         self.progress = saved.progress;
+        self.persistent = saved.persistent;
         self.owners = saved.owners;
         self.seen = saved.seen;
         self.reached = saved.reached;
@@ -380,16 +394,20 @@ impl Session {
 
     /// Notes the teams that have reached the goal, and ends the game when the end condition holds. In a one-card round
     /// (`Cards(1)`, `ReplaceGoals`) the first team to reach the goal is the winner. A multi-card round goes to
-    /// `check_cards`. Either way the stalemate is checked after the goals (`close_cards`).
+    /// `check_cards`. Either way the stalemate is checked after the goals (`close_cards`). A `ReplaceGoals` round
+    /// replaces the goals scored first, so the goal is read from the total score.
     fn check_goals(&mut self, host: &mut dyn ServerHost) {
         if self.is_multi() {
             return self.check_cards(host);
+        }
+        if self.rules.win_condition == WinCondition::ReplaceGoals {
+            self.replace_scored_goals(host);
         }
         let keys: Vec<String> = self.teams.teams().into_iter().map(str::to_string).collect();
         let at = self.elapsed_ms_u64();
         let mut newly = Vec::new();
         for key in &keys {
-            let done = self.progress.get(key).is_some_and(|progress| scoring::goal_reached(progress, self.rules.goal));
+            let done = self.goal_met(key);
             if done && !self.reached.contains(key) {
                 self.reached.push(key.clone());
                 self.finished.insert(key.clone(), at);
@@ -623,7 +641,8 @@ impl Session {
         self.cards.get(self.card_index_of(team))
     }
 
-    /// A round whose win condition is more than one card, or endless. `ReplaceGoals` plays as one card.
+    /// A round whose win condition is more than one card, or endless. `ReplaceGoals` is a one-card round whose scored
+    /// goals are replaced (`replace_scored_goals`).
     fn is_multi(&self) -> bool {
         !matches!(self.rules.win_condition, WinCondition::Cards(1) | WinCondition::ReplaceGoals)
     }
@@ -895,6 +914,7 @@ impl Session {
         // The game starts: the first save of it. Scoring, joins and the time limit save again from here on.
         self.save_playing(host);
         self.progress = self.teams.teams().into_iter().map(|key| (key.to_string(), TeamProgress::default())).collect();
+        self.persistent.clear();
         self.owners = vec![HashMap::new()];
         self.seen.clear();
         self.reached.clear();
@@ -1034,6 +1054,7 @@ impl Session {
         self.reached.clear();
         self.votes.clear();
         self.progress.clear();
+        self.persistent.clear();
         self.ready.clear();
         self.seed = self.seed.wrapping_add(1);
         self.send_ready_updates(host);
@@ -1043,9 +1064,90 @@ impl Session {
         wire::game_status(Some(self.game.elapsed_ms()), self.game.remaining_ms())
     }
 
-    /// Score of a team. A team with no progress yet has none.
+    /// Score of a team. A team with no progress yet has none. In a `ReplaceGoals` round the score is the total: the
+    /// goals replaced so far plus what the card shows.
     fn score(&self, team: &str) -> TeamScore {
+        if self.rules.win_condition == WinCondition::ReplaceGoals {
+            let mut score = self.total_score(team);
+            score.cards = i32::from(self.goal_met(team));
+            return score;
+        }
         self.progress.get(team).map_or_else(TeamScore::default, |progress| scoring::team_score_goal(progress, self.rules.goal))
+    }
+
+    /// The items and lines a team has: those on its card, plus its persistent score (zero outside `ReplaceGoals`).
+    fn total_score(&self, team: &str) -> TeamScore {
+        let mut score = self.progress.get(team).map(scoring::team_score).unwrap_or_default();
+        if let Some(done) = self.persistent.get(team) {
+            score.items += done.items;
+            score.lines += done.lines;
+        }
+        score
+    }
+
+    /// Whether a team has reached the round's goal. In a `ReplaceGoals` round the goals it had replaced count too, so
+    /// the test is on the total: `Lines(n)` lines, `Items(n)` items, and 25 items for a full card.
+    fn goal_met(&self, team: &str) -> bool {
+        if self.rules.win_condition != WinCondition::ReplaceGoals {
+            return self.progress.get(team).is_some_and(|progress| scoring::goal_reached(progress, self.rules.goal));
+        }
+        let total = self.total_score(team);
+        match self.rules.goal {
+            Goal::Lines(0) | Goal::Items(0) => false,
+            Goal::Lines(n) => i64::from(total.lines) >= i64::from(n),
+            Goal::Items(n) => i64::from(total.items) >= i64::from(n),
+            Goal::FullCard => i64::from(total.items) >= CARD_SQUARES as i64,
+        }
+    }
+
+    /// `ReplaceGoals`, run before the goals are read (`ScoredItemCheck.updateScores`): each square a team has scored is
+    /// replaced by a new item of its tier, and the team's persistent score takes the squares and the full lines they
+    /// made. An items round scores every found square; a lines round scores the squares of the full lines only. A team
+    /// that has finished scores nothing more. A replaced square is new, so it loses its progress and its owner for every
+    /// team, and the squares that are not replaced stay as they are.
+    fn replace_scored_goals(&mut self, host: &mut dyn ServerHost) {
+        let goal = self.rules.goal;
+        let teams: Vec<String> = self.teams.teams().into_iter().map(str::to_string).collect();
+        let mut replaced: BTreeSet<usize> = BTreeSet::new();
+        for key in &teams {
+            if self.finished.contains_key(key) {
+                continue;
+            }
+            let Some(progress) = self.progress.get(key) else { continue };
+            let scored = scored_squares(&progress.found, goal);
+            if scored.is_empty() {
+                continue;
+            }
+            let lines = scoring::count_lines(&progress.found);
+            let total = self.persistent.entry(key.clone()).or_default();
+            total.items += scored.len() as i32;
+            total.lines += lines;
+            replaced.extend(scored);
+        }
+        if replaced.is_empty() {
+            return;
+        }
+
+        let indices: Vec<usize> = replaced.iter().copied().collect();
+        // The seed moves on with each batch: the scored items only grow, so no two batches share a seed.
+        let batch: u64 = self.persistent.values().map(|score| score.items as u64).sum();
+        let seed = self.seed.wrapping_add(batch);
+        if let Some(card) = self.cards.first_mut() {
+            replace_squares(seed, &self.pool, card, &indices);
+        }
+        for progress in self.progress.values_mut() {
+            progress.found.retain(|square| !replaced.contains(square));
+        }
+        for owners in self.owners.iter_mut() {
+            owners.retain(|square, _| !replaced.contains(square));
+        }
+        for squares in self.seen.values_mut() {
+            squares.retain(|square| !replaced.contains(square));
+        }
+        for key in &teams {
+            self.send_new_card(host, key);
+            self.send_score_to_all(host, key);
+        }
     }
 
     /// Every team's found squares on card `index`, in the order of the presets, for [`wire::card_tiles_seen`]. Teams on
@@ -1550,6 +1652,7 @@ struct SavedGame {
     completions: BTreeMap<String, Vec<(usize, bool)>>,
     finished: BTreeMap<String, u64>,
     progress: BTreeMap<String, TeamProgress>,
+    persistent: BTreeMap<String, TeamScore>,
     owners: Vec<HashMap<usize, String>>,
     seen: BTreeMap<String, Vec<usize>>,
     reached: Vec<String>,
@@ -1646,6 +1749,17 @@ fn parse_snapshot(text: &str) -> Result<SavedGame, String> {
         progress.insert(team_key(team)?, TeamProgress { found });
     }
 
+    // Written only by a ReplaceGoals round; a snapshot without it has no persistent scores.
+    let mut persistent = BTreeMap::new();
+    if let Some(value) = object.get("persistent") {
+        let teams = value.as_object().ok_or("\"persistent\" is not an object")?;
+        for (team, score) in teams {
+            let score = score.as_object().ok_or("a team's persistent score is not an object")?;
+            let score = TeamScore { items: score_count(score, "items")?, lines: score_count(score, "lines")?, cards: 0 };
+            persistent.insert(team_key(team)?, score);
+        }
+    }
+
     // Written only while hidden-items mode is on; a snapshot without it has nothing seen.
     let mut seen = BTreeMap::new();
     if let Some(value) = object.get("seen") {
@@ -1734,12 +1848,32 @@ fn parse_snapshot(text: &str) -> Result<SavedGame, String> {
         completions,
         finished,
         progress,
+        persistent,
         owners,
         seen,
         reached,
         votes,
         teams,
     })
+}
+
+/// The squares a team's score is made of in a `ReplaceGoals` round: every found square for an items goal, the squares
+/// of the full lines for a lines goal. Sorted, without repeats.
+fn scored_squares(found: &[usize], goal: Goal) -> Vec<usize> {
+    match goal {
+        Goal::Lines(_) => scoring::squares_of_full_lines(found),
+        Goal::Items(_) | Goal::FullCard => {
+            let mut squares: Vec<usize> = found.iter().copied().filter(|&square| square < CARD_SQUARES).collect();
+            squares.sort_unstable();
+            squares.dedup();
+            squares
+        }
+    }
+}
+
+/// A count of a persistent score in a snapshot: a whole number that fits an `i32`.
+fn score_count(object: &Map<String, Value>, key: &str) -> Result<i32, String> {
+    i32::try_from(u64_field(object, key)?).map_err(|_| format!("\"{key}\" is too large"))
 }
 
 /// The phase a snapshot text names, or `None` when the text is not a snapshot.

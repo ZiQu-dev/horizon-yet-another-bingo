@@ -88,6 +88,21 @@ pub fn has_won(progress: &TeamProgress) -> bool {
     team_score(progress).cards >= 1
 }
 
+/// The squares of the full lines of `found`: every square of a line whose 5 squares are all in `found`. Sorted, without
+/// repeats.
+pub fn squares_of_full_lines(found: &[usize]) -> Vec<usize> {
+    let have = squares_found(found);
+    let mut squares: Vec<usize> = LINES
+        .iter()
+        .filter(|line| line.iter().all(|&index| have[index]))
+        .flatten()
+        .copied()
+        .collect();
+    squares.sort_unstable();
+    squares.dedup();
+    squares
+}
+
 /// Number of distinct squares in `found` that are on the card.
 fn items_found(found: &[usize]) -> usize {
     squares_found(found).iter().filter(|&&found| found).count()
