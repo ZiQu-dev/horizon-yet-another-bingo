@@ -7,6 +7,7 @@ use horizon_bingo::server::commands::{Command, chat_shortcut, parse, requires_op
 use horizon_bingo::server::game::GameOptions;
 use horizon_bingo::server::host::ServerHost;
 use horizon_bingo::server::items::{ItemIds, NO_ICONS_NOTE, missing_names_warning};
+use horizon_bingo::server::map_render::{DirtyRect, FileIcons, IconSource, MAP_BYTES, Overlays};
 use horizon_bingo::server::menu::{self, Menus, Outcome, Page, View};
 use horizon_bingo::server::ready::ReadyOptions;
 use horizon_bingo::server::session::{Session, SessionOptions};
@@ -115,6 +116,10 @@ fn new_session() -> Session {
     });
     if let Some(pool) = CARD_POOL.get() {
         session.set_pool(pool.clone());
+    }
+    if let Some((dir, overlays)) = MAP_ART.get() {
+        let icons: Box<dyn IconSource + Send> = Box::new(FileIcons { dir: dir.join("item_icons") });
+        session.set_map_assets(icons, overlays.clone());
     }
     session
 }
@@ -265,6 +270,62 @@ impl ServerHost for ServerAdapter<'_> {
             log(&format!("bingo: boss bar {id} for {player:032x} not shown"));
         }
     }
+
+    fn new_map(&mut self, pixels: &[u8]) -> Option<i32> {
+        let colors: &[u8; MAP_BYTES] = pixels.try_into().ok()?;
+        self.host.new_map(MAP_DIMENSION, colors)
+    }
+
+    fn paint_map(&mut self, map_id: i32, pixels: &[u8], _dirty: DirtyRect) -> bool {
+        // Horizon's `paint_map` takes the whole picture and sends it to each carrier, so the dirty part is not used here.
+        let Ok(colors) = <&[u8; MAP_BYTES]>::try_from(pixels) else { return false };
+        self.host.paint_map(map_id, colors)
+    }
+
+    fn send_map(&mut self, player: u128, map_id: i32, pixels: &[u8]) -> bool {
+        self.host.send_map(player, map_id, pixels)
+    }
+
+    fn give_map(&mut self, player: u128, snbt: &str) -> bool {
+        let Some(stack) = self.host.item_from_snbt(snbt) else {
+            log("bingo: a map item's SNBT was not read");
+            return false;
+        };
+        // `give_stack` returns what did not fit, so none means the whole stack went to the player.
+        self.host.give_stack(player, stack).is_none()
+    }
+}
+
+/// The overworld: the dimension the maps are made in, as the original makes them.
+const MAP_DIMENSION: &str = "minecraft:overworld";
+
+/// The pictures the maps are drawn with, read once: the item pictures folder and the map overlays. The assets folder is
+/// BINGO_ASSETS, else the mod's data folder, as the item names are read.
+static MAP_ART: OnceLock<(PathBuf, Overlays)> = OnceLock::new();
+
+fn assets_dir(host: &dyn Host) -> PathBuf {
+    match std::env::var_os("BINGO_ASSETS") {
+        Some(dir) => PathBuf::from(dir),
+        None => host.data_dir(MOD_ID).join("assets"),
+    }
+}
+
+/// Reads the map pictures once, and installs them in the session. A missing overlay is drawn as the original's fallback
+/// would not (see `map_render`); a damaged one is logged and left out.
+fn load_map_art(host: &dyn Host) {
+    if MAP_ART.get().is_some() {
+        return;
+    }
+    let dir = assets_dir(host);
+    let overlays = Overlays::load(&dir.join("map")).unwrap_or_else(|e| {
+        log(&format!("bingo: map overlays not loaded: {e}"));
+        Overlays::default()
+    });
+    let _ = MAP_ART.set((dir, overlays));
+    if let Some((dir, overlays)) = MAP_ART.get() {
+        let icons: Box<dyn IconSource + Send> = Box::new(FileIcons { dir: dir.join("item_icons") });
+        with_session(|s| s.set_map_assets(icons, overlays.clone()));
+    }
 }
 
 /// The line as a translatable text: its key, with the English as the fallback, so a client without the key shows the
@@ -321,7 +382,9 @@ pub fn server_tick(host: &mut dyn Host, phase: ServerTickPhase) {
     if CARD_POOL.get().is_none() {
         load_card_pool(&*host);
     }
-    guarded("server tick", || with_session(|s| s.tick(&mut ServerAdapter { host: &mut *host })));
+    // The map pictures, once per process, like the card pool (a session made later takes them in `new_session`).
+    load_map_art(&*host);
+    guarded("server tick",|| with_session(|s| s.tick(&mut ServerAdapter { host: &mut *host })));
     guarded("bingo chat votes", || run_chat_votes(&mut *host));
     guarded("bingo team chat", || run_team_chat(&mut *host));
     guarded("bingo sidebar", || update_sidebar(&mut *host));

@@ -1,4 +1,5 @@
 //! What the server logic needs from the game. The api adapter implements it over Horizon's `Host`; tests use a fake.
+use super::map_render::DirtyRect;
 use super::texts::Line;
 use super::types::Player;
 
@@ -46,6 +47,25 @@ pub trait ServerHost {
     }
     /// Whether a player has the advancement done (`minecraft:story/root`). The default is `false`.
     fn has_advancement(&self, _player: u128, _id: &str) -> bool {
+        false
+    }
+    /// A new map of the overworld showing `pixels` (16 384 map colour ids, row by row), kept by the world, under an id
+    /// that stays for the server's life. `None` when the host cannot make one. The default is `None`.
+    fn new_map(&mut self, _pixels: &[u8]) -> Option<i32> {
+        None
+    }
+    /// Replaces the whole picture of a map made by `new_map`, for everyone carrying it. `dirty` is the part that changed;
+    /// a host that can only send the whole picture may ignore it. False when the map is not there. The default is false.
+    fn paint_map(&mut self, _map_id: i32, _pixels: &[u8], _dirty: DirtyRect) -> bool {
+        false
+    }
+    /// Sends a map's picture to one player, for a map they hold. False when the player is not here. The default is false.
+    fn send_map(&mut self, _player: u128, _map_id: i32, _pixels: &[u8]) -> bool {
+        false
+    }
+    /// Gives one item, from its SNBT text (`{id:"minecraft:filled_map",count:1,components:{...}}`). False when it could
+    /// not be given. The default is false.
+    fn give_map(&mut self, _player: u128, _snbt: &str) -> bool {
         false
     }
 }

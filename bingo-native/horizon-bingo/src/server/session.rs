@@ -13,6 +13,8 @@ use super::game::{Event, Game, GameOptions, GameSnapshot};
 use super::hidden_consume::{self, CardMode, HeldStack, Sight, TileView};
 use super::host::ServerHost;
 use super::kit::{self, KitCommand};
+use super::map_items::{self, Flashes, MapItems, SquareState, Want, FILLED_MAP, MAP_IDS_FILE, PREVIEW_KEY};
+use super::map_render::{CardView, IconSource, Overlays};
 use super::texts::{self, Line};
 use super::multicard::{
     complete_card, finish_card_on_goal, reroll_card, round_ends, settle_pending, stalemate_action, stalemate_reason,
@@ -152,12 +154,21 @@ pub struct Session {
     /// Players whose inventory has been reported since the session started. An objective round is scored only once every
     /// online member has been reported, so a restored game never reads an unknown inventory as an empty one.
     reported: HashSet<u128>,
+    /// The players' map items (`map_items`): the team cards, the lobby preview and the mementos.
+    maps: MapItems,
+    /// The squares that flash on the team maps, since they were scored.
+    flashes: Flashes,
 }
 
 impl Session {
     /// Replaces the card pool; the adapter installs the pool read from the assets folder (its item tags).
     pub fn set_pool(&mut self, pool: Pool) {
         self.pool = pool;
+    }
+
+    /// Installs the pictures the maps are drawn with: the item pictures and the map overlays (see `map_render`).
+    pub fn set_map_assets(&mut self, icons: Box<dyn IconSource + Send>, overlays: Overlays) {
+        self.maps.set_assets(icons, overlays);
     }
 
     pub fn new(options: SessionOptions) -> Self {
@@ -195,6 +206,8 @@ impl Session {
             objective_runtime: Vec::new(),
             held: HashMap::new(),
             reported: HashSet::new(),
+            maps: MapItems::new(),
+            flashes: Flashes::default(),
             options,
         }
     }
@@ -214,6 +227,9 @@ impl Session {
         }
         if let Some(text) = host.read_file(HISTORY_FILE) {
             self.history = store::parse_history(&text);
+        }
+        if let Some(text) = host.read_file(MAP_IDS_FILE) {
+            self.maps.load_ids(&text);
         }
         if let Some(text) = host.read_file(GAME_STATE_FILE) {
             if saved_phase(&text) == Some(GameStatus::Playing) {
@@ -385,6 +401,7 @@ impl Session {
         // Kept whatever the phase: the objective squares read it once play begins.
         self.held.insert(player, held.clone());
         self.reported.insert(player);
+        self.maps.note_inventory(player, held.get(FILLED_MAP).is_some_and(|&count| count > 0));
         if self.game.status() != GameStatus::Playing {
             return;
         }
@@ -411,6 +428,7 @@ impl Session {
             }
             self.captures.gained(&team, player, &gained);
             self.captures.lost(&team, &lost);
+            self.flashes.note_scored(&team, &gained, self.ticks);
             let items: Vec<String> = gained.into_iter().map(|index| card.squares[index].item.clone()).collect();
             (items, lost.len())
         };
@@ -782,6 +800,7 @@ impl Session {
         }
         if self.game.status() == GameStatus::Pregame {
             self.tick_lobby(host);
+            self.tick_maps(host);
             return;
         }
         let events = self.game.tick();
@@ -792,6 +811,76 @@ impl Session {
         if self.game.status() == GameStatus::Playing && self.ticks % 10 == 0 {
             self.send_boss_bars(host);
         }
+        self.tick_maps(host);
+    }
+
+    /// The players' map items for this tick (`map_items`): each player without the client's HUD holds the item their
+    /// phase and team call for, and every map is repainted when its picture changed. The map ids are saved when new ones
+    /// were made.
+    fn tick_maps(&mut self, host: &mut dyn ServerHost) {
+        let status = self.game.status();
+        let wants: Vec<(u128, String, Option<Want>)> = host
+            .players()
+            .into_iter()
+            .map(|player| {
+                let team = self.teams.team_of(player.uuid);
+                let won = team.is_some_and(|key| self.reached.iter().any(|reached| reached == key));
+                let want = map_items::want_for(
+                    status,
+                    team,
+                    self.teams.is_spectator(player.uuid),
+                    // A player who sent the client's settings runs our HUD and needs no map.
+                    self.settings.contains_key(&player.uuid),
+                    won,
+                );
+                (player.uuid, player.name, want)
+            })
+            .collect();
+        let mut maps = std::mem::take(&mut self.maps);
+        maps.tick(host, self.ticks, &wants, &|key| self.map_view(key));
+        self.maps = maps;
+        if let Some(text) = self.maps.take_ids_to_save() {
+            host.write_file(MAP_IDS_FILE, &text);
+        }
+    }
+
+    /// The card a map shows now, by its key (a team's key or [`PREVIEW_KEY`]). The team's own card while it is played
+    /// (and after the game), with its squares as its team has them; the preview card otherwise, in the team's colour.
+    /// Hidden squares show the hidden picture, as the viewer sees them (`hidden_consume::tile_views`).
+    fn map_view(&self, key: &str) -> Option<CardView> {
+        let playing = matches!(self.game.status(), GameStatus::Playing | GameStatus::Postgame) && !self.cards.is_empty();
+        if key == PREVIEW_KEY {
+            return Some(self.preview_view(None));
+        }
+        let color = teams::preset(key)?.color;
+        if !playing {
+            return Some(self.preview_view(Some(color)));
+        }
+        self.card_of(key)?;
+        let views = self.views_for(Some(key));
+        let none: &[usize] = &[];
+        let own: &[usize] = self.progress.get(key).map_or(none, |progress| progress.found.as_slice());
+        let others = self.found_on(self.card_index_of(key));
+        let squares: Vec<SquareState> = (0..CARD_SQUARES)
+            .map(|index| SquareState {
+                found: own.contains(&index),
+                achieved_by: others
+                    .iter()
+                    .filter(|(other, found)| *other != key && found.contains(&index))
+                    .filter_map(|(other, _)| teams::preset(other).map(|preset| preset.color.to_string()))
+                    .collect(),
+                flash_since: self.flashes.flash_since(key, index),
+            })
+            .collect();
+        Some(map_items::card_view(Some(color), &views, &squares, self.rules.mode == Mode::Lockout))
+    }
+
+    /// The preview card as the lobby shows it: the card the round will play (same seed), with every square as a player
+    /// on no team sees it.
+    fn preview_view(&self, team: Option<&str>) -> CardView {
+        let card = generate_card(self.seed, &self.card_pool(), self.rules.tier_counts);
+        let views = hidden_consume::tile_views(&card, self.rules.hidden_consume, false, None, false);
+        map_items::card_view(team, &views, &vec![SquareState::default(); CARD_SQUARES], false)
     }
 
     /// Runs a command typed by `player` (or the console, `None`) and returns the text to answer with. `line` is what
@@ -1056,6 +1145,7 @@ impl Session {
         self.progress = self.teams.teams().into_iter().map(|key| (key.to_string(), TeamProgress::default())).collect();
         self.captures.clear();
         self.persistent.clear();
+        self.flashes.clear();
         self.owners = vec![HashMap::new()];
         self.objective_runtime = vec![Runtime::default()];
         self.seen.clear();
@@ -1202,6 +1292,7 @@ impl Session {
         self.progress.clear();
         self.persistent.clear();
         self.objective_runtime.clear();
+        self.flashes.clear();
         self.ready.clear();
         self.seed = self.seed.wrapping_add(1);
         self.send_ready_updates(host);
