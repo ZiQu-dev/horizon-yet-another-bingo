@@ -177,6 +177,9 @@ pub struct HistoryEntry {
     pub forfeit: bool,
     pub teams: Vec<HistoryTeam>,
     pub players: Vec<HistoryPlayer>,
+    /// The rules key of the round (`stats::rules_key`), written when known. Older lines have none, so they never match
+    /// a best time or best items.
+    pub rules: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -234,7 +237,7 @@ fn entry_value(e: &HistoryEntry) -> Value {
         .iter()
         .map(|p| json!({ "uuid": uuid_hex(p.uuid), "name": p.name, "team": p.team, "items": p.items }))
         .collect();
-    json!({
+    let mut value = json!({
         "id": uuid_hex(e.id),
         "endedAtMs": e.ended_at_ms,
         "durationMs": e.duration_ms,
@@ -242,7 +245,11 @@ fn entry_value(e: &HistoryEntry) -> Value {
         "forfeit": e.forfeit,
         "teams": teams,
         "players": players,
-    })
+    });
+    if let (Some(rules), Value::Object(object)) = (&e.rules, &mut value) {
+        object.insert("rules".to_string(), json!(rules));
+    }
+    value
 }
 
 /// One history entry as a single line of compact JSON, without a newline.
@@ -291,6 +298,7 @@ fn entry_from(v: &Value) -> Option<HistoryEntry> {
         forfeit: o.get("forfeit")?.as_bool()?,
         teams,
         players,
+        rules: o.get("rules").and_then(Value::as_str).map(str::to_owned),
     })
 }
 

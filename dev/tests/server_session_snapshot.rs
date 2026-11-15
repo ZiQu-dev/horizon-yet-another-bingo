@@ -218,6 +218,8 @@ fn the_snapshot_of_a_running_game_has_every_field_with_the_hand_counted_values()
 
     let mut value: Value = serde_json::from_str(&session.snapshot_json()).expect("the snapshot is JSON");
     let card = value.as_object_mut().unwrap().remove("card").expect("a card");
+    // The per-player capture ledger is checked on its own below.
+    let captures = value.as_object_mut().unwrap().remove("captures").expect("the captures");
     assert_eq!(
         value,
         json!({
@@ -249,6 +251,11 @@ fn the_snapshot_of_a_running_game_has_every_field_with_the_hand_counted_values()
             "spectators": [uuid(CAROL)]
         })
     );
+    // Alice (red) found squares 0 and 5, Bob (blue) square 7: 2 and 1 items, and each square's finder.
+    assert_eq!(captures, json!({
+        "items": { uuid(ALICE): 2, uuid(BOB): 1 },
+        "finders": { "bingo_red": { "0": uuid(ALICE), "5": uuid(ALICE) }, "bingo_blue": { "7": uuid(BOB) } }
+    }));
     let card = card.as_array().expect("the card is a list");
     assert_eq!(card.len(), 25);
     assert_eq!(card.iter().filter(|square| square["tier"] == "C").count(), 9);

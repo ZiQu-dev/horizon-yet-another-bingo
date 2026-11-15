@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 
 use horizon_bingo::buf::{decode, encode};
+use horizon_bingo::game_over::GameOverPacket;
 use horizon_bingo::server::game::GameOptions;
 use horizon_bingo::server::host::ServerHost;
 use horizon_bingo::server::options::Goal;
@@ -229,6 +230,7 @@ fn red_win(id: u128, duration_ms: i64, alice_items: i32) -> HistoryEntry {
             HistoryPlayer { uuid: ALICE, name: "Alice".into(), team: "bingo_red".into(), items: alice_items },
             HistoryPlayer { uuid: BOB, name: "Bob".into(), team: "bingo_blue".into(), items: 0 },
         ],
+        rules: None,
     }
 }
 
@@ -318,9 +320,9 @@ fn stats_count_the_win_with_its_best_time_and_the_items_found() {
     host.take();
     host.take_broadcasts();
 
-    // 6500 ms is 6 s: `00:06`. Alice found 2 items; Bob's blue team found none.
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "stats"), "Alice: 1 games, 1 wins, best win 00:06, 2 items.");
-    assert_eq!(run(&mut session, &mut host, Some(BOB), "stats"), "Bob: 1 games, 0 wins, best win none, 0 items.");
+    // 6500 ms is 6 s: `00m 06s`. Alice found 2 items and won; Bob's blue team lost and he found none.
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "stats"), "Bingo stats for Alice:\nAll Time:\n  Games: 1, Win/Loss: 1/0, Items: 2\n  Playtime: 00m 06s\nMonthly:\n  Games: 1, Win/Loss: 1/0, Items: 2\n  Playtime: 00m 06s");
+    assert_eq!(run(&mut session, &mut host, Some(BOB), "stats"), "Bingo stats for Bob:\nAll Time:\n  Games: 1, Win/Loss: 0/1, Items: 0\n  Playtime: 00m 06s\nMonthly:\n  Games: 1, Win/Loss: 0/1, Items: 0\n  Playtime: 00m 06s");
     assert_eq!(run(&mut session, &mut host, None, "stats"), "Only a player has statistics.");
 }
 
@@ -333,11 +335,8 @@ fn history_loaded_at_start_counts_in_stats() {
     let mut session = Session::new(options(7, 0, None));
     lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "blue")]);
 
-    // 1500 ms is 1 s: `00:01`, the best of the two wins. Items 1 + 2.
-    assert_eq!(
-        run(&mut session, &mut host, Some(ALICE), "stats"),
-        "Alice: 2 games, 2 wins, best win 00:01, 3 items."
-    );
+    // Both rounds were won, both started in the month of the clock: 1500 + 3000 ms is 4 s. Items 1 + 2.
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "stats"), "Bingo stats for Alice:\nAll Time:\n  Games: 2, Win/Loss: 2/0, Items: 3\n  Playtime: 00m 04s\nMonthly:\n  Games: 2, Win/Loss: 2/0, Items: 3\n  Playtime: 00m 04s");
     assert_eq!(host.files["history.jsonl"].lines().count(), 2, "reading the history writes nothing");
 }
 
@@ -399,4 +398,93 @@ fn the_boss_bar_follows_the_bossbar_setting_of_each_player() {
             assert!(bars.iter().any(|b| b.player == ALICE && b.id == "bingo:bingo_red"));
         }
     }
+}
+
+const CAROL: u128 = 3;
+
+/// Alice and Bob on red, Carol online with no team, goal of 3 items, and the round started at 0 ticks.
+fn red_pair_round(host: &mut FakeHost, session: &mut Session) -> Vec<String> {
+    lobby(host, session, &[(ALICE, "Alice"), (BOB, "Bob"), (CAROL, "Carol")], &[(ALICE, "red"), (BOB, "red")]);
+    assert!(run(session, host, Some(ALICE), "goal items 3").contains("Goal: 3 item(s)"));
+    // Carol is not on a team: `ignore_warnings` makes her a spectator, so she is not in the roster.
+    assert_eq!(run(session, host, Some(ALICE), "start ignore_warnings"), "Game started.");
+    let names = card_names(host, ALICE);
+    host.take_commands();
+    names
+}
+
+#[test]
+fn a_win_records_each_players_own_items_and_the_team_roster_not_everyone_online() {
+    let mut host = FakeHost::default();
+    let mut session = Session::new(options(7, 0, None));
+    let names = red_pair_round(&mut host, &mut session);
+    for _ in 0..130 {
+        session.tick(&mut host);
+    }
+    host.take();
+    // Alice finds one square, Bob two: red's goal of 3 is reached on Bob's inventory.
+    session.on_inventory(&mut host, ALICE, &held(&names[0..1]));
+    session.on_inventory(&mut host, BOB, &held(&names[1..3]));
+    assert!(status(&mut session, &mut host).contains("Postgame"));
+
+    let entries = history(&host);
+    assert_eq!(entries.len(), 1);
+    let won = &entries[0];
+    let mut players: Vec<(u128, i32)> = won.players.iter().map(|p| (p.uuid, p.items)).collect();
+    players.sort();
+    assert_eq!(players, vec![(ALICE, 1), (BOB, 2)], "each player's own finds; Carol, online with no team, is not in the roster");
+    assert_eq!(won.teams[0].items, 3, "the team's count stays the team's");
+    assert_eq!(won.rules.as_deref().map(str::len), Some(16), "the round carries its rules key");
+}
+
+#[test]
+fn the_end_screen_carries_the_win_streak_best_time_and_items_of_each_viewer() {
+    let mut host = FakeHost::default();
+    let mut session = Session::new(options(7, 0, None));
+    let names = started_round(&mut host, &mut session, 2);
+    // First round: 130 ticks (6500 ms), Alice finds 2 and wins.
+    for _ in 0..130 {
+        session.tick(&mut host);
+    }
+    host.take();
+    session.on_inventory(&mut host, ALICE, &held(&names[0..2]));
+    let sent = host.take();
+    let alice = decode(&only(&sent, ALICE, "game_over_v2"), GameOverPacket::read_v2).expect("decodes");
+    assert_eq!(alice.win_streak, Some(1));
+    assert_eq!((alice.best_win_streak, alice.is_best_win_streak), (None, false));
+    assert_eq!(alice.captured_items, Some(2));
+    assert_eq!((alice.best_captured_items, alice.is_best_captured_items), (None, false));
+    assert!(alice.is_best_time, "the first finished round sets the best time");
+    assert_eq!(alice.prev_best_time, None);
+    let bob = decode(&only(&sent, BOB, "game_over_v2"), GameOverPacket::read_v2).expect("decodes");
+    assert_eq!(bob.win_streak, Some(0), "Bob's blue team lost");
+    assert_eq!(bob.captured_items, Some(0));
+
+    // Second round: 100 ticks (5000 ms), Alice wins again with 2 items.
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "vote lobby"), "Vote recorded (1 of 2 votes).");
+    assert_eq!(run(&mut session, &mut host, Some(BOB), "vote lobby"), "The vote is over: back to the lobby.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    let names = card_names(&mut host, ALICE);
+    host.take_commands();
+    host.take();
+    for _ in 0..100 {
+        session.tick(&mut host);
+    }
+    host.take();
+    session.on_inventory(&mut host, ALICE, &held(&names[0..2]));
+    let sent = host.take();
+    let again = decode(&only(&sent, ALICE, "game_over_v2"), GameOverPacket::read_v2).expect("decodes");
+    assert_eq!(again.win_streak, Some(2));
+    assert_eq!(again.best_win_streak, Some(1));
+    assert!(again.is_best_win_streak, "2 is above the best streak of 1");
+    assert!(again.is_best_time, "5000 ms is shorter than 6500 ms");
+    assert_eq!(again.prev_best_time.map(|d| (d.seconds, d.nanos)), Some((6, 500_000_000)));
+    assert_eq!(again.captured_items, Some(2));
+    assert_eq!(again.best_captured_items, Some(2));
+    assert!(!again.is_best_captured_items, "2 is not above the best 2");
+
+    // The `stats` command for an online player, by operator: Bob's blue team lost both rounds.
+    assert_eq!(run(&mut session, &mut host, None, "stats Bob").lines().nth(1), Some("All Time:"));
+    assert!(run(&mut session, &mut host, None, "stats Bob").contains("Games: 2, Win/Loss: 0/2, Items: 0"));
+    assert_eq!(run(&mut session, &mut host, None, "stats Zed"), "No player named Zed is online.");
 }

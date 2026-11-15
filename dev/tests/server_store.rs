@@ -109,6 +109,7 @@ fn two_team_entry() -> HistoryEntry {
             HistoryPlayer { uuid: ALICE, name: "Alice".into(), team: "red".into(), items: 5 },
             HistoryPlayer { uuid: BOB, name: "Bob".into(), team: "blue".into(), items: 4 },
         ],
+        rules: None,
     }
 }
 

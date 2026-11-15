@@ -53,6 +53,8 @@ pub enum Command {
     Reroll,
     /// `teams <n>`: how many teams the auto shuffle makes.
     TeamCount(usize),
+    /// Another online player's game statistics (`stats <player>`, operators only).
+    StatsOf(String),
 }
 
 /// The answer to the end-of-round vote: play another round, keep playing, or return to the lobby.
@@ -63,7 +65,7 @@ pub enum VoteChoice {
     ReturnToLobby,
 }
 
-const USAGE: &str = "start [ignore_warnings] | end | reset | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout|hidden_items on|off|consume_items on|off | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | playto cards <n>|infinite|replace_goals | stalemate end_game|reroll_card|do_nothing | options | vote next|keep|lobby | resume | stats | difficulty easy|medium|hard|extreme|impossible | difficulty <S> <A> <B> <C> <D> | reroll | teams <n> | autoshuffle on|off";
+const USAGE: &str = "start [ignore_warnings] | end | reset | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout|hidden_items on|off|consume_items on|off | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | playto cards <n>|infinite|replace_goals | stalemate end_game|reroll_card|do_nothing | options | vote next|keep|lobby | resume | stats [player] | difficulty easy|medium|hard|extreme|impossible | difficulty <S> <A> <B> <C> <D> | reroll | teams <n> | autoshuffle on|off";
 
 const SPAWN_DISTANCE_MAX: u32 = 1000;
 
@@ -86,7 +88,6 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "reset" => no_args(name, &args, Command::Reset),
         "spectator" => no_args(name, &args, Command::Spectator),
         "card" => no_args(name, &args, Command::Card),
-        "stats" => no_args(name, &args, Command::Stats),
         "reroll" => no_args(name, &args, Command::Reroll),
         "difficulty" => difficulty::parse_args(&args).map(Command::Difficulty),
         "teams" => match args.as_slice() {
@@ -98,6 +99,11 @@ pub fn parse(line: &str) -> Result<Command, String> {
             _ => Err(format!("Too many arguments for 'teams'. Usage: teams <n> (1 to {})", TEAM_PRESETS.len())),
         },
         "autoshuffle" => parse_toggle(name, Toggle::AutoShuffle, &args),
+        "stats" => match args.as_slice() {
+            [] => Ok(Command::Stats),
+            [player] => Ok(Command::StatsOf(player.to_string())),
+            _ => Err("Too many arguments for 'stats'. Usage: stats [player]".to_string()),
+        },
         "options" => no_args(name, &args, Command::Options),
         "resume" => no_args(name, &args, Command::Resume),
         "start" => match args.as_slice() {
@@ -208,7 +214,8 @@ pub fn requires_op(command: &Command) -> bool {
         | Command::Difficulty(_)
         | Command::Reroll
         | Command::TeamCount(_)
-        | Command::Resume => true,
+        | Command::Resume
+        | Command::StatsOf(_) => true,
         Command::Help
         | Command::Status
         | Command::Join(_)

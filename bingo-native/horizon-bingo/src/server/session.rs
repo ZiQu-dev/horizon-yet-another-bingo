@@ -19,6 +19,7 @@ use super::multicard::{
 };
 use super::options::{EndWhen, Goal, Mode, Options};
 use super::ready::{encode_update_v2, ReadyOptions, ReadyTimer};
+use super::stats::{self, Captures};
 use super::store::{self, HistoryEntry, HistoryPlayer, HistoryTeam};
 use super::scoring;
 use super::teams::{self, Teams};
@@ -137,6 +138,8 @@ pub struct Session {
     /// A game restored from `game-state.json` waits for its players: the empty-server reset does not run until one
     /// of them has joined.
     await_rejoin: bool,
+    /// Items each player found this round, for the history and `stats` (see `stats::Captures`).
+    captures: Captures,
 }
 
 impl Session {
@@ -176,6 +179,7 @@ impl Session {
             history: Vec::new(),
             forfeit: false,
             await_rejoin: false,
+            captures: Captures::default(),
             options,
         }
     }
@@ -268,6 +272,7 @@ impl Session {
         if self.rules.hidden_consume.hidden_items {
             value["seen"] = json!(seen);
         }
+        value["captures"] = self.captures.to_json();
         serde_json::to_string_pretty(&value).expect("a JSON value always serializes")
     }
 
@@ -292,6 +297,8 @@ impl Session {
         self.reached = saved.reached;
         self.votes = saved.votes;
         self.teams = saved.teams;
+        // Read apart from the snapshot itself: a game saved before the ledger existed has none.
+        self.captures = serde_json::from_str::<Value>(text).ok().and_then(|value| value.get("captures").map(Captures::from_json)).unwrap_or_default();
         self.boss_bars.clear();
         self.forfeit = false;
         self.empty_ticks = 0;
@@ -365,6 +372,8 @@ impl Session {
                 }
                 gained = claimed;
             }
+            self.captures.gained(&team, player, &gained);
+            self.captures.lost(&team, &lost);
             let items: Vec<String> = gained.into_iter().map(|index| card.squares[index].item.clone()).collect();
             (items, lost.len())
         };
@@ -811,6 +820,7 @@ impl Session {
             },
             Command::Resume => self.resume(host),
             Command::Stats => self.stats(host, player),
+            Command::StatsOf(name) => self.stats_of_player(host, &name),
         }
     }
 
@@ -940,6 +950,7 @@ impl Session {
         // The game starts: the first save of it. Scoring, joins and the time limit save again from here on.
         self.save_playing(host);
         self.progress = self.teams.teams().into_iter().map(|key| (key.to_string(), TeamProgress::default())).collect();
+        self.captures.clear();
         self.persistent.clear();
         self.owners = vec![HashMap::new()];
         self.seen.clear();
@@ -1038,7 +1049,8 @@ impl Session {
         let duration = self.game.elapsed_ms();
         for player in host.players() {
             let is_winner = winner.is_some() && self.teams.team_of(player.uuid) == winner.as_deref();
-            send(host, player.uuid, wire::game_over_v2(winner.as_deref(), is_winner, duration, ranking.clone()));
+            let end = self.end_stats(Some(player.uuid));
+            send(host, player.uuid, wire::game_over_v2_with(winner.as_deref(), is_winner, duration, ranking.clone(), &end));
         }
         // Postgame shows every square, so each team's card is sent again with nothing hidden.
         if self.rules.hidden_consume.hidden_items {
@@ -1446,12 +1458,39 @@ impl Session {
         answer
     }
 
-    /// `/bingo stats`: the caller's games, wins, best winning time and items, from the history.
+    /// `/bingo stats`: the caller's statistics, all time and this month, from the history.
     fn stats(&self, host: &dyn ServerHost, player: Option<u128>) -> String {
         let Some(player) = player else {
             return "Only a player has statistics.".to_string();
         };
-        store::stats_text(&player_name(host, player), &store::player_stats(&self.history, player))
+        self.stats_of(host, player)
+    }
+
+    /// `/bingo stats <player>` (operators): the statistics of an online player.
+    fn stats_of_player(&self, host: &dyn ServerHost, name: &str) -> String {
+        match host.players().into_iter().find(|player| player.name.eq_ignore_ascii_case(name)) {
+            Some(player) => self.stats_of(host, player.uuid),
+            None => format!("No player named {name} is online."),
+        }
+    }
+
+    /// The `bingo stats` text of one player: all time, then this month.
+    fn stats_of(&self, host: &dyn ServerHost, uuid: u128) -> String {
+        let month = stats::year_month(host.now_ms());
+        stats::summary_text(
+            &player_name(host, uuid),
+            &stats::totals(&self.history, uuid, None),
+            &stats::totals(&self.history, uuid, Some(month)),
+        )
+    }
+
+    /// The end screen's numbers for `viewer` (`None`: the game-wide part only), from the round that just ended, which is
+    /// the last history entry. Empty when there is none.
+    fn end_stats(&self, viewer: Option<u128>) -> stats::EndStats {
+        match self.history.split_last() {
+            Some((game, prior)) => stats::end_stats(prior, game, viewer),
+            None => stats::EndStats::default(),
+        }
     }
 
     /// Records the finished game: one line in the history file, and in memory for `stats`.
@@ -1467,14 +1506,24 @@ impl Session {
                 HistoryTeam { key: key.to_string(), name: team_name(key).to_string(), items: score.items, lines: score.lines, won: winner == Some(key) }
             })
             .collect();
-        let players = players
-            .iter()
-            .filter_map(|player| {
-                let team = self.teams.team_of(player.uuid)?;
-                let items = self.progress.get(team).map_or(0, |progress| progress.found.len() as i32);
-                Some(HistoryPlayer { uuid: player.uuid, name: player.name.clone(), team: team.to_string(), items })
-            })
-            .collect();
+        // The roster: everyone on a team at the end, online or not. A name that is not online comes from the history.
+        let mut roster = Vec::new();
+        for key in self.teams.teams() {
+            for uuid in self.teams.members(key) {
+                let name = match players.iter().find(|player| player.uuid == uuid) {
+                    Some(player) => player.name.clone(),
+                    None => self
+                        .history
+                        .iter()
+                        .rev()
+                        .flat_map(|entry| entry.players.iter())
+                        .find(|known| known.uuid == uuid)
+                        .map_or_else(|| "A player".to_string(), |known| known.name.clone()),
+                };
+                let items = self.captures.items(uuid) as i32;
+                roster.push(HistoryPlayer { uuid, name, team: key.to_string(), items });
+            }
+        }
         let entry = HistoryEntry {
             id: (u128::from(self.seed) << 64) | ended_at_ms.max(0) as u128,
             ended_at_ms,
@@ -1482,7 +1531,8 @@ impl Session {
             winner: winner.map(str::to_string),
             forfeit: self.forfeit,
             teams,
-            players,
+            players: roster,
+            rules: Some(stats::rules_key(&self.rules)),
         };
         host.append_line(HISTORY_FILE, &store::entry_to_line(&entry));
         self.history.push(entry);

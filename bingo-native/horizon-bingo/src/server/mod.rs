@@ -18,3 +18,4 @@ pub mod store;
 pub mod hidden_consume;
 pub mod multicard;
 pub mod difficulty;
+pub mod stats;

@@ -4,6 +4,7 @@
 //! Preconditions: `card` has exactly `CARD_SQUARES` squares, and names and ids are far below the 64 KiB limit of a
 //! string. A write that fails on such input panics with a message rather than sending a truncated payload.
 
+use super::stats::EndStats;
 use crate::buf::encode;
 use crate::card_reset::CardResetPacket;
 use crate::card_tile::{CardTile, TierLabel};
@@ -145,11 +146,33 @@ pub fn game_over_v2(
     duration_ms: i64,
     scores: Vec<ScoreRanking>,
 ) -> (&'static str, Vec<u8>) {
+    game_over_v2_with(winner, is_winner, duration_ms, scores, &EndStats::default())
+}
+
+/// `game_over_v2` with the statistics lines: the best time, the win streak and the captured items of the viewer
+/// (`stats::end_stats`). A viewer with no `player` numbers gets none of the streak or item lines.
+pub fn game_over_v2_with(
+    winner: Option<&str>,
+    is_winner: bool,
+    duration_ms: i64,
+    scores: Vec<ScoreRanking>,
+    end: &EndStats,
+) -> (&'static str, Vec<u8>) {
+    let viewer = end.player.as_ref();
     let packet = GameOverPacket {
         winner: winner.map(str::to_owned),
         is_winner,
         duration: JavaDuration::of_millis(duration_ms),
         scores,
+        win_streak: viewer.map(|v| v.win_streak),
+        best_win_streak: viewer.and_then(|v| v.best_win_streak),
+        is_best_win_streak: viewer.is_some_and(|v| v.is_best_win_streak),
+        captured_items: viewer.map(|v| v.captured_items),
+        best_captured_items: viewer.and_then(|v| v.best_captured_items),
+        is_best_captured_items: viewer.is_some_and(|v| v.is_best_captured_items),
+        ended_at_millis: end.ended_at_ms,
+        is_best_time: end.is_best_time,
+        prev_best_time: end.prev_best_time_ms.map(JavaDuration::of_millis),
         ..GameOverPacket::default()
     };
     ("game_over_v2", encode(|w| packet.write_v2(w).expect("game_over_v2: a text component fails to write")))
