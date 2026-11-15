@@ -30,4 +30,13 @@ pub trait ServerHost {
     fn now_ms(&self) -> i64 {
         0
     }
+    /// A statistic's counter for a player (`stat_type` such as `minecraft:mined`, `stat_name` such as `minecraft:stone`),
+    /// or `None` when the host cannot read it. The default is `None`, so a test host need not implement it.
+    fn stat_value(&self, _player: u128, _stat_type: &str, _stat_name: Option<&str>) -> Option<i64> {
+        None
+    }
+    /// Whether a player has the advancement done (`minecraft:story/root`). The default is `false`.
+    fn has_advancement(&self, _player: u128, _id: &str) -> bool {
+        false
+    }
 }

@@ -186,6 +186,19 @@ impl ServerHost for ServerAdapter<'_> {
         }
     }
 
+    fn stat_value(&self, player: u128, stat_type: &str, stat_name: Option<&str>) -> Option<i64> {
+        // Horizon's `player_stat` reads one counter (`minecraft:mined`, `minecraft:stone`); without a name there is none.
+        let key = stat_name?;
+        self.host.player_stat(player, stat_type, key).map(i64::from)
+    }
+
+    fn has_advancement(&self, player: u128, id: &str) -> bool {
+        // Horizon's `player_advancements` gives vanilla's progress JSON (`objectives::advancement_done_json` reads it).
+        self.host
+            .player_advancements(player)
+            .is_some_and(|progress| horizon_bingo::server::objectives::advancement_done_json(&progress, id))
+    }
+
     fn now_ms(&self) -> i64 {
         SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
     }

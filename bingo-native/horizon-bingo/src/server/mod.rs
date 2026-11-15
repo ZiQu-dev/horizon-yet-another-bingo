@@ -19,3 +19,4 @@ pub mod hidden_consume;
 pub mod multicard;
 pub mod difficulty;
 pub mod stats;
+pub mod objectives;
