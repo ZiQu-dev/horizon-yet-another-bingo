@@ -40,6 +40,15 @@ pub enum Event {
     Resumed,
 }
 
+/// The timer state a snapshot keeps: the phase, the ticks of the countdown and of play, and the time limit as set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GameSnapshot {
+    pub status: GameStatus,
+    pub countdown_ticks: u64,
+    pub playing_ticks: u64,
+    pub time_limit_secs: Option<i32>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Game {
     options: GameOptions,
@@ -62,6 +71,25 @@ impl Game {
 
     pub fn status(&self) -> GameStatus {
         self.status
+    }
+
+    /// The timer state, for a snapshot. See [`Game::restore`].
+    pub fn snapshot(&self) -> GameSnapshot {
+        GameSnapshot {
+            status: self.status,
+            countdown_ticks: self.countdown_ticks,
+            playing_ticks: self.playing_ticks,
+            time_limit_secs: self.options.time_limit_secs,
+        }
+    }
+
+    /// Puts the timer back to a snapshot. No events are returned: the players learn the state when they join. The
+    /// elapsed time is the saved one, not the wall clock.
+    pub fn restore(&mut self, snapshot: GameSnapshot) {
+        self.status = snapshot.status;
+        self.countdown_ticks = snapshot.countdown_ticks;
+        self.playing_ticks = snapshot.playing_ticks;
+        self.options.time_limit_secs = snapshot.time_limit_secs;
     }
 
     /// Pregame to Starting. With a zero countdown, play begins at once.

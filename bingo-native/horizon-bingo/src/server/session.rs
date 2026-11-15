@@ -8,22 +8,24 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::card_gen::{generate_card, load_pool, Pool, Rng, DEFAULT_DISTRIBUTION};
 use super::commands::{self, Command, VoteChoice};
-use super::game::{Event, Game, GameOptions};
+use super::game::{Event, Game, GameOptions, GameSnapshot};
 use super::host::ServerHost;
 use super::options::{EndWhen, Goal, Mode, Options};
 use super::ready::{encode_update_v2, ReadyOptions, ReadyTimer};
 use super::store::{self, HistoryEntry, HistoryPlayer, HistoryTeam};
 use super::scoring;
 use super::teams::{self, Teams};
-use super::types::{Card, Player, TeamProgress};
+use super::types::{Card, Objective, Player, TeamProgress, CARD_SQUARES};
 use super::wire;
 use crate::buf::decode;
+use crate::card_tile::TierLabel;
 use crate::game::GameStatus;
 use crate::game_over::ScoreRanking;
 use crate::ready::SetReadyPacket;
 use crate::update_settings::PlayerSettings;
 use crate::score_update::TeamScore;
 use crate::text::Text;
+use serde_json::{json, Map, Value};
 
 /// The entity tag that marks the players spread at the start for the moment the command runs.
 const SPREAD_TAG: &str = "bingo_spread";
@@ -31,6 +33,12 @@ const SPREAD_TAG: &str = "bingo_spread";
 const OPTIONS_FILE: &str = "options.json";
 const SETTINGS_FILE: &str = "player-settings.json";
 const HISTORY_FILE: &str = "history.jsonl";
+/// The game in progress, so a server restart does not lose the round. Written when play begins, after each scored
+/// item, after a join during play, after a time limit change and after a resume. Emptied when the game ends or is
+/// reset. Only a Playing snapshot is restored (see [`Session::restore_from_json`]).
+const GAME_STATE_FILE: &str = "game-state.json";
+/// Format version of `game-state.json`.
+const GAME_STATE_VERSION: u64 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionOptions {
@@ -98,6 +106,9 @@ pub struct Session {
     history: Vec<HistoryEntry>,
     /// The game was ended by `/bingo end`, not by a win or the time limit.
     forfeit: bool,
+    /// A game restored from `game-state.json` waits for its players: the empty-server reset does not run until one
+    /// of them has joined.
+    await_rejoin: bool,
 }
 
 impl Session {
@@ -125,12 +136,13 @@ impl Session {
             settings: HashMap::new(),
             history: Vec::new(),
             forfeit: false,
+            await_rejoin: false,
             options,
         }
     }
 
-    /// Reads the saved options, the players' settings and the history, once, on the first call of any hook. A missing
-    /// or damaged file leaves the defaults.
+    /// Reads the saved options, the players' settings, the history and a game in progress, once, on the first call of
+    /// any hook. A missing or damaged file leaves the defaults; a damaged game file leaves the lobby.
     fn ensure_loaded(&mut self, host: &mut dyn ServerHost) {
         if self.loaded {
             return;
@@ -145,12 +157,94 @@ impl Session {
         if let Some(text) = host.read_file(HISTORY_FILE) {
             self.history = store::parse_history(&text);
         }
+        if let Some(text) = host.read_file(GAME_STATE_FILE) {
+            if saved_phase(&text) == Some(GameStatus::Playing) {
+                let _ = self.restore_from_json(&text);
+            }
+        }
+    }
+
+    /// The game in progress as JSON (`game-state.json`): the phase, the timer, the seed, the round rules, the card, each
+    /// team's progress, the lockout owners, the teams that reached the goal, the postgame votes, the teams and
+    /// spectators by player uuid, and the server teams the start added. Keys are sorted where a map is written, so the
+    /// same state always gives the same text.
+    pub fn snapshot_json(&self) -> String {
+        let game = self.game.snapshot();
+        let rules = serde_json::from_str::<Value>(&store::options_to_json(&self.rules)).expect("round options are JSON");
+        let card = match &self.card {
+            Some(card) => Value::Array(
+                card.squares.iter().map(|square| json!({ "item": square.item, "tier": square.tier.name() })).collect(),
+            ),
+            None => Value::Null,
+        };
+        let progress: BTreeMap<&str, &Vec<usize>> =
+            self.progress.iter().map(|(team, progress)| (team.as_str(), &progress.found)).collect();
+        let owners: BTreeMap<String, &String> = self.owners.iter().map(|(square, team)| (square.to_string(), team)).collect();
+        let votes: BTreeMap<String, &str> =
+            self.votes.iter().map(|(&player, &choice)| (store::uuid_hex(player), vote_name(choice))).collect();
+        let (members, spectators) = self.teams.parts();
+        let members: Vec<Value> =
+            members.iter().map(|&(player, team)| json!({ "uuid": store::uuid_hex(player), "team": team })).collect();
+        let spectators: Vec<String> = spectators.into_iter().map(store::uuid_hex).collect();
+        let value = json!({
+            "version": GAME_STATE_VERSION,
+            "phase": status_name(game.status),
+            "countdownTicks": game.countdown_ticks,
+            "elapsedTicks": game.playing_ticks,
+            "timeLimitSecs": game.time_limit_secs,
+            "seed": self.seed,
+            "rules": rules,
+            "addedTeams": self.added_teams,
+            "card": card,
+            "progress": progress,
+            "owners": owners,
+            "reached": self.reached,
+            "votes": votes,
+            "members": members,
+            "spectators": spectators,
+        });
+        serde_json::to_string_pretty(&value).expect("a JSON value always serializes")
+    }
+
+    /// Puts the session back to a snapshot from [`Session::snapshot_json`], in any phase. The text is checked in full
+    /// first: when it is not a valid snapshot the error is returned and nothing changes. The restored timer keeps the
+    /// saved elapsed time; no events are sent, since the players get the game when they join (`on_join`).
+    pub fn restore_from_json(&mut self, text: &str) -> Result<(), String> {
+        let saved = parse_snapshot(text)?;
+        self.game.restore(saved.game);
+        self.seed = saved.seed;
+        self.rules = saved.rules;
+        self.added_teams = saved.added_teams;
+        self.card = saved.card;
+        self.progress = saved.progress;
+        self.owners = saved.owners;
+        self.reached = saved.reached;
+        self.votes = saved.votes;
+        self.teams = saved.teams;
+        self.boss_bars.clear();
+        self.forfeit = false;
+        self.empty_ticks = 0;
+        self.await_rejoin = self.game.status() == GameStatus::Playing;
+        Ok(())
+    }
+
+    /// Writes the game in progress to `game-state.json`, if it is Playing. Other phases write nothing.
+    fn save_playing(&self, host: &mut dyn ServerHost) {
+        if self.game.status() == GameStatus::Playing {
+            host.write_file(GAME_STATE_FILE, &self.snapshot_json());
+        }
+    }
+
+    /// Empties `game-state.json`: the game is over, so there is nothing to restore. An empty file is no game.
+    fn clear_saved_game(host: &mut dyn ServerHost) {
+        host.write_file(GAME_STATE_FILE, "");
     }
 
     /// A player joins. They get the game status. Before play they get the ready screen; during play they get the whole
     /// current game as it is now: the teams, their tiles, the open card and each team's score.
     pub fn on_join(&mut self, host: &mut dyn ServerHost, player: &Player) {
         self.ensure_loaded(host);
+        self.await_rejoin = false;
         send(host, player.uuid, self.game_status());
         match self.game.status() {
             GameStatus::Pregame => self.send_ready_updates(host),
@@ -159,6 +253,7 @@ impl Session {
                     // Joining a running game without a team: watch until `join <team>`.
                     self.teams.spectate(player.uuid);
                     host.command(&format!("gamemode spectator {}", player.name));
+                    self.save_playing(host);
                 }
                 self.send_round(host, player.uuid);
             }
@@ -183,6 +278,7 @@ impl Session {
             return;
         }
         let Some(team) = self.teams.team_of(player) else { return };
+        // Only a player on a team scores; the save after the finds covers the squares and the goals reached.
         let team = team.to_string();
         let (items, lost) = {
             let Some(card) = self.card.as_ref() else { return };
@@ -209,6 +305,7 @@ impl Session {
             self.announce_find(host, &format!("{finder} found {}", short_name(&item)));
         }
         self.check_goals(host);
+        self.save_playing(host);
     }
 
     /// A chat line about a find, for the players who keep `itemMessages` on (the default). It is one broadcast when
@@ -288,8 +385,9 @@ impl Session {
         self.ensure_loaded(host);
         self.ticks += 1;
         if self.game.status() != GameStatus::Pregame {
-            // `resetWhenEveryoneDisconnects`: a game nobody is in goes back to the lobby after a few seconds.
-            if host.players().is_empty() {
+            // `resetWhenEveryoneDisconnects`: a game nobody is in goes back to the lobby after a few seconds. A restored
+            // game waits for its players first.
+            if host.players().is_empty() && !self.await_rejoin {
                 self.empty_ticks += 1;
                 if self.empty_ticks >= 100 {
                     self.empty_ticks = 0;
@@ -345,7 +443,7 @@ impl Session {
             Command::Spectator => self.become_spectator(host, player),
             Command::Ready => self.toggle_ready(host, player),
             Command::ReadyCancel => self.cancel_ready(host),
-            Command::TimeLimit(minutes) => self.set_time_limit(minutes),
+            Command::TimeLimit(minutes) => self.set_time_limit(host, minutes),
             Command::Card => self.open_card(host, player),
             Command::Goal(goal) => self.set_rule(host, |rules| rules.goal = goal, "goal"),
             Command::Mode(mode) => self.set_rule(host, |rules| rules.mode = mode, "mode"),
@@ -476,6 +574,8 @@ impl Session {
     /// Makes the card and shows the game to everyone online.
     fn begin_round(&mut self, host: &mut dyn ServerHost) {
         self.card = Some(generate_card(self.seed, &self.pool, DEFAULT_DISTRIBUTION));
+        // The game starts: the first save of it. Scoring, joins and the time limit save again from here on.
+        self.save_playing(host);
         self.progress = self.teams.teams().into_iter().map(|key| (key.to_string(), TeamProgress::default())).collect();
         self.owners.clear();
         self.reached.clear();
@@ -568,6 +668,7 @@ impl Session {
     fn announce_end(&mut self, host: &mut dyn ServerHost, winner: Option<String>) {
         self.hide_boss_bars(host);
         self.record_game(host, winner.as_deref());
+        Self::clear_saved_game(host);
         let ranking = self.ranking();
         let duration = self.game.elapsed_ms();
         for player in host.players() {
@@ -585,6 +686,7 @@ impl Session {
     /// the teams the start added.
     fn reset_round(&mut self, host: &mut dyn ServerHost) {
         self.hide_boss_bars(host);
+        Self::clear_saved_game(host);
         for team in std::mem::take(&mut self.added_teams) {
             host.command(&format!("team remove {team}"));
         }
@@ -806,11 +908,11 @@ impl Session {
     }
 
     /// `/bingo timelimit <minutes|off>`, in Pregame or Playing.
-    fn set_time_limit(&mut self, minutes: Option<u32>) -> String {
+    fn set_time_limit(&mut self, host: &mut dyn ServerHost, minutes: Option<u32>) -> String {
         if !matches!(self.game.status(), GameStatus::Pregame | GameStatus::Playing) {
             return "The time limit can be changed only in Pregame or Playing.".to_string();
         }
-        match minutes {
+        let answer = match minutes {
             Some(minutes) => {
                 let seconds = i32::try_from(minutes.saturating_mul(60)).unwrap_or(i32::MAX);
                 self.game.set_time_limit(Some(seconds));
@@ -820,7 +922,9 @@ impl Session {
                 self.game.set_time_limit(None);
                 "Time limit turned off".to_string()
             }
-        }
+        };
+        self.save_playing(host);
+        answer
     }
 
     /// `/bingo stats`: the caller's games, wins, best winning time and items, from the history.
@@ -886,6 +990,7 @@ impl Session {
             host.command(&format!("tp {name} {}", teammate.name));
         }
         self.send_round(host, player);
+        self.save_playing(host);
         format!("You joined {}.", team_name(&key))
     }
 
@@ -967,6 +1072,7 @@ impl Session {
                 }
                 self.votes.clear();
                 self.dispatch(host, events);
+                self.save_playing(host);
                 "The game continues.".to_string()
             }
             Err(error) => error.to_string(),
@@ -982,6 +1088,227 @@ impl Session {
             send(host, player, wire::open_card(Some(team)));
         }
         "Opening your card".to_string()
+    }
+}
+
+/// A snapshot read and checked in full, ready to be applied to a session.
+struct SavedGame {
+    game: GameSnapshot,
+    seed: u64,
+    rules: Options,
+    added_teams: Vec<String>,
+    card: Option<Card>,
+    progress: BTreeMap<String, TeamProgress>,
+    owners: HashMap<usize, String>,
+    reached: Vec<String>,
+    votes: BTreeMap<u128, VoteChoice>,
+    teams: Teams,
+}
+
+/// Reads a snapshot from [`Session::snapshot_json`]. A missing field, a wrong type, an unknown name, a bad uuid, a square
+/// off the card, or a card that does not match the phase is an error.
+fn parse_snapshot(text: &str) -> Result<SavedGame, String> {
+    let root: Value = serde_json::from_str(text).map_err(|e| format!("invalid JSON: {e}"))?;
+    let object = root.as_object().ok_or("the snapshot is not a JSON object")?;
+    let version = u64_field(object, "version")?;
+    if version != GAME_STATE_VERSION {
+        return Err(format!("unknown snapshot version {version}"));
+    }
+    let phase = str_field(object, "phase")?;
+    let status = status_from_name(phase).ok_or_else(|| format!("unknown phase \"{phase}\""))?;
+    let countdown_ticks = u64_field(object, "countdownTicks")?;
+    let playing_ticks = u64_field(object, "elapsedTicks")?;
+    let time_limit_secs = match field(object, "timeLimitSecs")? {
+        Value::Null => None,
+        value => {
+            let secs = value.as_i64().and_then(|secs| i32::try_from(secs).ok()).filter(|secs| *secs >= 0);
+            Some(secs.ok_or("\"timeLimitSecs\" is not a whole number of seconds")?)
+        }
+    };
+    let seed = u64_field(object, "seed")?;
+
+    let rules_value = field(object, "rules")?;
+    let rules = store::options_from_json(&rules_value.to_string());
+    let canonical = serde_json::from_str::<Value>(&store::options_to_json(&rules)).expect("round options are JSON");
+    if canonical != *rules_value {
+        return Err("\"rules\" are not valid round options".to_string());
+    }
+
+    let added_teams = str_list(array_field(object, "addedTeams")?)?
+        .iter()
+        .map(|team| team_key(team))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let card = match field(object, "card")? {
+        Value::Null => None,
+        Value::Array(squares) => {
+            let squares = squares.iter().map(parse_square).collect::<Result<Vec<_>, _>>()?;
+            if squares.len() != CARD_SQUARES {
+                return Err(format!("a card has {CARD_SQUARES} squares, not {}", squares.len()));
+            }
+            Some(Card { squares })
+        }
+        _ => return Err("\"card\" is neither null nor a list".to_string()),
+    };
+    let needs_card = matches!(status, GameStatus::Playing | GameStatus::Postgame);
+    if card.is_some() != needs_card {
+        return Err(format!("phase {phase} does not go with the card the snapshot has"));
+    }
+
+    let mut progress = BTreeMap::new();
+    for (team, found) in object_field(object, "progress")? {
+        let found = found
+            .as_array()
+            .ok_or("a team's progress is not a list")?
+            .iter()
+            .map(square_index)
+            .collect::<Result<Vec<_>, _>>()?;
+        progress.insert(team_key(team)?, TeamProgress { found });
+    }
+
+    let mut owners = HashMap::new();
+    for (square, team) in object_field(object, "owners")? {
+        let index = square.parse::<usize>().map_err(|_| format!("owner square \"{square}\" is not a number"))?;
+        if index >= CARD_SQUARES {
+            return Err(format!("owner square {index} is off the card"));
+        }
+        owners.insert(index, team_key(team_text(team)?)?);
+    }
+
+    let reached = str_list(array_field(object, "reached")?)?
+        .iter()
+        .map(|team| team_key(team))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut votes = BTreeMap::new();
+    for (player, choice) in object_field(object, "votes")? {
+        votes.insert(player_uuid(player)?, vote_from_name(team_text(choice)?)?);
+    }
+
+    let mut members: Vec<(u128, String)> = Vec::new();
+    for entry in array_field(object, "members")? {
+        let entry = entry.as_object().ok_or("a member is not an object")?;
+        members.push((player_uuid(str_field(entry, "uuid")?)?, team_key(str_field(entry, "team")?)?));
+    }
+    let member_refs: Vec<(u128, &str)> = members.iter().map(|(player, team)| (*player, team.as_str())).collect();
+    let mut spectators = Vec::new();
+    for text in str_list(array_field(object, "spectators")?)? {
+        spectators.push(player_uuid(&text)?);
+    }
+    let teams = Teams::from_parts(&member_refs, &spectators)?;
+
+    Ok(SavedGame {
+        game: GameSnapshot { status, countdown_ticks, playing_ticks, time_limit_secs },
+        seed,
+        rules,
+        added_teams,
+        card,
+        progress,
+        owners,
+        reached,
+        votes,
+        teams,
+    })
+}
+
+/// The phase a snapshot text names, or `None` when the text is not a snapshot.
+fn saved_phase(text: &str) -> Option<GameStatus> {
+    let value: Value = serde_json::from_str(text).ok()?;
+    status_from_name(value.get("phase")?.as_str()?)
+}
+
+fn field<'a>(object: &'a Map<String, Value>, key: &str) -> Result<&'a Value, String> {
+    object.get(key).ok_or_else(|| format!("\"{key}\" is missing"))
+}
+
+fn u64_field(object: &Map<String, Value>, key: &str) -> Result<u64, String> {
+    field(object, key)?.as_u64().ok_or_else(|| format!("\"{key}\" is not a whole number"))
+}
+
+fn str_field<'a>(object: &'a Map<String, Value>, key: &str) -> Result<&'a str, String> {
+    field(object, key)?.as_str().ok_or_else(|| format!("\"{key}\" is not text"))
+}
+
+fn array_field<'a>(object: &'a Map<String, Value>, key: &str) -> Result<&'a Vec<Value>, String> {
+    field(object, key)?.as_array().ok_or_else(|| format!("\"{key}\" is not a list"))
+}
+
+fn object_field<'a>(object: &'a Map<String, Value>, key: &str) -> Result<&'a Map<String, Value>, String> {
+    field(object, key)?.as_object().ok_or_else(|| format!("\"{key}\" is not an object"))
+}
+
+fn team_text(value: &Value) -> Result<&str, String> {
+    value.as_str().ok_or_else(|| "a name in the snapshot is not text".to_string())
+}
+
+fn str_list(values: &[Value]) -> Result<Vec<&str>, String> {
+    values.iter().map(team_text).collect()
+}
+
+/// A team key as the snapshot writes it (`bingo_red`). Any other spelling, or an unknown team, is an error.
+fn team_key(text: &str) -> Result<String, String> {
+    match teams::preset(text) {
+        Some(preset) if preset.key == text => Ok(preset.key.to_string()),
+        _ => Err(format!("unknown team \"{text}\"")),
+    }
+}
+
+fn player_uuid(text: &str) -> Result<u128, String> {
+    store::uuid_from(text).ok_or_else(|| format!("\"{text}\" is not a player uuid"))
+}
+
+fn square_index(value: &Value) -> Result<usize, String> {
+    let index = value.as_u64().and_then(|n| usize::try_from(n).ok()).ok_or("a square is not a whole number")?;
+    if index >= CARD_SQUARES {
+        return Err(format!("square {index} is off the card"));
+    }
+    Ok(index)
+}
+
+fn parse_square(value: &Value) -> Result<Objective, String> {
+    let object = value.as_object().ok_or("a square is not an object")?;
+    let item = str_field(object, "item")?;
+    if item.is_empty() {
+        return Err("a square has no item".to_string());
+    }
+    let tier = tier_from_name(str_field(object, "tier")?)?;
+    Ok(Objective { item: item.to_string(), tier })
+}
+
+fn tier_from_name(name: &str) -> Result<TierLabel, String> {
+    [TierLabel::S, TierLabel::A, TierLabel::B, TierLabel::C, TierLabel::D]
+        .into_iter()
+        .find(|tier| tier.name() == name)
+        .ok_or_else(|| format!("unknown tier \"{name}\""))
+}
+
+fn status_name(status: GameStatus) -> &'static str {
+    match status {
+        GameStatus::Pregame => "Pregame",
+        GameStatus::Starting => "Starting",
+        GameStatus::Playing => "Playing",
+        GameStatus::Postgame => "Postgame",
+    }
+}
+
+fn status_from_name(name: &str) -> Option<GameStatus> {
+    GameStatus::ALL.into_iter().find(|&status| status_name(status) == name)
+}
+
+fn vote_name(choice: VoteChoice) -> &'static str {
+    match choice {
+        VoteChoice::NextRound => "next_round",
+        VoteChoice::KeepPlaying => "keep_playing",
+        VoteChoice::ReturnToLobby => "return_to_lobby",
+    }
+}
+
+fn vote_from_name(name: &str) -> Result<VoteChoice, String> {
+    match name {
+        "next_round" => Ok(VoteChoice::NextRound),
+        "keep_playing" => Ok(VoteChoice::KeepPlaying),
+        "return_to_lobby" => Ok(VoteChoice::ReturnToLobby),
+        _ => Err(format!("unknown vote \"{name}\"")),
     }
 }
 

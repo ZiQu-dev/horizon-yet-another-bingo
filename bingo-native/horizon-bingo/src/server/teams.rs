@@ -137,6 +137,32 @@ impl Teams {
         self.assigned.clear();
     }
 
+    /// The members as (player, team key) in join order, and the spectators in the order they joined: what
+    /// [`Teams::from_parts`] takes back.
+    pub fn parts(&self) -> (Vec<(u128, &'static str)>, Vec<u128>) {
+        let members = self.assigned.iter().map(|&(player, index)| (player, PRESETS[index].key)).collect();
+        (members, self.spectators.clone())
+    }
+
+    /// Rebuilds the teams from [`Teams::parts`]. An unknown team, or a player listed twice, is an error.
+    pub fn from_parts(members: &[(u128, &str)], spectators: &[u128]) -> Result<Self, String> {
+        let mut teams = Self::new();
+        for &(player, team) in members {
+            let index = preset_index(team).ok_or_else(|| format!("Unknown team \"{team}\"."))?;
+            if teams.index_of(player).is_some() || teams.is_spectator(player) {
+                return Err(format!("Player {player:032x} is listed twice."));
+            }
+            teams.assigned.push((player, index));
+        }
+        for &player in spectators {
+            if teams.index_of(player).is_some() || teams.is_spectator(player) {
+                return Err(format!("Player {player:032x} is listed twice."));
+            }
+            teams.spectators.push(player);
+        }
+        Ok(teams)
+    }
+
     fn index_of(&self, player: u128) -> Option<usize> {
         self.assigned.iter().find(|&&(p, _)| p == player).map(|&(_, i)| i)
     }

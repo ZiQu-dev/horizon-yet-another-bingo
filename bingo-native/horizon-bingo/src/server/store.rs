@@ -154,12 +154,13 @@ pub struct PlayerStats {
     pub items: u32,
 }
 
-fn uuid_hex(id: u128) -> String {
+/// A uuid as 32 lowercase hex digits.
+pub fn uuid_hex(id: u128) -> String {
     format!("{id:032x}")
 }
 
 /// Parses 32 hex digits into a uuid; anything else is `None`.
-fn uuid_from(s: &str) -> Option<u128> {
+pub fn uuid_from(s: &str) -> Option<u128> {
     if s.len() != 32 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }

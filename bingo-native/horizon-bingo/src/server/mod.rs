@@ -14,3 +14,5 @@ pub mod ready;
 pub mod teams;
 pub mod options;
 pub mod store;
+pub mod hidden_consume;
+pub mod multicard;
