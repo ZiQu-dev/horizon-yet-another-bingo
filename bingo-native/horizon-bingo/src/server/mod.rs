@@ -24,3 +24,5 @@ pub mod map_render;
 pub mod menu;
 pub mod chat;
 pub mod sidebar;
+pub mod kit;
+pub mod texts;

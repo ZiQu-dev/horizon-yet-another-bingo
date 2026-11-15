@@ -3,6 +3,7 @@
 
 use super::difficulty;
 use super::hidden_consume::CardMode;
+use super::kit::{self, KitCommand};
 use super::multicard::{StalemateBehavior, WinCondition};
 use super::options::{EndWhen, Goal, Mode, Toggle};
 use super::teams::PRESETS as TEAM_PRESETS;
@@ -57,6 +58,8 @@ pub enum Command {
     StatsOf(String),
     /// The lobby menu (a chest). Opened for a player by the mod's adapter; a console has no chest.
     Menu,
+    /// `kit`, `kit add <item> [count]`, `kit remove <item>` or `kit clear`: the starting kit of team players.
+    Kit(KitCommand),
 }
 
 /// The answer to the end-of-round vote: play another round, keep playing, or return to the lobby.
@@ -67,7 +70,7 @@ pub enum VoteChoice {
     ReturnToLobby,
 }
 
-const USAGE: &str = "start [ignore_warnings] | end | reset | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout|hidden_items on|off|consume_items on|off | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | playto cards <n>|infinite|replace_goals | stalemate end_game|reroll_card|do_nothing | options | vote next|keep|lobby | resume | stats [player] | difficulty easy|medium|hard|extreme|impossible | difficulty <S> <A> <B> <C> <D> | reroll | teams <n> | autoshuffle on|off | menu";
+const USAGE: &str = "start [ignore_warnings] | end | reset | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout|hidden_items on|off|consume_items on|off | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | playto cards <n>|infinite|replace_goals | stalemate end_game|reroll_card|do_nothing | options | vote next|keep|lobby | resume | stats [player] | difficulty easy|medium|hard|extreme|impossible | difficulty <S> <A> <B> <C> <D> | reroll | teams <n> | autoshuffle on|off | menu | kit | kit add <item> [count] | kit remove <item> | kit clear";
 
 const SPAWN_DISTANCE_MAX: u32 = 1000;
 
@@ -171,6 +174,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
             },
             _ => Err(format!("Too many arguments for 'spawndistance'. Usage: spawndistance <chunks> (1 to {SPAWN_DISTANCE_MAX})")),
         },
+        "kit" => kit::parse(&args).map(Command::Kit),
         "vote" => match args.as_slice() {
             [] => Err("Usage: vote next|keep|lobby".to_string()),
             [value] => match value.to_lowercase().as_str() {
@@ -219,6 +223,7 @@ pub fn requires_op(command: &Command) -> bool {
         | Command::TeamCount(_)
         | Command::Resume
         | Command::StatsOf(_) => true,
+        Command::Kit(command) => command.changes(),
         Command::Help
         | Command::Status
         | Command::Join(_)

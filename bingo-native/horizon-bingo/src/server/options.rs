@@ -6,6 +6,7 @@
 
 use super::card_gen::DEFAULT_DISTRIBUTION;
 use super::hidden_consume::HiddenConsume;
+use super::kit::Kit;
 use super::multicard::{StalemateBehavior, WinCondition};
 
 /// Teams the auto shuffle makes when none is given (`teamCount`, default 3).
@@ -76,6 +77,8 @@ pub struct Options {
     pub team_chat: bool,
     /// The sidebar (`scoreboard`, the original's default): game info and the ranking on screen. On by default. `sidebar.rs`.
     pub sidebar: bool,
+    /// The starting kit of team players (`bingo kit`), empty by default.
+    pub kit: Kit,
 }
 
 impl Default for Options {
@@ -97,6 +100,7 @@ impl Default for Options {
             team_count: DEFAULT_TEAM_COUNT,
             team_chat: true,
             sidebar: true,
+            kit: Kit::default(),
         }
     }
 }

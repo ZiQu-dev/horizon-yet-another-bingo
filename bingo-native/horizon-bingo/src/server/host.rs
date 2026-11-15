@@ -1,4 +1,5 @@
 //! What the server logic needs from the game. The api adapter implements it over Horizon's `Host`; tests use a fake.
+use super::texts::Line;
 use super::types::Player;
 
 pub trait ServerHost {
@@ -8,6 +9,14 @@ pub trait ServerHost {
     fn tell(&mut self, player: u128, line: &str);
     /// A chat line to everyone.
     fn broadcast(&mut self, line: &str);
+    /// A translatable chat line to one player. The default sends its English, so a test host need not implement it.
+    fn tell_line(&mut self, player: u128, line: &Line) {
+        self.tell(player, &line.render());
+    }
+    /// A translatable chat line to everyone. The default sends its English.
+    fn broadcast_line(&mut self, line: &Line) {
+        self.broadcast(&line.render());
+    }
     /// Players online right now.
     fn players(&self) -> Vec<Player>;
     /// The item's registry id on the wire (the `ItemStack.item` number), or `None` if the item does not exist.

@@ -12,6 +12,8 @@ use super::difficulty;
 use super::game::{Event, Game, GameOptions, GameSnapshot};
 use super::hidden_consume::{self, CardMode, HeldStack, Sight, TileView};
 use super::host::ServerHost;
+use super::kit::{self, KitCommand};
+use super::texts::{self, Line};
 use super::multicard::{
     complete_card, finish_card_on_goal, reroll_card, round_ends, settle_pending, stalemate_action, stalemate_reason,
     team_score, CardCompletion, CardState, Completion, CompletionOutcome, EndCause, Rules, StalemateAction,
@@ -441,7 +443,7 @@ impl Session {
         let ends = scoring::game_should_end(self.rules.end_when, self.reached.len(), keys.len());
         if !ends {
             for key in newly {
-                host.broadcast(&format!("{} reached the goal!", team_name(&key)));
+                host.broadcast_line(&texts::team_reached_goal(team_name(&key)));
             }
         }
         if ends {
@@ -528,7 +530,7 @@ impl Session {
             host.broadcast(line);
         }
         if let Some(cause) = stalemate_end {
-            host.broadcast(stalemate_text(cause));
+            host.broadcast_line(&stalemate_text(cause));
             self.end_game(host, None);
             return;
         }
@@ -619,7 +621,8 @@ impl Session {
     fn make_card(&mut self, now: u64) -> usize {
         let index = self.cards.len();
         let seed = self.seed.wrapping_add(31 * index as u64);
-        self.cards.push(generate_card(seed, &self.pool, self.rules.tier_counts));
+        let pool = self.card_pool();
+        self.cards.push(generate_card(seed, &pool, self.rules.tier_counts));
         self.owners.push(HashMap::new());
         self.card_started.push(now);
         index
@@ -832,6 +835,50 @@ impl Session {
             Command::Stats => self.stats(host, player),
             Command::StatsOf(name) => self.stats_of_player(host, &name),
             Command::Menu => "The menu opens in a player's game chat: type bingo menu in game.".to_string(),
+            Command::Kit(command) => self.kit_command(host, command),
+        }
+    }
+
+    /// The pool the cards are drawn from: the tiers without the kit's items, which the original keeps off the cards
+    /// (`excludeSpawnKitItemsFromCards`). With no kit it is the built-in pool.
+    fn card_pool(&self) -> Pool {
+        kit::pool_without(&self.pool, &self.rules.kit.names())
+    }
+
+    /// `bingo kit`: shows the kit, or changes it before the game starts and saves the options.
+    fn kit_command(&mut self, host: &mut dyn ServerHost, command: KitCommand) -> String {
+        if !command.changes() {
+            return self.rules.kit.describe();
+        }
+        if self.game.status() != GameStatus::Pregame {
+            return texts::KIT_ONLY_BEFORE_START.to_string();
+        }
+        let answer = match command {
+            KitCommand::Add { item, count } => {
+                if host.item_numeric_id(&item).is_none() {
+                    return texts::unknown_item(&item);
+                }
+                self.rules.kit.add(&item, count).map(|()| texts::kit_added(&item, count))
+            }
+            KitCommand::Remove(item) => {
+                if self.rules.kit.remove(&item) {
+                    Ok(texts::kit_removed(&item))
+                } else {
+                    Err(texts::not_in_kit(&item))
+                }
+            }
+            KitCommand::Clear => {
+                self.rules.kit.clear();
+                Ok(texts::KIT_CLEARED.to_string())
+            }
+            KitCommand::Show => Ok(self.rules.kit.describe()),
+        };
+        match answer {
+            Ok(text) => {
+                host.write_file(OPTIONS_FILE, &store::options_to_json(&self.rules));
+                text
+            }
+            Err(error) => error,
         }
     }
 
@@ -953,7 +1000,8 @@ impl Session {
 
     /// Makes the card and shows the game to everyone online.
     fn begin_round(&mut self, host: &mut dyn ServerHost) {
-        self.cards = vec![generate_card(self.seed, &self.pool, self.rules.tier_counts)];
+        let pool = self.card_pool();
+        self.cards = vec![generate_card(self.seed, &pool, self.rules.tier_counts)];
         self.card_started = vec![0];
         self.team_card = self.teams.teams().into_iter().map(|key| (key.to_string(), 0)).collect();
         self.completions.clear();
@@ -974,6 +1022,9 @@ impl Session {
                 host.command(&format!("gamemode survival {}", player.name));
                 if self.rules.elytra {
                     host.command(&format!("give {} elytra", player.name));
+                }
+                for command in self.rules.kit.give_commands(&player.name) {
+                    host.command(&command);
                 }
                 if self.rules.night_vision {
                     host.command(&format!("effect give {} night_vision infinite 0 true", player.name));
@@ -1045,7 +1096,7 @@ impl Session {
                 Event::Reset => self.reset_round(host),
                 Event::Resumed => {
                     send_all(host, self.game_status());
-                    host.broadcast("The game continues.");
+                    host.broadcast_line(&texts::game_continues());
                 }
             }
         }
@@ -1074,10 +1125,10 @@ impl Session {
             }
         }
         let line = match winner.as_deref() {
-            Some(team) => format!("{} won the game!", team_name(team)),
-            None => "The game has ended.".to_string(),
+            Some(team) => texts::team_won_game(team_name(team)),
+            None => texts::game_ended(),
         };
-        host.broadcast(&line);
+        host.broadcast_line(&line);
     }
 
     /// Back to Pregame: the card, the progress and the ready flags go; the teams stay, but the server's team list drops
@@ -1181,8 +1232,9 @@ impl Session {
         // The seed moves on with each batch: the scored items only grow, so no two batches share a seed.
         let batch: u64 = self.persistent.values().map(|score| score.items as u64).sum();
         let seed = self.seed.wrapping_add(batch);
+        let pool = self.card_pool();
         if let Some(card) = self.cards.first_mut() {
-            replace_squares(seed, &self.pool, card, &indices);
+            replace_squares(seed, &pool, card, &indices);
         }
         for progress in self.progress.values_mut() {
             progress.found.retain(|square| !replaced.contains(square));
@@ -1799,11 +1851,11 @@ fn completion_notice(round: &TeamRound, rules: &Rules) -> String {
 }
 
 /// The chat line for a stalemate that ends the game.
-fn stalemate_text(cause: EndCause) -> &'static str {
+fn stalemate_text(cause: EndCause) -> Line {
     match cause {
-        EndCause::Stalemate => "A stalemate: no team can win the card, so the game ends.",
-        EndCause::Lockout => "A stalemate: every square is claimed and no team leads, so the game ends.",
-        EndCause::ImpossibleGoal => "A stalemate: no team can reach the goal, so the game ends.",
+        EndCause::Stalemate => texts::stalemate_no_team_can_win(),
+        EndCause::Lockout => texts::stalemate_lockout(),
+        EndCause::ImpossibleGoal => texts::stalemate_impossible_goal(),
     }
 }
 

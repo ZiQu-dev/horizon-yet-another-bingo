@@ -10,6 +10,7 @@ use serde_json::{json, Map, Value};
 
 use crate::server::card_gen::DEFAULT_DISTRIBUTION;
 use crate::server::hidden_consume::HiddenConsume;
+use crate::server::kit::Kit;
 use crate::server::multicard::{StalemateBehavior, WinCondition};
 use crate::server::options::{EndWhen, Goal, Mode, Options, DEFAULT_TEAM_COUNT};
 use crate::server::teams::PRESETS as TEAM_PRESETS;
@@ -75,6 +76,10 @@ pub fn options_to_json(o: &Options) -> String {
     if o.team_count != DEFAULT_TEAM_COUNT {
         value["teamCount"] = json!(o.team_count);
     }
+    // The starting kit is written only when it has items, so a round without one keeps the text it always had.
+    if let Value::Object(object) = &mut value {
+        o.kit.write_into(object);
+    }
     serde_json::to_string_pretty(&value).expect("a JSON value always serializes")
 }
 
@@ -112,6 +117,7 @@ pub fn options_from_json(s: &str) -> Options {
             .unwrap_or(d.team_count),
         team_chat: flag(&root, "teamChat", d.team_chat),
         sidebar: flag(&root, "sidebar", d.sidebar),
+        kit: Kit::read_from(&root),
     }
 }
 

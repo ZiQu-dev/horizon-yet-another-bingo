@@ -12,6 +12,7 @@ use horizon_bingo::server::ready::ReadyOptions;
 use horizon_bingo::server::session::{Session, SessionOptions};
 use horizon_bingo::server::options::Options;
 use horizon_bingo::server::sidebar::Shown;
+use horizon_bingo::server::texts::Line;
 use horizon_bingo::server::types::Player;
 use horizon_client::mod_api::{Flow, Host, ItemStack, NativeBossBar, NativeCommand, ServerTickPhase, Text};
 use std::{
@@ -31,7 +32,7 @@ const OP_LEVEL: u8 = 2;
 const SHORTCUTS: [&str; 3] = ["join", "ready", "spectator"];
 /// The usages the mod registers, each with a line that parses to what it runs. The operator level comes from
 /// `commands::requires_op`, so the rule lives in one place.
-const USAGES: [(&str, &str); 44] = [
+const USAGES: [(&str, &str); 49] = [
     ("bingo status", "status"),
     ("bingo help", "help"),
     ("bingo card", "card"),
@@ -73,6 +74,11 @@ const USAGES: [(&str, &str); 44] = [
     ("bingo autoshuffle <state:word>", "autoshuffle on"),
     ("bingo stats <player:word>", "stats Alice"),
     ("bingo menu", "menu"),
+    ("bingo kit", "kit"),
+    ("bingo kit add <item:word>", "kit add diamond"),
+    ("bingo kit add <item:word> <count:integer>", "kit add diamond 2"),
+    ("bingo kit remove <item:word>", "kit remove diamond"),
+    ("bingo kit clear", "kit clear"),
     ("join <team:word>", "join Red"),
     ("ready", "ready"),
     ("spectator", "spectator"),
@@ -179,6 +185,14 @@ impl ServerHost for ServerAdapter<'_> {
         self.host.broadcast(Text::literal(line));
     }
 
+    fn tell_line(&mut self, player: u128, line: &Line) {
+        let _ = self.host.tell(player, translated(line));
+    }
+
+    fn broadcast_line(&mut self, line: &Line) {
+        self.host.broadcast(translated(line));
+    }
+
     fn players(&self) -> Vec<Player> {
         self.host
             .server_players()
@@ -251,6 +265,13 @@ impl ServerHost for ServerAdapter<'_> {
             log(&format!("bingo: boss bar {id} for {player:032x} not shown"));
         }
     }
+}
+
+/// The line as a translatable text: its key, with the English as the fallback, so a client without the key shows the
+/// English. The arguments are plain text.
+fn translated(line: &Line) -> Text {
+    let args: Vec<Text> = line.args.iter().map(|arg| Text::literal(arg.as_str())).collect();
+    Text::translate_with_fallback(line.key, line.template, &args)
 }
 
 /// The UUID of the boss bar called `id`: FNV-1a over its bytes, so each name always gives the same bar and no two
