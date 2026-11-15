@@ -4,8 +4,12 @@
 //! The win condition (`play_to`, default `Cards(1)`) and the stalemate behaviour (default end game) are in `multicard`.
 //! The hidden-items and consume-items flags are in `hidden_consume` (see `hidden_consume.rs`).
 
+use super::card_gen::DEFAULT_DISTRIBUTION;
 use super::hidden_consume::HiddenConsume;
 use super::multicard::{StalemateBehavior, WinCondition};
+
+/// Teams the auto shuffle makes when none is given (`teamCount`, default 3).
+pub const DEFAULT_TEAM_COUNT: usize = 3;
 
 /// What a team must reach on its card (`BingoGoal`: `Items(n)`, `Lines(n)`; `FullCard` is `Items(25)`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +45,8 @@ pub enum Toggle {
     KeepInventory,
     Elytra,
     NightVision,
+    /// `teamAutoShuffle`: the teams are shuffled when the round starts.
+    AutoShuffle,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +66,12 @@ pub struct Options {
     pub win_condition: WinCondition,
     /// What a stalemate does (`stalemate`), default end the game.
     pub stalemate: StalemateBehavior,
+    /// Squares of each tier, S first (`itemDistribution`), default easy. Sums to 25: see `difficulty`.
+    pub tier_counts: [usize; 5],
+    /// Whether the teams are shuffled when the round starts (`teamAutoShuffle`), default off.
+    pub team_auto_shuffle: bool,
+    /// How many teams that shuffle makes (`teamCount`), default 3.
+    pub team_count: usize,
 }
 
 impl Default for Options {
@@ -76,6 +88,9 @@ impl Default for Options {
             hidden_consume: HiddenConsume::default(),
             win_condition: WinCondition::default(),
             stalemate: StalemateBehavior::default(),
+            tier_counts: DEFAULT_DISTRIBUTION,
+            team_auto_shuffle: false,
+            team_count: DEFAULT_TEAM_COUNT,
         }
     }
 }
@@ -87,6 +102,7 @@ impl Options {
             Toggle::KeepInventory => self.keep_inventory = on,
             Toggle::Elytra => self.elytra = on,
             Toggle::NightVision => self.night_vision = on,
+            Toggle::AutoShuffle => self.team_auto_shuffle = on,
         }
     }
 }

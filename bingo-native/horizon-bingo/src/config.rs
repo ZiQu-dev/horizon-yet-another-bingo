@@ -51,6 +51,9 @@ pub const SOUNDS: [&str; 8] = [
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientConfig {
     pub enable_hud: bool,
+    /// `showQuickStartButton` (original `BingoWorldManager.kt:37`): whether the title screen shows the "BINGO!" button that
+    /// creates a bingo world. The port has no title button yet (plan 4H), so nothing reads this flag; it is kept, saved
+    /// and shown in the settings so the choice survives until that button exists.
     pub show_quick_start_button: bool,
     pub card_pauses_game: bool,
     pub card_scale: f32,

@@ -1,9 +1,11 @@
 //! Chat command parsing for the bingo game. Pure: the input is the text after the `bingo` word, and the caller decides
 //! who may run the result (see [`requires_op`]). Command and keyword words ignore case; team names are kept as typed.
 
+use super::difficulty;
 use super::hidden_consume::CardMode;
 use super::multicard::{StalemateBehavior, WinCondition};
 use super::options::{EndWhen, Goal, Mode, Toggle};
+use super::teams::PRESETS as TEAM_PRESETS;
 
 /// One parsed command.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +47,12 @@ pub enum Command {
     Resume,
     /// Your own game statistics.
     Stats,
+    /// `difficulty <easy|medium|hard|extreme|impossible>` or `difficulty <S> <A> <B> <C> <D>`: the tier counts of the card.
+    Difficulty([usize; 5]),
+    /// `reroll`: a new seed for the card, before the game starts.
+    Reroll,
+    /// `teams <n>`: how many teams the auto shuffle makes.
+    TeamCount(usize),
 }
 
 /// The answer to the end-of-round vote: play another round, keep playing, or return to the lobby.
@@ -55,7 +63,7 @@ pub enum VoteChoice {
     ReturnToLobby,
 }
 
-const USAGE: &str = "start [ignore_warnings] | end | reset | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout|hidden_items on|off|consume_items on|off | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | playto cards <n>|infinite|replace_goals | stalemate end_game|reroll_card|do_nothing | options | vote next|keep|lobby | resume | stats";
+const USAGE: &str = "start [ignore_warnings] | end | reset | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout|hidden_items on|off|consume_items on|off | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | playto cards <n>|infinite|replace_goals | stalemate end_game|reroll_card|do_nothing | options | vote next|keep|lobby | resume | stats | difficulty easy|medium|hard|extreme|impossible | difficulty <S> <A> <B> <C> <D> | reroll | teams <n> | autoshuffle on|off";
 
 const SPAWN_DISTANCE_MAX: u32 = 1000;
 
@@ -79,6 +87,17 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "spectator" => no_args(name, &args, Command::Spectator),
         "card" => no_args(name, &args, Command::Card),
         "stats" => no_args(name, &args, Command::Stats),
+        "reroll" => no_args(name, &args, Command::Reroll),
+        "difficulty" => difficulty::parse_args(&args).map(Command::Difficulty),
+        "teams" => match args.as_slice() {
+            [] => Err(format!("Usage: teams <n> (1 to {})", TEAM_PRESETS.len())),
+            [value] => match value.parse::<usize>() {
+                Ok(teams) if (1..=TEAM_PRESETS.len()).contains(&teams) => Ok(Command::TeamCount(teams)),
+                _ => Err(format!("teams needs a whole number of teams from 1 to {}, got '{value}'", TEAM_PRESETS.len())),
+            },
+            _ => Err(format!("Too many arguments for 'teams'. Usage: teams <n> (1 to {})", TEAM_PRESETS.len())),
+        },
+        "autoshuffle" => parse_toggle(name, Toggle::AutoShuffle, &args),
         "options" => no_args(name, &args, Command::Options),
         "resume" => no_args(name, &args, Command::Resume),
         "start" => match args.as_slice() {
@@ -186,6 +205,9 @@ pub fn requires_op(command: &Command) -> bool {
         | Command::SpawnDistance(_)
         | Command::PlayTo(_)
         | Command::Stalemate(_)
+        | Command::Difficulty(_)
+        | Command::Reroll
+        | Command::TeamCount(_)
         | Command::Resume => true,
         Command::Help
         | Command::Status

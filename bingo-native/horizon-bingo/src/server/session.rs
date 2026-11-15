@@ -6,8 +6,9 @@
 //! everything goes out through [`ServerHost`], and the events of [`Game`] are turned into packets here.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use super::card_gen::{generate_card, load_pool, replace_squares, Pool, Rng, DEFAULT_DISTRIBUTION};
+use super::card_gen::{self, generate_card, load_pool, replace_squares, Pool, Rng};
 use super::commands::{self, Command, VoteChoice};
+use super::difficulty;
 use super::game::{Event, Game, GameOptions, GameSnapshot};
 use super::hidden_consume::{self, CardMode, HeldStack, Sight, TileView};
 use super::host::ServerHost;
@@ -49,6 +50,8 @@ const GAME_STATE_VERSION: u64 = 1;
 const MS_PER_TICK: i64 = 50;
 /// The chat line when a stalemate rerolls a card.
 const REROLL_NOTICE: &str = "A stalemate: every team on the card gets a new card.";
+/// Mixed into the seed of the auto shuffle at the start, so it does not repeat the card's own shuffles.
+const AUTO_SHUFFLE_SALT: u64 = 0x5EED_7EA5_0000_0001;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionOptions {
@@ -602,7 +605,7 @@ impl Session {
     fn make_card(&mut self, now: u64) -> usize {
         let index = self.cards.len();
         let seed = self.seed.wrapping_add(31 * index as u64);
-        self.cards.push(generate_card(seed, &self.pool, DEFAULT_DISTRIBUTION));
+        self.cards.push(generate_card(seed, &self.pool, self.rules.tier_counts));
         self.owners.push(HashMap::new());
         self.card_started.push(now);
         index
@@ -764,6 +767,9 @@ impl Session {
             Command::Ready => self.toggle_ready(host, player),
             Command::ReadyCancel => self.cancel_ready(host),
             Command::TimeLimit(minutes) => self.set_time_limit(host, minutes),
+            Command::Difficulty(counts) => self.set_rule(host, |rules| rules.tier_counts = counts, "difficulty"),
+            Command::Reroll => self.reroll(),
+            Command::TeamCount(teams) => self.set_rule(host, |rules| rules.team_count = teams, "team count"),
             Command::Card => self.open_card(host, player),
             Command::Goal(goal) => self.set_rule(host, |rules| rules.goal = goal, "goal"),
             Command::Mode(mode) => self.set_rule(
@@ -849,6 +855,11 @@ impl Session {
             return Err("Nobody to play.".to_string());
         }
         let mut teams = self.teams.clone();
+        if self.rules.team_auto_shuffle {
+            // Seeded from the round, not the shared generator, so the ready timer's check and the start deal the same teams.
+            let mut rng = Rng::new(self.seed ^ AUTO_SHUFFLE_SALT);
+            teams.shuffle(&active, self.rules.team_count, &mut rng)?;
+        }
         let mut unassigned = teams.unassigned(&active);
         if teams.teams().is_empty() && unassigned.len() == 1 {
             teams.join(unassigned[0], "bingo_red")?;
@@ -916,7 +927,7 @@ impl Session {
 
     /// Makes the card and shows the game to everyone online.
     fn begin_round(&mut self, host: &mut dyn ServerHost) {
-        self.cards = vec![generate_card(self.seed, &self.pool, DEFAULT_DISTRIBUTION)];
+        self.cards = vec![generate_card(self.seed, &self.pool, self.rules.tier_counts)];
         self.card_started = vec![0];
         self.team_card = self.teams.teams().into_iter().map(|key| (key.to_string(), 0)).collect();
         self.completions.clear();
@@ -1497,6 +1508,17 @@ impl Session {
         format!("You joined {}.", team_name(&key))
     }
 
+    /// `/bingo reroll`: a new seed for the card the game will start with, drawn from the shuffle generator. Only before the
+    /// game starts (there is no card to redraw before that: the native lobby shows none). The seed is not saved, as the
+    /// round's seed is not saved outside a game in progress.
+    fn reroll(&mut self) -> String {
+        if self.game.status() != GameStatus::Pregame {
+            return "The card can be rerolled only before the game starts.".to_string();
+        }
+        self.seed = self.rng.next_u64();
+        "Card re-rolled.".to_string()
+    }
+
     /// Changes one round rule. Only before the game starts.
     fn set_rule(&mut self, host: &mut dyn ServerHost, change: impl FnOnce(&mut Options), what: &str) -> String {
         if self.game.status() != GameStatus::Pregame {
@@ -1550,6 +1572,13 @@ impl Session {
                 StalemateBehavior::Nothing => "do nothing",
             };
             text.push_str(&format!(" Stalemate: {behaviour}."));
+        }
+        // The difficulty and the auto shuffle are named only when they are not the defaults.
+        if self.rules.tier_counts != card_gen::DEFAULT_DISTRIBUTION {
+            text.push_str(&format!(" Difficulty: {}.", difficulty::describe(self.rules.tier_counts)));
+        }
+        if self.rules.team_auto_shuffle {
+            text.push_str(&format!(" Auto shuffle: on, {} teams.", self.rules.team_count));
         }
         text
     }

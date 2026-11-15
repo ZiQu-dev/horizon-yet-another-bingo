@@ -27,7 +27,7 @@ const OP_LEVEL: u8 = 2;
 const SHORTCUTS: [&str; 3] = ["join", "ready", "spectator"];
 /// The usages the mod registers, each with a line that parses to what it runs. The operator level comes from
 /// `commands::requires_op`, so the rule lives in one place.
-const USAGES: [(&str, &str); 37] = [
+const USAGES: [(&str, &str); 42] = [
     ("bingo status", "status"),
     ("bingo help", "help"),
     ("bingo card", "card"),
@@ -62,6 +62,11 @@ const USAGES: [(&str, &str); 37] = [
     ("bingo vote <choice:word>", "vote next"),
     ("bingo resume", "resume"),
     ("bingo stats", "stats"),
+    ("bingo difficulty <preset:word>", "difficulty medium"),
+    ("bingo difficulty <s:integer> <a:integer> <b:integer> <c:integer> <d:integer>", "difficulty 0 0 3 10 12"),
+    ("bingo reroll", "reroll"),
+    ("bingo teams <n:integer>", "teams 3"),
+    ("bingo autoshuffle <state:word>", "autoshuffle on"),
     ("join <team:word>", "join Red"),
     ("ready", "ready"),
     ("spectator", "spectator"),

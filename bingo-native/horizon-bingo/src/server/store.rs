@@ -8,9 +8,11 @@ use std::collections::{BTreeMap, HashMap};
 
 use serde_json::{json, Map, Value};
 
+use crate::server::card_gen::DEFAULT_DISTRIBUTION;
 use crate::server::hidden_consume::HiddenConsume;
 use crate::server::multicard::{StalemateBehavior, WinCondition};
-use crate::server::options::{EndWhen, Goal, Mode, Options};
+use crate::server::options::{EndWhen, Goal, Mode, Options, DEFAULT_TEAM_COUNT};
+use crate::server::teams::PRESETS as TEAM_PRESETS;
 use crate::update_settings::PlayerSettings;
 
 /// Round options as pretty JSON. `goal.n` is the count for `lines` and `items`, 25 for `full_card`, and
@@ -56,6 +58,16 @@ pub fn options_to_json(o: &Options) -> String {
             o.hidden_consume.write_into(object);
         }
     }
+    // The difficulty and team settings are written only when they differ from the defaults, as the blocks above are.
+    if o.tier_counts != DEFAULT_DISTRIBUTION {
+        value["tierCounts"] = json!(o.tier_counts);
+    }
+    if o.team_auto_shuffle {
+        value["teamAutoShuffle"] = json!(true);
+    }
+    if o.team_count != DEFAULT_TEAM_COUNT {
+        value["teamCount"] = json!(o.team_count);
+    }
     serde_json::to_string_pretty(&value).expect("a JSON value always serializes")
 }
 
@@ -83,7 +95,32 @@ pub fn options_from_json(s: &str) -> Options {
         hidden_consume: HiddenConsume::read_from(&root),
         win_condition: root.get("winCondition").and_then(WinCondition::from_json).unwrap_or(d.win_condition),
         stalemate: root.get("stalemate").and_then(StalemateBehavior::from_json).unwrap_or(d.stalemate),
+        tier_counts: root.get("tierCounts").and_then(tier_counts_from).unwrap_or(d.tier_counts),
+        team_auto_shuffle: flag(&root, "teamAutoShuffle", d.team_auto_shuffle),
+        team_count: root
+            .get("teamCount")
+            .and_then(Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok())
+            .filter(|n| (1..=TEAM_PRESETS.len()).contains(n))
+            .unwrap_or(d.team_count),
     }
+}
+
+/// Five tier counts (S, A, B, C, D), each from 0 to 25, summing to 25. Anything else is `None`.
+fn tier_counts_from(v: &Value) -> Option<[usize; 5]> {
+    let items = v.as_array()?;
+    if items.len() != 5 {
+        return None;
+    }
+    let mut counts = [0usize; 5];
+    for (count, item) in counts.iter_mut().zip(items) {
+        let n = usize::try_from(item.as_u64()?).ok()?;
+        if n > 25 {
+            return None;
+        }
+        *count = n;
+    }
+    (counts.iter().sum::<usize>() == 25).then_some(counts)
 }
 
 fn flag(obj: &Map<String, Value>, key: &str, default: bool) -> bool {
