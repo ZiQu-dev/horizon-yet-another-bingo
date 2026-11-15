@@ -2,6 +2,7 @@
 //! `horizon-bingo`'s `server` modules; this file adapts Horizon's `Host` to their `ServerHost` and keeps the session.
 //! Each hook runs under `guarded`, and a poisoned lock is taken as it is, so one panic does not end the server's mod.
 use super::{MOD_ID, guarded, log};
+use horizon_bingo::server::chat;
 use horizon_bingo::server::commands::{Command, chat_shortcut, parse, requires_op};
 use horizon_bingo::server::game::GameOptions;
 use horizon_bingo::server::host::ServerHost;
@@ -10,6 +11,7 @@ use horizon_bingo::server::menu::{self, Menus, Outcome, Page, View};
 use horizon_bingo::server::ready::ReadyOptions;
 use horizon_bingo::server::session::{Session, SessionOptions};
 use horizon_bingo::server::options::Options;
+use horizon_bingo::server::sidebar::Shown;
 use horizon_bingo::server::types::Player;
 use horizon_client::mod_api::{Flow, Host, ItemStack, NativeBossBar, NativeCommand, ServerTickPhase, Text};
 use std::{
@@ -89,6 +91,10 @@ static COMMANDS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static LOBBY_MENUS: Mutex<Menus> = Mutex::new(Menus::new());
 /// The item registry's names, read once. `None` when the assets are missing (logged once).
 static ITEM_IDS: OnceLock<Option<ItemIds>> = OnceLock::new();
+/// Chat lines during team chat, `(player, line)`, queued by the chat hook and sent on the next tick (the hook has no host).
+static TEAM_CHAT: Mutex<Vec<(u128, String)>> = Mutex::new(Vec::new());
+/// The sidebar as last shown on the server (`sidebar::Shown`).
+static SIDEBAR: Mutex<Shown> = Mutex::new(Shown::new());
 
 /// A session that starts from the clock's time, with the default game options.
 fn new_session() -> Session {
@@ -148,6 +154,8 @@ pub fn server_about_to_start() {
     *SESSION.lock().unwrap_or_else(PoisonError::into_inner) = None;
     CHAT_VOTES.lock().unwrap_or_else(PoisonError::into_inner).clear();
     LOBBY_MENUS.lock().unwrap_or_else(PoisonError::into_inner).clear();
+    TEAM_CHAT.lock().unwrap_or_else(PoisonError::into_inner).clear();
+    *SIDEBAR.lock().unwrap_or_else(PoisonError::into_inner) = Shown::new();
 }
 
 /// Horizon's `Host` as the crate's `ServerHost`.
@@ -294,6 +302,8 @@ pub fn server_tick(host: &mut dyn Host, phase: ServerTickPhase) {
     }
     guarded("server tick", || with_session(|s| s.tick(&mut ServerAdapter { host: &mut *host })));
     guarded("bingo chat votes", || run_chat_votes(&mut *host));
+    guarded("bingo team chat", || run_team_chat(&mut *host));
+    guarded("bingo sidebar", || update_sidebar(&mut *host));
     // Outside the session's lock: a console command may run hooks that reach the session again.
     guarded("bingo console commands", || run_queued_commands(&mut *host));
 }
@@ -313,23 +323,61 @@ fn run_chat_votes(host: &mut dyn Host) {
 }
 
 /// A player's chat line, before anyone sees it. In Postgame a plain `vote lobby`, `vote next` or `vote keep` is that
-/// player's vote: it is cancelled here, so nobody sees it, and runs on the next tick. Any other line goes on unchanged.
+/// player's vote: it is cancelled here, so nobody sees it, and runs on the next tick. While a game is Starting or
+/// Playing (and team chat is on) every line is cancelled and sent to the player's team on the next tick
+/// (`run_team_chat`). Any other line goes on unchanged.
 pub fn player_chat(player: u128, message: &str) -> Flow {
-    let Some(command) = chat_shortcut(message) else {
-        return Flow::Continue;
-    };
-    if !guarded("player chat", || with_session(|s| s.is_postgame())).unwrap_or(false) {
-        return Flow::Continue;
-    }
-    guarded("player chat", || {
-        let mut votes = CHAT_VOTES.lock().unwrap_or_else(PoisonError::into_inner);
-        if votes.len() < COMMAND_QUEUE_MAX {
-            votes.push((player, command));
-        } else {
-            log(&format!("bingo: chat vote from {player:032x} dropped, the queue is full"));
+    if let Some(command) = chat_shortcut(message) {
+        if guarded("player chat", || with_session(|s| s.is_postgame())).unwrap_or(false) {
+            guarded("player chat", || {
+                let mut votes = CHAT_VOTES.lock().unwrap_or_else(PoisonError::into_inner);
+                if votes.len() < COMMAND_QUEUE_MAX {
+                    votes.push((player, command));
+                } else {
+                    log(&format!("bingo: chat vote from {player:032x} dropped, the queue is full"));
+                }
+            });
+            return Flow::Cancel;
         }
-    });
-    Flow::Cancel
+    }
+    if guarded("player chat", || with_session(|s| s.team_chat_on())).unwrap_or(false) {
+        guarded("player chat", || {
+            let mut lines = TEAM_CHAT.lock().unwrap_or_else(PoisonError::into_inner);
+            if lines.len() < COMMAND_QUEUE_MAX {
+                lines.push((player, message.to_owned()));
+            } else {
+                log(&format!("bingo: team chat from {player:032x} dropped, the queue is full"));
+            }
+        });
+        return Flow::Cancel;
+    }
+    Flow::Continue
+}
+
+/// Sends the team chat lines queued since the last tick: each to the recipients `chat.rs` picks. If the game has stopped
+/// taking team chat since the line was typed, it goes to everyone, so no line is lost.
+fn run_team_chat(host: &mut dyn Host) {
+    let lines = std::mem::take(&mut *TEAM_CHAT.lock().unwrap_or_else(PoisonError::into_inner));
+    for (uuid, message) in lines {
+        let mut adapter = ServerAdapter { host: &mut *host };
+        let players = adapter.players();
+        if with_session(|s| s.team_chat_on()) {
+            let routed = with_session(|s| s.team_chat_route(&players, uuid, &message));
+            for recipient in routed.recipients {
+                adapter.tell(recipient, &routed.line);
+            }
+        } else {
+            let name = players.iter().find(|p| p.uuid == uuid).map_or("", |p| p.name.as_str());
+            adapter.broadcast(&chat::global_line(name, &message));
+        }
+    }
+}
+
+/// Shows the sidebar as the session says it should be (`sidebar::Shown` sends only the changes).
+fn update_sidebar(host: &mut dyn Host) {
+    let rows = with_session(|s| s.sidebar_rows());
+    let mut shown = SIDEBAR.lock().unwrap_or_else(PoisonError::into_inner);
+    shown.update(&mut ServerAdapter { host: &mut *host }, rows);
 }
 
 /// Runs the console commands queued since the last tick, in order; a failed one is logged.
@@ -375,6 +423,10 @@ pub fn custom_payload_from_client(host: &mut dyn Host, uuid: u128, channel: &str
 
 /// The usages the commands tree gets: `bingo ...`, and the shortcuts. Operators get the ones `requires_op` names.
 pub fn register_commands(commands: &mut Vec<NativeCommand>) {
+    // `g`, `global` and `all` send a line to everyone during a game (the original's global command aliases).
+    for alias in chat::GLOBAL_COMMANDS {
+        commands.push(NativeCommand::new(&format!("{alias} <message:text>")));
+    }
     for (usage, sample) in USAGES {
         let Ok(command) = parse(sample) else {
             log(&format!("bingo: usage `{usage}` has no parsable sample `{sample}`"));
@@ -417,6 +469,11 @@ pub fn perform_console_command(host: &mut dyn Host, command: &str) -> Flow {
 
 /// A typed `bingo ...` command, or a shortcut, run by the session; its answer goes to the player who typed it.
 pub fn perform_command(host: &mut dyn Host, uuid: u128, command: &str) -> Flow {
+    if let Some(text) = chat::global_text(command) {
+        let name = host.server_players().into_iter().find(|p| p.uuid == uuid).map(|p| p.name).unwrap_or_default();
+        host.broadcast(Text::literal(chat::global_line(&name, text)));
+        return Flow::Cancel;
+    }
     let Some(line) = session_line(command) else {
         return Flow::Continue;
     };

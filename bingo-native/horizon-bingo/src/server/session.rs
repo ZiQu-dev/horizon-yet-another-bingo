@@ -1341,6 +1341,68 @@ impl Session {
         }
     }
 
+    /// Team chat is on now: the option is on and the game is Starting or Playing (`chat.rs`).
+    pub fn team_chat_on(&self) -> bool {
+        self.rules.team_chat && matches!(self.game.status(), GameStatus::Starting | GameStatus::Playing)
+    }
+
+    /// Where a chat line of `sender` goes during team chat, and the line (`chat.rs`).
+    pub fn team_chat_route(&self, online: &[Player], sender: u128, message: &str) -> super::chat::Routed {
+        let name = online.iter().find(|player| player.uuid == sender).map_or("", |player| player.name.as_str());
+        let roster: Vec<(u128, Option<&str>)> = online.iter().map(|player| (player.uuid, self.teams.team_of(player.uuid))).collect();
+        super::chat::route(name, self.teams.team_of(sender), &roster, message)
+    }
+
+    /// The sidebar's lines (`sidebar.rs`), or `None` when the sidebar is off in the options.
+    pub fn sidebar_rows(&self) -> Option<Vec<String>> {
+        self.rules.sidebar.then(|| super::sidebar::rows(&self.sidebar_facts()))
+    }
+
+    fn sidebar_facts(&self) -> super::sidebar::Facts {
+        use super::sidebar::{Clock, Phase, Standing};
+        let phase = match self.game.status() {
+            GameStatus::Pregame => Phase::Lobby,
+            GameStatus::Starting | GameStatus::Playing => Phase::Live,
+            GameStatus::Postgame => Phase::Over,
+        };
+        let clock = match phase {
+            Phase::Lobby => match self.game.time_limit_secs() {
+                Some(secs) => Clock::Limit(secs.max(0) as u32 / 60),
+                None => Clock::NoLimit,
+            },
+            Phase::Over => Clock::Elapsed(self.game.elapsed_ms()),
+            Phase::Live => match self.game.remaining_ms() {
+                Some(ms) => Clock::Left(ms),
+                None => Clock::Elapsed(self.game.elapsed_ms()),
+            },
+        };
+        let teams = match phase {
+            Phase::Lobby => self
+                .teams
+                .teams()
+                .into_iter()
+                .map(|key| (team_name(key).to_string(), self.teams.members(key).len()))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let ranking = match phase {
+            Phase::Lobby => Vec::new(),
+            _ => self
+                .ranking()
+                .into_iter()
+                .map(|row| Standing { name: team_name(&row.key).to_string(), lines: row.score.lines, items: row.score.items })
+                .collect(),
+        };
+        super::sidebar::Facts {
+            phase,
+            mode: self.rules.mode,
+            goal: self.rules.goal,
+            clock,
+            teams,
+            ranking,
+        }
+    }
+
     /// `/bingo status`: the state of the game, then one line per team that plays.
     fn status_text(&self) -> String {
         let mut lines = vec![format!("Status: {:?}.", self.game.status())];

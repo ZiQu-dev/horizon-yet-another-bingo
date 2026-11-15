@@ -168,7 +168,8 @@ impl Game {
         self.options.countdown_secs.max(0)
     }
 
-    fn time_limit_secs(&self) -> Option<i32> {
+    /// The time limit in seconds, if one is set (`timelimit`); read by the sidebar.
+    pub fn time_limit_secs(&self) -> Option<i32> {
         self.options.time_limit_secs.map(|secs| secs.max(0))
     }
 

@@ -72,6 +72,10 @@ pub struct Options {
     pub team_auto_shuffle: bool,
     /// How many teams that shuffle makes (`teamCount`), default 3.
     pub team_count: usize,
+    /// Team chat (`chat.defaultToTeamChat`): while a game runs, chat goes to the team. On by default. `chat.rs`.
+    pub team_chat: bool,
+    /// The sidebar (`scoreboard`, the original's default): game info and the ranking on screen. On by default. `sidebar.rs`.
+    pub sidebar: bool,
 }
 
 impl Default for Options {
@@ -91,6 +95,8 @@ impl Default for Options {
             tier_counts: DEFAULT_DISTRIBUTION,
             team_auto_shuffle: false,
             team_count: DEFAULT_TEAM_COUNT,
+            team_chat: true,
+            sidebar: true,
         }
     }
 }

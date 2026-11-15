@@ -52,6 +52,13 @@ pub fn options_to_json(o: &Options) -> String {
     if o.stalemate != StalemateBehavior::default() {
         value["stalemate"] = o.stalemate.to_json();
     }
+    // Team chat and the sidebar are written only when they are off (their default is on).
+    if !o.team_chat {
+        value["teamChat"] = Value::Bool(false);
+    }
+    if !o.sidebar {
+        value["sidebar"] = Value::Bool(false);
+    }
     // The card flags are written only when one is on, so a round without them keeps the text it always had.
     if o.hidden_consume != HiddenConsume::default() {
         if let Value::Object(object) = &mut value {
@@ -103,6 +110,8 @@ pub fn options_from_json(s: &str) -> Options {
             .and_then(|n| usize::try_from(n).ok())
             .filter(|n| (1..=TEAM_PRESETS.len()).contains(n))
             .unwrap_or(d.team_count),
+        team_chat: flag(&root, "teamChat", d.team_chat),
+        sidebar: flag(&root, "sidebar", d.sidebar),
     }
 }
 
