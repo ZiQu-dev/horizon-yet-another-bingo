@@ -232,8 +232,17 @@ impl Session {
             self.maps.load_ids(&text);
         }
         if let Some(text) = host.read_file(GAME_STATE_FILE) {
-            if saved_phase(&text) == Some(GameStatus::Playing) {
-                let _ = self.restore_from_json(&text);
+            // An empty file is no game (see `clear_saved_game`). Anything else that does not restore is warned once.
+            if !text.trim().is_empty() {
+                let restored = match saved_phase(&text) {
+                    Some(GameStatus::Playing) => self.restore_from_json(&text),
+                    Some(_) => Err("it is not a game in progress".to_string()),
+                    // No readable phase: the snapshot parser names what is wrong.
+                    None => Err(parse_snapshot(&text).err().unwrap_or_else(|| "no readable phase".to_string())),
+                };
+                if let Err(e) = restored {
+                    host.warn(&format!("bingo: {GAME_STATE_FILE} not restored, starting with no game: {e}"));
+                }
             }
         }
     }

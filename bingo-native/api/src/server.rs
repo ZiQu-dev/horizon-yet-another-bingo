@@ -242,10 +242,14 @@ impl ServerHost for ServerAdapter<'_> {
 
     fn write_file(&mut self, name: &str, content: &str) {
         let dir = self.host.data_dir(MOD_ID);
-        let result = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(dir.join(name), content));
+        let result = std::fs::create_dir_all(&dir).and_then(|()| write_atomic(&dir.join(name), content));
         if let Err(e) = result {
             log(&format!("bingo: {name} not written: {e}"));
         }
+    }
+
+    fn warn(&mut self, line: &str) {
+        horizon_client::logging::write_as(MOD_ID, ::log::Level::Warn, line);
     }
 
     fn append_line(&mut self, name: &str, line: &str) {
@@ -674,4 +678,18 @@ pub fn menu_clicked(host: &mut dyn Host, uuid: u128, window: i32, slot: i32, mod
 /// The player's menu window closed: a lobby menu it was is forgotten.
 pub fn menu_closed(uuid: u128, window: i32) {
     LOBBY_MENUS.lock().unwrap_or_else(PoisonError::into_inner).close(uuid, window);
+}
+
+/// Replaces `path` with `content` without leaving a half-written file behind: the text goes to `<path>.tmp` in the same
+/// folder, which is then renamed over `path`. A crash mid-write leaves the old file (or the temp file), never a truncated
+/// one. Not fsynced: a power cut can still lose the newest write, but cannot cut a file short. A failed rename removes
+/// the temp file.
+fn write_atomic(path: &std::path::Path, content: &str) -> std::io::Result<()> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = std::path::PathBuf::from(tmp);
+    std::fs::write(&tmp, content)?;
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
 }

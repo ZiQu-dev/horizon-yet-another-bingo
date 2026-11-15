@@ -50,6 +50,8 @@ struct FakeHost {
     files: HashMap<String, String>,
     /// What `now_ms` returns.
     now: i64,
+    /// The operator warning lines the session logged (`ServerHost::warn`).
+    warnings: Vec<String>,
 }
 
 impl Default for FakeHost {
@@ -63,6 +65,7 @@ impl Default for FakeHost {
             bars: Vec::new(),
             files: HashMap::new(),
             now: NOW_MS,
+            warnings: Vec::new(),
         }
     }
 }
@@ -135,6 +138,10 @@ impl ServerHost for FakeHost {
 
     fn now_ms(&self) -> i64 {
         self.now
+    }
+
+    fn warn(&mut self, line: &str) {
+        self.warnings.push(line.to_string());
     }
 }
 
@@ -487,4 +494,36 @@ fn the_end_screen_carries_the_win_streak_best_time_and_items_of_each_viewer() {
     assert_eq!(run(&mut session, &mut host, None, "stats Bob").lines().nth(1), Some("All Time:"));
     assert!(run(&mut session, &mut host, None, "stats Bob").contains("Games: 2, Win/Loss: 0/2, Items: 0"));
     assert_eq!(run(&mut session, &mut host, None, "stats Zed"), "No player named Zed is online.");
+}
+
+/// A session on a fresh host whose `game-state.json` is `text`, after the first command has loaded the files.
+fn session_with_saved_game(text: &str) -> (Session, FakeHost) {
+    let mut host = FakeHost::default();
+    host.files.insert("game-state.json".to_string(), text.to_string());
+    let mut session = Session::new(options(7, 0, None));
+    status(&mut session, &mut host);
+    (session, host)
+}
+
+#[test]
+fn a_corrupt_saved_game_leaves_the_session_as_if_there_were_no_file_and_warns_once() {
+    let text = &"{\"phase\": \"Playing\", \"version\": 1, \"game\": {".repeat(3);
+    let (mut session, mut host) = session_with_saved_game(text);
+    let (mut fresh, mut fresh_host) = session_with_saved_game("");
+    assert_eq!(host.warnings.len(), 1, "one warning, got {:?}", host.warnings);
+    assert!(host.warnings[0].contains("game-state.json"));
+    assert!(fresh_host.warnings.is_empty());
+    assert_eq!(session.snapshot_json(), fresh.snapshot_json());
+    assert_eq!(status(&mut session, &mut host), status(&mut fresh, &mut fresh_host));
+    assert!(session.is_pregame());
+}
+
+#[test]
+fn an_empty_saved_game_is_no_game_and_warns_nothing() {
+    let (session, host) = session_with_saved_game("");
+    assert!(host.warnings.is_empty(), "got {:?}", host.warnings);
+    assert!(session.is_pregame());
+    let (session, host) = session_with_saved_game("  \n");
+    assert!(host.warnings.is_empty(), "got {:?}", host.warnings);
+    assert!(session.is_pregame());
 }

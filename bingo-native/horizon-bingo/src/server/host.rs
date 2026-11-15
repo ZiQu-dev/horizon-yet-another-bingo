@@ -34,6 +34,8 @@ pub trait ServerHost {
     }
     /// Replaces a file of the mod's data folder.
     fn write_file(&mut self, _name: &str, _content: &str) {}
+    /// Logs one warning line for the operator (not a player). The default logs nothing.
+    fn warn(&mut self, _line: &str) {}
     /// Appends one line (the `\n` is added) to a file of the mod's data folder.
     fn append_line(&mut self, _name: &str, _line: &str) {}
     /// Wall-clock time in milliseconds since the Unix epoch, for the history. The default is 0.
