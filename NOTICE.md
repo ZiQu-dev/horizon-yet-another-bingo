@@ -61,6 +61,12 @@ above). This is the package author's licensing choice, not legal advice.
 `bingo-native/horizon-bingo/data/items.tierlist.json` is the original mod's item tier list, copied unchanged from
 `common/src/main/resources/data/yet-another-minecraft-bingo/yet-another-minecraft-bingo/tierlists/` (LGPL-3.0).
 
+The card pool also uses these files, copied unchanged from the same folders of the original (LGPL-3.0):
+`bingo-native/horizon-bingo/data/{simplified,challenge,advancements}.tierlist.json` (tier lists) and
+`bingo-native/horizon-bingo/data/tags/{tedious,unobtainable,needs_silk_touch}.json` (tags of the mod). The vanilla item
+tags (`#minecraft:...`, `#c:...`) are not in this package: `tools/prepare_assets.py` writes them into the assets folder
+from the player's own jar or prepared data.
+
 ## Links
 
 - Upstream: https://gitlab.com/horrificdev/bingo

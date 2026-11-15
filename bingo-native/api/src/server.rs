@@ -87,14 +87,48 @@ static ITEM_IDS: OnceLock<Option<ItemIds>> = OnceLock::new();
 /// A session that starts from the clock's time, with the default game options.
 fn new_session() -> Session {
     let seed = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64);
-    Session::new(SessionOptions {
+    let mut session = Session::new(SessionOptions {
         seed,
         game: GameOptions::default(),
         ready: ReadyOptions::default(),
         // Teams start `rules.spawn_distance` chunks apart (the original's default is 25) within 1000 blocks of the origin.
         spread: Some((0, 1000)),
         ..SessionOptions::default()
-    })
+    });
+    if let Some(pool) = CARD_POOL.get() {
+        session.set_pool(pool.clone());
+    }
+    session
+}
+
+/// The card pool with the item tags of the assets folder, read once on the first tick (see [`load_card_pool`]).
+static CARD_POOL: OnceLock<horizon_bingo::server::card_gen::Pool> = OnceLock::new();
+
+/// Reads the item tags beside the item names and installs the pool in the session, once per process. Tags missing from
+/// the folder are logged: the pool then leaves those tags out.
+fn load_card_pool(host: &dyn Host) {
+    CARD_POOL.get_or_init(|| {
+        let dir = match std::env::var_os("BINGO_ASSETS") {
+            Some(dir) => PathBuf::from(dir),
+            None => host.data_dir(MOD_ID).join("assets"),
+        };
+        let pool = horizon_bingo::server::pool::pool_from_assets(&dir);
+        if pool.skipped_tags.is_empty() {
+            log(&format!("bingo: card pool: {} vanilla item tag files read from {}", pool.tag_files, dir.display()));
+        } else {
+            log(&format!(
+                "bingo: card pool: {} vanilla item tag files read from {}; tags not found, left out: {}. \
+                 tools/prepare_assets.py writes them from the game's data.",
+                pool.tag_files,
+                dir.display(),
+                pool.skipped_tags.join(", ")
+            ));
+        }
+        pool
+    });
+    if let Some(pool) = CARD_POOL.get() {
+        with_session(|s| s.set_pool(pool.clone()));
+    }
 }
 
 /// Runs `f` with the session, made on first use.
@@ -234,6 +268,10 @@ pub fn server_tick(host: &mut dyn Host, phase: ServerTickPhase) {
     }
     // The item names are read on the first tick, so a missing file is reported when the server starts.
     let _ = item_ids(&*host);
+    // Once per process: the first tick installs the pool, later sessions take it in `new_session`.
+    if CARD_POOL.get().is_none() {
+        load_card_pool(&*host);
+    }
     guarded("server tick", || with_session(|s| s.tick(&mut ServerAdapter { host: &mut *host })));
     guarded("bingo chat votes", || run_chat_votes(&mut *host));
     // Outside the session's lock: a console command may run hooks that reach the session again.

@@ -105,9 +105,11 @@ fn pool_rejects_malformed_json() {
 #[test]
 fn built_in_pool_has_five_tiers_of_items_without_tags() {
     let pool = load_pool();
-    // Counts of the non-tag entries in data/items.tierlist.json (S has two tags, which are skipped).
+    // Independent count: the original's four tier lists combined, tags tedious and unobtainable removed, plain item
+    // ids only, and no vanilla tags (the music disc tags are missing without the assets): 47, 366, 200, 355, 302.
     let sizes: Vec<usize> = pool.tiers.iter().map(Vec::len).collect();
-    assert_eq!(sizes, vec![88, 483, 219, 402, 319]);
+    assert_eq!(sizes, vec![47, 366, 200, 355, 302]);
+    assert_eq!(pool.skipped_tags, vec!["#c:music_discs".to_string(), "#minecraft:music_discs".to_string()]);
     for tier in &pool.tiers {
         assert!(tier.iter().all(|item| !item.starts_with('#')));
     }
@@ -209,9 +211,11 @@ fn panics_when_no_easier_tier_can_fill_the_card() {
 }
 
 #[test]
-#[should_panic(expected = "too few items")]
-fn does_not_fill_from_a_harder_tier() {
-    // D is empty and only S, which is harder, has items: the fallback goes to easier tiers only.
+fn a_tier_that_runs_out_takes_from_the_nearest_tier_even_a_harder_one() {
+    // D is empty: its square takes from C, B, A, then S (distance order), so it keeps the D label with an S item.
     let pool = pool_from_json(r#"{"S": ["s1", "s2", "s3"], "A": [], "B": [], "C": [], "D": []}"#).unwrap();
-    generate_card(0, &pool, [0, 0, 0, 0, 1]);
+    let card = generate_card(0, &pool, [0, 0, 0, 0, 1]);
+    assert_eq!(card.squares.len(), 1);
+    assert_eq!(card.squares[0].tier, TierLabel::D);
+    assert!(["s1", "s2", "s3"].contains(&card.squares[0].item.as_str()));
 }

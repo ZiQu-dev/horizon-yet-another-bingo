@@ -14,6 +14,9 @@ COLORS = "assets/yet-another-minecraft-bingo/gui/card_colors.json"
 LANG = "assets/yet-another-minecraft-bingo/lang/en_us.json"
 LANG_DIR = "assets/yet-another-minecraft-bingo/lang/"
 NS_DIR = "assets/yet-another-minecraft-bingo/"
+# Vanilla item tags the card pool expands (#minecraft:music_discs, #c:...). Read from the jar if it has them, else from
+# Horizon's prepared data folder beside --registries.
+TAG_NAMESPACES = ("minecraft", "c")
 
 
 MANIFEST = """id = "bingo_assets"
@@ -39,6 +42,28 @@ def build_hmod(z: zipfile.ZipFile, names: set, dest: pathlib.Path) -> None:
     print(f"content mod -> {dest}")
 
 
+def collect_item_tags(z: zipfile.ZipFile, names: set, data_dir: pathlib.Path, out: pathlib.Path) -> int:
+    """Writes out/tags/item/<namespace>/<path>.json for each vanilla item tag: from the jar, else from data_dir."""
+    written = 0
+    for ns in TAG_NAMESPACES:
+        prefix = f"data/{ns}/tags/item/"
+        for n in sorted(names):
+            if n.startswith(prefix) and n.endswith(".json"):
+                dest = out / "tags" / "item" / ns / n[len(prefix):]
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(z.read(n))
+                written += 1
+        if not any(n.startswith(prefix) for n in names):
+            folder = data_dir / ns / "tags" / "item"
+            if folder.is_dir():
+                for f in sorted(folder.rglob("*.json")):
+                    dest = out / "tags" / "item" / ns / f.relative_to(folder)
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_bytes(f.read_bytes())
+                    written += 1
+    return written
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=(
@@ -55,6 +80,8 @@ def main() -> int:
             "                         plays sounds from the --hmod content mod)\n"
             "  vanilla_lang/*.json    Minecraft's languages, from assets/minecraft/lang/ beside --registries\n"
             "  item_names.txt         item ids in registry order, from the \"items\" list of --registries\n"
+            "  tags/item/<ns>/*.json  vanilla item tags (minecraft, c) the card pool expands; from the jar, else from\n"
+            "                         the data folder beside --registries\n"
             "\n"
             "Example:\n"
             "  python3 -I prepare_assets.py yet-another-minecraft-bingo.jar <out dir> \\\n"
@@ -119,6 +146,10 @@ def main() -> int:
     print(f"{copied} vanilla language files")
     items = json.loads(pathlib.Path(a.registries).read_text())["items"]
     (out / "item_names.txt").write_text("\n".join(items) + "\n")
+    tags = collect_item_tags(z, names, pathlib.Path(a.registries).parent / "data", out)
+    if tags == 0:
+        print("warning: no vanilla item tags found (jar or prepared data); the card pool leaves #tags out", file=sys.stderr)
+    print(f"{tags} vanilla item tag files")
     print(f"{len(sprites)} sprites, {len(items)} items, {langs} languages -> {out}")
     return 0
 

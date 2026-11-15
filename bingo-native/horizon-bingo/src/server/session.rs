@@ -140,6 +140,11 @@ pub struct Session {
 }
 
 impl Session {
+    /// Replaces the card pool; the adapter installs the pool read from the assets folder (its item tags).
+    pub fn set_pool(&mut self, pool: Pool) {
+        self.pool = pool;
+    }
+
     pub fn new(options: SessionOptions) -> Self {
         let game = Game::new(options.game.clone());
         let seed = options.seed;

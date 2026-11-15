@@ -4,6 +4,7 @@
 pub mod host;
 pub mod types;
 pub mod card_gen;
+pub mod pool;
 pub mod game;
 pub mod scoring;
 pub mod wire;
