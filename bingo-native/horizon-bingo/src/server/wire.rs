@@ -17,6 +17,7 @@ use crate::item::ItemStack;
 use crate::nbt::Nbt;
 use crate::open_card::CardOpenPacket;
 use crate::score_update::{ScoredItemPacket, TeamScore};
+use crate::server::hidden_consume::TileView;
 use crate::server::types::{Card, Player, CARD_SQUARES};
 use crate::text::Text;
 use crate::timer::{CountdownPacket, TimerPacket};
@@ -243,7 +244,29 @@ pub fn card_tiles_for(
     item_id: &dyn Fn(&str) -> Option<i32>,
     should_notify: bool,
 ) -> (&'static str, Vec<u8>) {
+    let views: Vec<TileView> = card
+        .squares
+        .iter()
+        .enumerate()
+        .map(|(index, square)| TileView { index, hidden: false, item: Some(square.item.clone()), tier: Some(square.tier) })
+        .collect();
+    card_tiles_seen(viewer_team, card, found_by, &views, item_id, should_notify)
+}
+
+/// `update_card_tiles` for one viewer when some squares may be hidden (hidden-items mode). `views` is each square as
+/// the viewer sees it, in card order (see `hidden_consume::tile_views`). A visible square is built as in
+/// [`card_tiles_for`]. A hidden square has no id, picture, action, name, lore or other teams, and no tier unless its
+/// view gives one; it is `is_hidden`.
+pub fn card_tiles_seen(
+    viewer_team: &str,
+    card: &Card,
+    found_by: &[(&str, &[usize])],
+    views: &[TileView],
+    item_id: &dyn Fn(&str) -> Option<i32>,
+    should_notify: bool,
+) -> (&'static str, Vec<u8>) {
     assert_eq!(card.squares.len(), CARD_SQUARES, "a card has {CARD_SQUARES} squares");
+    assert_eq!(views.len(), CARD_SQUARES, "a view per square");
     let viewer_found: &[usize] = match found_by.iter().find(|entry| entry.0 == viewer_team) {
         Some(entry) => entry.1,
         None => &[],
@@ -251,32 +274,50 @@ pub fn card_tiles_for(
     let tiles = card
         .squares
         .iter()
+        .zip(views)
         .enumerate()
-        .map(|(index, objective)| {
+        .map(|(index, (objective, view))| {
             let is_found = viewer_found.contains(&index);
-            let other_teams: Vec<String> = found_by
-                .iter()
-                .filter(|entry| entry.0 != viewer_team && entry.1.contains(&index))
-                .map(|entry| entry.0.to_string())
-                .collect();
-            let stack = item_id(&objective.item).map(|id| ItemStack { count: 1, item: id, added: vec![], removed: vec![] });
-            let action = match &stack {
-                Some(stack) => CardTileAction::Item(stack.clone()),
-                None => CardTileAction::None,
-            };
-            let tile = CardTile {
-                id: Some(objective.item.clone()),
-                image: CardTileImage { item: stack, is_achieved: is_found, ..CardTileImage::default() },
-                image_list: vec![],
-                action,
-                item_tier: Some(objective.tier),
-                name: Some(item_name(&objective.item)),
-                lore: vec![tile_lore(objective.tier, index)],
-                is_hidden: false,
-                is_locked: false,
-                is_flashing: false,
-                progress: if is_found { 1.0 } else { 0.0 },
-                team_keys: other_teams,
+            let tile = if view.hidden {
+                CardTile {
+                    id: None,
+                    image: CardTileImage::default(),
+                    image_list: vec![],
+                    action: CardTileAction::None,
+                    item_tier: view.tier,
+                    name: None,
+                    lore: vec![],
+                    is_hidden: true,
+                    is_locked: false,
+                    is_flashing: false,
+                    progress: 0.0,
+                    team_keys: vec![],
+                }
+            } else {
+                let other_teams: Vec<String> = found_by
+                    .iter()
+                    .filter(|entry| entry.0 != viewer_team && entry.1.contains(&index))
+                    .map(|entry| entry.0.to_string())
+                    .collect();
+                let stack = item_id(&objective.item).map(|id| ItemStack { count: 1, item: id, added: vec![], removed: vec![] });
+                let action = match &stack {
+                    Some(stack) => CardTileAction::Item(stack.clone()),
+                    None => CardTileAction::None,
+                };
+                CardTile {
+                    id: Some(objective.item.clone()),
+                    image: CardTileImage { item: stack, is_achieved: is_found, ..CardTileImage::default() },
+                    image_list: vec![],
+                    action,
+                    item_tier: Some(objective.tier),
+                    name: Some(item_name(&objective.item)),
+                    lore: vec![tile_lore(objective.tier, index)],
+                    is_hidden: false,
+                    is_locked: false,
+                    is_flashing: false,
+                    progress: if is_found { 1.0 } else { 0.0 },
+                    team_keys: other_teams,
+                }
             };
             (index as i32, tile)
         })

@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use serde_json::{json, Map, Value};
 
+use crate::server::hidden_consume::HiddenConsume;
 use crate::server::options::{EndWhen, Goal, Mode, Options};
 use crate::update_settings::PlayerSettings;
 
@@ -30,7 +31,7 @@ pub fn options_to_json(o: &Options) -> String {
         Mode::Inventory => "inventory",
         Mode::Lockout => "lockout",
     };
-    let value = json!({
+    let mut value = json!({
         "goal": { "type": goal_type, "n": goal_n },
         "mode": mode,
         "endWhen": { "type": end_type, "n": end_n },
@@ -40,6 +41,12 @@ pub fn options_to_json(o: &Options) -> String {
         "nightVision": o.night_vision,
         "spawnDistance": o.spawn_distance,
     });
+    // The card flags are written only when one is on, so a round without them keeps the text it always had.
+    if o.hidden_consume != HiddenConsume::default() {
+        if let Value::Object(object) = &mut value {
+            o.hidden_consume.write_into(object);
+        }
+    }
     serde_json::to_string_pretty(&value).expect("a JSON value always serializes")
 }
 
@@ -64,6 +71,7 @@ pub fn options_from_json(s: &str) -> Options {
             .and_then(Value::as_u64)
             .and_then(|n| u32::try_from(n).ok())
             .unwrap_or(d.spawn_distance),
+        hidden_consume: HiddenConsume::read_from(&root),
     }
 }
 

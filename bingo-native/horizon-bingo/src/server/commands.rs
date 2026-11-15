@@ -1,6 +1,7 @@
 //! Chat command parsing for the bingo game. Pure: the input is the text after the `bingo` word, and the caller decides
 //! who may run the result (see [`requires_op`]). Command and keyword words ignore case; team names are kept as typed.
 
+use super::hidden_consume::CardMode;
 use super::options::{EndWhen, Goal, Mode, Toggle};
 
 /// One parsed command.
@@ -23,6 +24,8 @@ pub enum Command {
     Goal(Goal),
     /// `mode standard|inventory|lockout`.
     Mode(Mode),
+    /// `mode hidden_items on|off` or `mode consume_items on|off`: the card flag, on (true) or off (false).
+    CardMode(CardMode, bool),
     /// `endwhen never|first_win|all_win` or `endwhen teams_win <n>`.
     EndWhen(EndWhen),
     /// `pvp`, `keepinventory`, `elytra` or `nightvision`, with `on` (true) or `off` (false).
@@ -47,7 +50,7 @@ pub enum VoteChoice {
     ReturnToLobby,
 }
 
-const USAGE: &str = "start [ignore_warnings] | end | reset | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | options | vote next|keep|lobby | resume | stats";
+const USAGE: &str = "start [ignore_warnings] | end | reset | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout|hidden_items on|off|consume_items on|off | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | options | vote next|keep|lobby | resume | stats";
 
 const SPAWN_DISTANCE_MAX: u32 = 1000;
 
@@ -110,6 +113,8 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "goal" => parse_goal(&args),
         "mode" => match args.as_slice() {
             [] => Err("Usage: mode standard|inventory|lockout".to_string()),
+            [kind, value] if kind.eq_ignore_ascii_case("hidden_items") => parse_card_mode("hidden_items", CardMode::HiddenItems, value),
+            [kind, value] if kind.eq_ignore_ascii_case("consume_items") => parse_card_mode("consume_items", CardMode::ConsumeItems, value),
             [value] => match value.to_lowercase().as_str() {
                 "standard" => Ok(Command::Mode(Mode::Standard)),
                 "inventory" => Ok(Command::Mode(Mode::Inventory)),
@@ -146,7 +151,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
 }
 
 /// Whether the command needs operator rights. Start, end, reset, shuffleteams, ready cancel, timelimit, the round
-/// settings (goal, mode, endwhen, toggles, spawndistance) and resume do; the rest are open to every player.
+/// settings (goal, mode, card modes, endwhen, toggles, spawndistance) and resume do; the rest are open to every player.
 pub fn requires_op(command: &Command) -> bool {
     match command {
         Command::Start { .. }
@@ -157,6 +162,7 @@ pub fn requires_op(command: &Command) -> bool {
         | Command::TimeLimit(_)
         | Command::Goal(_)
         | Command::Mode(_)
+        | Command::CardMode(..)
         | Command::EndWhen(_)
         | Command::Toggle(..)
         | Command::SpawnDistance(_)
@@ -202,6 +208,14 @@ fn parse_goal(args: &[&str]) -> Result<Command, String> {
             Err(format!("Too many arguments for 'goal {}'. Usage: goal {} <n>", kind.to_lowercase(), kind.to_lowercase()))
         }
         [kind, ..] => Err(format!("Unknown goal '{kind}'. {GOAL_USAGE}")),
+    }
+}
+
+fn parse_card_mode(name: &str, mode: CardMode, value: &str) -> Result<Command, String> {
+    match value.to_lowercase().as_str() {
+        "on" | "true" => Ok(Command::CardMode(mode, true)),
+        "off" | "false" => Ok(Command::CardMode(mode, false)),
+        _ => Err(format!("mode {name} needs on or off, got '{value}'")),
     }
 }
 

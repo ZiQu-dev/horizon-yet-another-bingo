@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use super::card_gen::{generate_card, load_pool, Pool, Rng, DEFAULT_DISTRIBUTION};
 use super::commands::{self, Command, VoteChoice};
 use super::game::{Event, Game, GameOptions, GameSnapshot};
+use super::hidden_consume::{self, CardMode, HeldStack, Sight, TileView};
 use super::host::ServerHost;
 use super::options::{EndWhen, Goal, Mode, Options};
 use super::ready::{encode_update_v2, ReadyOptions, ReadyTimer};
@@ -92,6 +93,9 @@ pub struct Session {
     rules: Options,
     /// Lockout: which team owns each square.
     owners: HashMap<usize, String>,
+    /// Squares each team has seen (`teamsSeen`), by team key: a square is seen once a player of the team holds its item.
+    /// It only grows during a round. Hidden-items mode reads it; it is saved only while that mode is on.
+    seen: BTreeMap<String, Vec<usize>>,
     /// Teams that reached the goal, in the order they did.
     reached: Vec<String>,
     /// Postgame votes by player.
@@ -129,6 +133,7 @@ impl Session {
             ticks: 0,
             rules: options.rules.clone(),
             owners: HashMap::new(),
+            seen: BTreeMap::new(),
             reached: Vec::new(),
             votes: BTreeMap::new(),
             empty_ticks: 0,
@@ -179,6 +184,7 @@ impl Session {
         };
         let progress: BTreeMap<&str, &Vec<usize>> =
             self.progress.iter().map(|(team, progress)| (team.as_str(), &progress.found)).collect();
+        let seen: BTreeMap<&str, &Vec<usize>> = self.seen.iter().map(|(team, squares)| (team.as_str(), squares)).collect();
         let owners: BTreeMap<String, &String> = self.owners.iter().map(|(square, team)| (square.to_string(), team)).collect();
         let votes: BTreeMap<String, &str> =
             self.votes.iter().map(|(&player, &choice)| (store::uuid_hex(player), vote_name(choice))).collect();
@@ -186,7 +192,7 @@ impl Session {
         let members: Vec<Value> =
             members.iter().map(|&(player, team)| json!({ "uuid": store::uuid_hex(player), "team": team })).collect();
         let spectators: Vec<String> = spectators.into_iter().map(store::uuid_hex).collect();
-        let value = json!({
+        let mut value = json!({
             "version": GAME_STATE_VERSION,
             "phase": status_name(game.status),
             "countdownTicks": game.countdown_ticks,
@@ -203,6 +209,9 @@ impl Session {
             "members": members,
             "spectators": spectators,
         });
+        if self.rules.hidden_consume.hidden_items {
+            value["seen"] = json!(seen);
+        }
         serde_json::to_string_pretty(&value).expect("a JSON value always serializes")
     }
 
@@ -218,6 +227,7 @@ impl Session {
         self.card = saved.card;
         self.progress = saved.progress;
         self.owners = saved.owners;
+        self.seen = saved.seen;
         self.reached = saved.reached;
         self.votes = saved.votes;
         self.teams = saved.teams;
@@ -280,6 +290,7 @@ impl Session {
         let Some(team) = self.teams.team_of(player) else { return };
         // Only a player on a team scores; the save after the finds covers the squares and the goals reached.
         let team = team.to_string();
+        let newly_seen = self.record_seen(&team, held);
         let (items, lost) = {
             let Some(card) = self.card.as_ref() else { return };
             let progress = self.progress.entry(team.clone()).or_default();
@@ -295,10 +306,14 @@ impl Session {
             (items, lost.len())
         };
         if items.is_empty() && lost == 0 {
+            if newly_seen && self.rules.hidden_consume.hidden_items {
+                self.send_tiles_after_find(host, &team);
+            }
             return;
         }
 
         let finder = player_name(host, player);
+        self.queue_consume(host, &finder, held, &items);
         self.send_tiles_after_find(host, &team);
         self.send_score_to_all(host, &team);
         for item in items {
@@ -446,7 +461,28 @@ impl Session {
             Command::TimeLimit(minutes) => self.set_time_limit(host, minutes),
             Command::Card => self.open_card(host, player),
             Command::Goal(goal) => self.set_rule(host, |rules| rules.goal = goal, "goal"),
-            Command::Mode(mode) => self.set_rule(host, |rules| rules.mode = mode, "mode"),
+            Command::Mode(mode) => self.set_rule(
+                host,
+                |rules| {
+                    rules.mode = mode;
+                    // Inventory mode and consume items exclude each other: inventory mode turns consume items off.
+                    if mode == Mode::Inventory {
+                        rules.hidden_consume.consume_items = false;
+                    }
+                },
+                "mode",
+            ),
+            Command::CardMode(mode, on) => self.set_rule(
+                host,
+                |rules| {
+                    rules.hidden_consume.set(mode, on);
+                    // Turning consume items on leaves inventory mode, which it excludes.
+                    if on && mode == CardMode::ConsumeItems && rules.mode == Mode::Inventory {
+                        rules.mode = Mode::Standard;
+                    }
+                },
+                "card mode",
+            ),
             Command::EndWhen(end_when) => self.set_rule(host, |rules| rules.end_when = end_when, "end condition"),
             Command::Toggle(toggle, on) => self.set_rule(host, |rules| rules.set_toggle(toggle, on), "setting"),
             Command::SpawnDistance(chunks) => self.set_rule(host, |rules| rules.spawn_distance = chunks, "spawn distance"),
@@ -578,6 +614,7 @@ impl Session {
         self.save_playing(host);
         self.progress = self.teams.teams().into_iter().map(|key| (key.to_string(), TeamProgress::default())).collect();
         self.owners.clear();
+        self.seen.clear();
         self.reached.clear();
         self.votes.clear();
         self.forfeit = false;
@@ -675,6 +712,16 @@ impl Session {
             let is_winner = winner.is_some() && self.teams.team_of(player.uuid) == winner.as_deref();
             send(host, player.uuid, wire::game_over_v2(winner.as_deref(), is_winner, duration, ranking.clone()));
         }
+        // Postgame shows every square, so each team's card is sent again with nothing hidden.
+        if self.rules.hidden_consume.hidden_items {
+            for player in host.players() {
+                if let Some(team) = self.teams.team_of(player.uuid) {
+                    if let Some(tiles) = self.tiles_for(&*host, team, false) {
+                        send(host, player.uuid, tiles);
+                    }
+                }
+            }
+        }
         let line = match winner.as_deref() {
             Some(team) => format!("{} won the game!", team_name(team)),
             None => "The game has ended.".to_string(),
@@ -697,6 +744,7 @@ impl Session {
         }
         self.card = None;
         self.owners.clear();
+        self.seen.clear();
         self.reached.clear();
         self.votes.clear();
         self.progress.clear();
@@ -728,7 +776,57 @@ impl Session {
         let card = self.card.as_ref()?;
         let found = self.found_by();
         let item_id = |item: &str| host.item_numeric_id(item);
-        Some(wire::card_tiles_for(viewer, card, &found, &item_id, should_notify))
+        let views = self.views_for(Some(viewer));
+        Some(wire::card_tiles_seen(viewer, card, &found, &views, &item_id, should_notify))
+    }
+
+    /// Every square as `viewer` sees it (hidden-items mode, see `hidden_consume::tile_views`). `None` is a player on no
+    /// team, who sees every square hidden. Postgame shows all.
+    fn views_for(&self, viewer: Option<&str>) -> Vec<TileView> {
+        let Some(card) = self.card.as_ref() else { return Vec::new() };
+        let none: &[usize] = &[];
+        let sight = viewer.map(|team| Sight {
+            seen: self.seen.get(team).map_or(none, |squares| squares.as_slice()),
+            found: self.progress.get(team).map_or(none, |progress| progress.found.as_slice()),
+            finished: self.reached.iter().any(|key| key == team),
+        });
+        let postgame = self.game.status() == GameStatus::Postgame;
+        hidden_consume::tile_views(card, self.rules.hidden_consume, false, sight, postgame)
+    }
+
+    /// Adds the squares whose items `held` holds to the team's seen squares. Returns whether any square was new.
+    fn record_seen(&mut self, team: &str, held: &HashMap<String, u32>) -> bool {
+        let Some(card) = self.card.as_ref() else { return false };
+        let holding: Vec<usize> = card
+            .squares
+            .iter()
+            .enumerate()
+            .filter(|(_, square)| held.get(&square.item).copied().unwrap_or(0) >= 1)
+            .map(|(index, _)| index)
+            .collect();
+        let seen = self.seen.entry(team.to_string()).or_default();
+        let before = seen.len();
+        hidden_consume::record_seen(seen, &holding);
+        seen.len() != before
+    }
+
+    /// Consume items: the items a team captured with this inventory are taken from the capturing player (`name`), one
+    /// `clear` per square. Nothing when the mode is off, or in inventory mode (see `hidden_consume::consume_on_score`).
+    /// The server is always in lobby mode here, so that rule does not apply.
+    fn queue_consume(&self, host: &mut dyn ServerHost, name: &str, held: &HashMap<String, u32>, items: &[String]) {
+        if !self.rules.hidden_consume.consume_items {
+            return;
+        }
+        let mut stacks: Vec<HeldStack> = held
+            .iter()
+            .map(|(item, &count)| HeldStack { item: item.clone(), count, bingo_ignore: false, nested: Vec::new() })
+            .collect();
+        let inventory = self.rules.mode == Mode::Inventory;
+        for item in items {
+            for (taken, count) in hidden_consume::consume_on_score(&mut stacks, item, 1, self.rules.hidden_consume, inventory, true) {
+                host.command(&format!("clear {name} {taken} {count}"));
+            }
+        }
     }
 
     /// After a find: each player on a team gets the tiles of their team. Only the members of the finding team are told.
@@ -1100,6 +1198,7 @@ struct SavedGame {
     card: Option<Card>,
     progress: BTreeMap<String, TeamProgress>,
     owners: HashMap<usize, String>,
+    seen: BTreeMap<String, Vec<usize>>,
     reached: Vec<String>,
     votes: BTreeMap<u128, VoteChoice>,
     teams: Teams,
@@ -1166,6 +1265,21 @@ fn parse_snapshot(text: &str) -> Result<SavedGame, String> {
         progress.insert(team_key(team)?, TeamProgress { found });
     }
 
+    // Written only while hidden-items mode is on; a snapshot without it has nothing seen.
+    let mut seen = BTreeMap::new();
+    if let Some(value) = object.get("seen") {
+        let teams = value.as_object().ok_or("\"seen\" is not an object")?;
+        for (team, squares) in teams {
+            let squares = squares
+                .as_array()
+                .ok_or("a team's seen squares are not a list")?
+                .iter()
+                .map(square_index)
+                .collect::<Result<Vec<_>, _>>()?;
+            seen.insert(team_key(team)?, squares);
+        }
+    }
+
     let mut owners = HashMap::new();
     for (square, team) in object_field(object, "owners")? {
         let index = square.parse::<usize>().map_err(|_| format!("owner square \"{square}\" is not a number"))?;
@@ -1205,6 +1319,7 @@ fn parse_snapshot(text: &str) -> Result<SavedGame, String> {
         card,
         progress,
         owners,
+        seen,
         reached,
         votes,
         teams,
