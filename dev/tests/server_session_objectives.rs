@@ -148,7 +148,9 @@ fn start(host: &mut FakeHost, rules: Options) -> Session {
     assert!(session.command(host, Some(BOB), "join blue").starts_with("You joined"));
     host.sent.clear();
     host.commands.clear();
-    assert_eq!(session.command(host, None, "start"), "Game started.");
+    // `ignore_warnings`: the lockout rounds here have two teams and the lines goal, which the original's start refuses
+    // without it (`CommandStartLockoutWithLinesGoal`). Every player is on a team, so nothing else changes.
+    assert_eq!(session.command(host, None, "start ignore_warnings"), "Game started.");
     for uuid in [ALICE, BOB] {
         session.on_inventory(host, uuid, &HashMap::new());
     }

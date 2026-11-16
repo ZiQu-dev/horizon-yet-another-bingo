@@ -276,6 +276,13 @@ impl ServerHost for ServerAdapter<'_> {
         }
     }
 
+    fn title(&mut self, player: u128, title: &Line, subtitle: &Line) {
+        // Vanilla's default times (10, 70, 20 ticks), as the original's sendTitle uses.
+        if !self.host.title(player, &translated(title), &translated(subtitle), 10, 70, 20) {
+            log(&format!("bingo: title for {player:032x} not shown"));
+        }
+    }
+
     fn new_map(&mut self, pixels: &[u8]) -> Option<i32> {
         let colors: &[u8; MAP_BYTES] = pixels.try_into().ok()?;
         self.host.new_map(MAP_DIMENSION, colors)

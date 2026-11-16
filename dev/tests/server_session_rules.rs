@@ -290,7 +290,9 @@ fn lockout_gives_a_square_to_the_first_team_only() {
     let mut session = Session::new(options(7, 0, None));
     lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "blue")]);
     assert!(run(&mut session, &mut host, Some(ALICE), "mode lockout").contains("Mode: lockout"));
-    run(&mut session, &mut host, Some(ALICE), "start");
+    // Lockout with the lines goal and two teams is refused by the original's start (`CommandStartLockoutWithLinesGoal`)
+    // unless warnings are ignored, so this round starts with `ignore_warnings`.
+    run(&mut session, &mut host, Some(ALICE), "start ignore_warnings");
     let names = card_names(&mut host, ALICE);
     host.take();
     host.take_commands();

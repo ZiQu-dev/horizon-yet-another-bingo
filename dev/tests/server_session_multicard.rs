@@ -124,7 +124,8 @@ fn start(seed: u64, setup: &[&str]) -> (Session, FakeHost) {
             "{line}: {answer}"
         );
     }
-    assert_eq!(run(&mut session, &mut host, None, "start"), "Game started.");
+    // Lockout with the lines goal and two teams is refused unless warnings are ignored (`CommandStartLockoutWithLinesGoal`).
+    assert_eq!(run(&mut session, &mut host, None, "start ignore_warnings"), "Game started.");
     host.take_broadcasts();
     (session, host)
 }

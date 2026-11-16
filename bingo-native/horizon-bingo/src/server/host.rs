@@ -27,6 +27,9 @@ pub trait ServerHost {
     fn command(&mut self, _line: &str) {}
     /// Shows or updates a boss bar for one player. `progress` is 0.0 to 1.0. `visible` false removes it.
     fn boss_bar(&mut self, _player: u128, _id: &str, _title: &str, _progress: f32, _visible: bool) {}
+    /// A title and a subtitle in the middle of one player's screen (`/title`), with the default times. The default does
+    /// nothing, so a test host need not implement it.
+    fn title(&mut self, _player: u128, _title: &Line, _subtitle: &Line) {}
     /// Reads a file of the mod's data folder (for example `options.json`), or `None` if it is missing. The default
     /// has no files, so a test host need not implement it.
     fn read_file(&mut self, _name: &str) -> Option<String> {

@@ -54,6 +54,8 @@ const GAME_STATE_FILE: &str = "game-state.json";
 const GAME_STATE_VERSION: u64 = 1;
 /// Milliseconds per server tick, to count the ticks a card has been in play.
 const MS_PER_TICK: i64 = 50;
+/// The command that readies a player up, as the lobby's hint names it.
+const READY_COMMAND: &str = "/bingo ready";
 /// The chat line when a stalemate rerolls a card.
 const REROLL_NOTICE: &str = "A stalemate: every team on the card gets a new card.";
 /// Mixed into the seed of the auto shuffle at the start, so it does not repeat the card's own shuffles.
@@ -142,6 +144,8 @@ pub struct Session {
     history: Vec<HistoryEntry>,
     /// The game was ended by `/bingo end`, not by a win or the time limit.
     forfeit: bool,
+    /// Why the game ends when no team won, for the end's chat (`announce_end`). Set just before the end, taken by it.
+    end_reason: Option<Line>,
     /// A game restored from `game-state.json` waits for its players: the empty-server reset does not run until one
     /// of them has joined.
     await_rejoin: bool,
@@ -201,6 +205,7 @@ impl Session {
             settings: HashMap::new(),
             history: Vec::new(),
             forfeit: false,
+            end_reason: None,
             await_rejoin: false,
             captures: Captures::default(),
             objective_runtime: Vec::new(),
@@ -593,11 +598,13 @@ impl Session {
         }
         if let Some(cause) = stalemate_end {
             host.broadcast_line(&stalemate_text(cause));
+            self.end_reason = Some(stalemate_end_reason(cause));
             self.end_game(host, None);
             return;
         }
         if immediate {
             self.forfeit = true;
+            self.end_reason = Some(texts::stopped_reason());
             self.end_game(host, None);
             return;
         }
@@ -915,6 +922,7 @@ impl Session {
             Command::End => match self.game.end(None) {
                 Ok(events) => {
                     self.forfeit = true;
+                    self.end_reason = Some(texts::stopped_reason());
                     self.dispatch(host, events);
                     "Game ended.".to_string()
                 }
@@ -1030,10 +1038,16 @@ impl Session {
     fn tick_lobby(&mut self, host: &mut dyn ServerHost) {
         let players = host.players();
         let online: Vec<u128> = players.iter().map(|player| player.uuid).collect();
-        let eligible = self.plan_start(&players, false).is_ok();
+        // A lockout warning stops the countdown from running (the original's start waits for the operator too).
+        let eligible = match self.plan_start(&players, false) {
+            Ok(teams) => self.lockout_warning(&teams).is_none(),
+            Err(_) => false,
+        };
         if self.ready.tick(&online, eligible) {
-            // The same checks ran just now with the same result, so the start cannot fail here.
-            let _ = self.start_game(host, false);
+            // The checks above ran just now. Only the goal-met warning, which reads the card, can still refuse the start.
+            if let Err(warning) = self.start_game(host, false) {
+                host.warn(&warning);
+            }
             return;
         }
         if self.ticks % 10 == 0 {
@@ -1048,14 +1062,79 @@ impl Session {
             return Err(format!("The game is not in Pregame ({:?}).", self.game.status()));
         }
         let players = host.players();
-        self.teams = self.plan_start(&players, ignore_warnings)?;
+        let teams = self.plan_start(&players, ignore_warnings)?;
+        if !ignore_warnings {
+            if let Some(warning) = self.lockout_warning(&teams) {
+                return Err(warning);
+            }
+        }
+        if let Some(warning) = self.goal_met_warning() {
+            return Err(warning);
+        }
+        self.teams = teams;
         self.ready.clear();
         host.command(&format!("gamerule pvp {}", self.rules.pvp));
         host.command(&format!("gamerule keep_inventory {}", self.rules.keep_inventory));
         self.add_teams_to_server(host, &players);
         let events = self.game.start().map_err(str::to_owned)?;
         self.dispatch(host, events);
+        self.announce_start(host);
         Ok(())
+    }
+
+    /// The warning for lockout with a lines goal, when more than one team plays and the stalemate behaviour is not
+    /// `do nothing` (`GameService.start`, the `CommandStartLockoutWithLinesGoal` warning). It is skipped by
+    /// `ignore_warnings`.
+    fn lockout_warning(&self, teams: &Teams) -> Option<String> {
+        let Goal::Lines(_) = self.rules.goal else { return None };
+        let risky = self.rules.mode == Mode::Lockout
+            && self.rules.stalemate != StalemateBehavior::Nothing
+            && teams.teams().len() > 1;
+        risky.then(|| texts::lockout_with_lines_goal(&goal_text(self.rules.goal)))
+    }
+
+    /// The warning when the card already meets the goal before play, as the original counts the inverse squares, which
+    /// the card holds at the start (`GameService.start`, `CommandStartWillImmediatelyEnd`). Nothing overrides it. The
+    /// card is the one the round deals (`begin_round`).
+    fn goal_met_warning(&self) -> Option<String> {
+        let card = generate_card(self.seed, &self.card_pool(), self.rules.tier_counts);
+        let squares = objectives::card_squares(&card)?;
+        let held: Vec<usize> = squares
+            .iter()
+            .enumerate()
+            .filter(|(_, square)| matches!(square.objective, objectives::Objective::Inverse { .. }))
+            .map(|(index, _)| index)
+            .collect();
+        let lines = scoring::count_lines(&held) as u32;
+        let items = held.len() as u32;
+        let met = match self.rules.goal {
+            Goal::Lines(n) => n > 0 && n <= lines,
+            Goal::Items(n) => n > 0 && n <= items,
+            Goal::FullCard => items as usize == CARD_SQUARES,
+        };
+        let completed = match self.rules.goal {
+            Goal::Lines(_) => texts::count_text(lines, "line", "lines"),
+            _ => texts::count_text(items, "item", "items"),
+        };
+        met.then(|| texts::goal_already_met(&goal_text(self.rules.goal), &completed))
+    }
+
+    /// The start's announcements (`GameService.start`): a title to every player, and the banner with the options to each
+    /// player on a team. The original colours the title in the team's colour; the title here is white.
+    fn announce_start(&self, host: &mut dyn ServerHost) {
+        for player in host.players() {
+            host.title(player.uuid, &texts::start_title(), &texts::start_subtitle());
+        }
+        let options = self.options_text();
+        for player in host.players() {
+            if self.teams.team_of(player.uuid).is_none() {
+                continue;
+            }
+            host.tell(player.uuid, &texts::separator());
+            host.tell_line(player.uuid, &texts::start_banner());
+            host.tell(player.uuid, &options);
+            host.tell(player.uuid, &texts::separator());
+        }
     }
 
     /// The start rules, worked out on a copy of the teams (the copy is returned, so nothing changes on an error).
@@ -1161,6 +1240,7 @@ impl Session {
         self.reached.clear();
         self.votes.clear();
         self.forfeit = false;
+        self.end_reason = None;
         let players = host.players();
         for player in &players {
             if self.teams.team_of(player.uuid).is_some() {
@@ -1221,7 +1301,7 @@ impl Session {
         let players = host.players();
         let online: Vec<u128> = players.iter().map(|player| player.uuid).collect();
         for player in &players {
-            let packet = self.ready.update_packet(player.uuid, &online, "pregame", GameStatus::Pregame);
+            let packet = self.ready.lobby_packet(player.uuid, &online, "pregame", GameStatus::Pregame, READY_COMMAND);
             send(host, player.uuid, encode_update_v2(&packet));
         }
     }
@@ -1274,6 +1354,38 @@ impl Session {
             None => texts::game_ended(),
         };
         host.broadcast_line(&line);
+        self.send_end_summary(host, winner.as_deref());
+    }
+
+    /// The end's chat for each player on a team (`GameOverController.broadcastGameOver`): a rule, the reason, the duration,
+    /// the ranking of the teams when there is more than one (unless the first win ends a game with one win condition),
+    /// and a rule. The reason is the team that completed its card, else why the game ended.
+    fn send_end_summary(&mut self, host: &mut dyn ServerHost, winner: Option<&str>) {
+        let stopped = self.end_reason.take();
+        let reason = match winner {
+            Some(team) => texts::completed_card(team_name(team)),
+            None => stopped.unwrap_or_else(texts::out_of_time),
+        };
+        let duration = texts::duration_text(self.game.elapsed_ms());
+        let ranking = self.ranking();
+        let ranked = !(self.rules.end_when == EndWhen::FirstWin && self.rules.win_condition != WinCondition::Infinite)
+            && ranking.len() > 1;
+        for player in host.players() {
+            if self.teams.team_of(player.uuid).is_none() {
+                continue;
+            }
+            host.tell(player.uuid, &texts::separator());
+            host.tell_line(player.uuid, &reason);
+            host.tell_line(player.uuid, &texts::game_duration(&duration));
+            if ranked {
+                for row in &ranking {
+                    let score = texts::score_text(row.score);
+                    let line = texts::score_row(row.index as usize + 1, team_name(&row.key), &score, &duration);
+                    host.tell(player.uuid, &line);
+                }
+            }
+            host.tell(player.uuid, &texts::separator());
+        }
     }
 
     /// Back to Pregame: the card, the progress and the ready flags go; the teams stay, but the server's team list drops
@@ -2074,6 +2186,24 @@ fn completion_notice(round: &TeamRound, rules: &Rules) -> String {
     match rules.win.required_cards() {
         Some(total) => format!("{name} completed card {done}/{total}!"),
         None => format!("{name} completed card {done}!"),
+    }
+}
+
+/// The reason the end's chat gives for a stalemate that ended the game.
+fn stalemate_end_reason(cause: EndCause) -> Line {
+    match cause {
+        EndCause::Stalemate => texts::stalemate_reason(),
+        EndCause::Lockout => texts::lockout_reason(),
+        EndCause::ImpossibleGoal => texts::soft_locked_reason(),
+    }
+}
+
+/// The name of a goal as the warnings write it: `2 lines`, `6 items`, `full card`.
+fn goal_text(goal: Goal) -> String {
+    match goal {
+        Goal::Lines(n) => texts::count_text(n, "line", "lines"),
+        Goal::Items(n) => texts::count_text(n, "item", "items"),
+        Goal::FullCard => "full card".to_string(),
     }
 }
 

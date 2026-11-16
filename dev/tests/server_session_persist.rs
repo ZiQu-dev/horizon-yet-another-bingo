@@ -358,6 +358,8 @@ fn a_find_is_told_only_to_the_player_who_wants_it_when_another_turned_item_messa
     let saved = store::settings_from_json(&host.files["player-settings.json"]);
     assert!(!saved[&ALICE].item_messages);
 
+    // The start's banner went to the team players as tells; this test is about the finds, so it is read and dropped.
+    host.take_tells();
     // Bob finds a square: Alice, who turned the messages off, gets nothing; Bob gets his own line; no broadcast.
     session.on_inventory(&mut host, BOB, &held(&names[0..1]));
     host.take();
@@ -370,6 +372,8 @@ fn without_settings_a_find_is_broadcast() {
     let mut host = FakeHost::default();
     let mut session = Session::new(options(7, 0, None));
     let names = started_round(&mut host, &mut session, 5);
+    // The start's banner went to the team players as tells; it is read and dropped before the find.
+    host.take_tells();
 
     session.on_inventory(&mut host, BOB, &held(&names[0..1]));
     host.take();

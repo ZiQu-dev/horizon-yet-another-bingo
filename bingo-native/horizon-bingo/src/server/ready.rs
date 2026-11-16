@@ -19,6 +19,7 @@
 
 use std::collections::HashSet;
 
+use super::texts;
 use crate::buf::encode;
 use crate::game::{GameState, GameStatus};
 use crate::ready_update::ReadyUpdatePacket;
@@ -166,6 +167,35 @@ impl ReadyTimer {
             vote_options: Vec::new(),
             vote_pending: None,
         }
+    }
+
+    /// The packet for one viewer with the lines the original's lobby shows (`ReadyService.getMessage`):
+    ///
+    /// - the title: a player who is ready sees `N of M ready!` while the timer runs and nothing otherwise; any other
+    ///   player sees the hint `type <ready_command> to speed up!`;
+    /// - the subtitle: `Starting in H:MM:SS` while the timer runs, else `Waiting to start...`.
+    pub fn lobby_packet(
+        &self,
+        viewer: u128,
+        online: &[u128],
+        state_identifier: &str,
+        status: GameStatus,
+        ready_command: &str,
+    ) -> ReadyUpdatePacket {
+        let mut packet = self.update_packet(viewer, online, state_identifier, status);
+        let title = if self.is_ready(viewer) {
+            self.running.then(|| texts::players_ready(self.ready_count(online), online.len()))
+        } else {
+            Some(texts::ready_up_command(ready_command))
+        };
+        let subtitle = if self.running {
+            texts::starting_in(&texts::clock_text(self.remaining_ms(online).max(0)))
+        } else {
+            texts::waiting_to_start()
+        };
+        packet.title = Some(title.map_or_else(Text::empty, |line| line.text()));
+        packet.subtitle = Some(subtitle.text());
+        packet
     }
 
     fn total_ms(&self) -> i64 {
