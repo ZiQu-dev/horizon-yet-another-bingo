@@ -143,7 +143,8 @@ pub struct Session {
     empty_ticks: u64,
     /// The data files have been read.
     loaded: bool,
-    /// Settings players sent (`update_settings`); a player who sent none has the defaults.
+    /// The players' saved settings: the file keeps them, `prefs` changes them, and a first join saves the defaults. A
+    /// player with none has the defaults.
     settings: HashMap<u128, PlayerSettings>,
     /// Finished games, oldest first, from `history.jsonl`.
     history: Vec<HistoryEntry>,
@@ -884,16 +885,21 @@ impl Session {
     }
 
     /// A packet from a player on the channel `yet-another-minecraft-bingo:<path>`. Only the ready packets are handled,
-    /// and only before play. A payload that does not decode is ignored.
+    /// and only before play. A payload that does not decode is ignored. A client's settings packet is answered with the
+    /// saved settings instead of taken (see `update_settings` below).
     pub fn on_packet(&mut self, host: &mut dyn ServerHost, player: u128, path: &str, data: &[u8]) {
         if path == "update_settings" {
-            if let Ok(mut settings) = decode(data, PlayerSettings::read) {
-                // The client's settings reach the server, so its channels are registered: it runs the card HUD. The
-                // lobby prompt's flag is the server's, not the client's (`PlayerSettingsController`).
-                settings.hide_lobby_prompt = self.settings.get(&player).is_some_and(|saved| saved.hide_lobby_prompt);
-                self.settings.insert(player, settings);
+            if decode(data, PlayerSettings::read).is_ok() {
+                // The client sends this once its channels are registered, so it runs the card HUD. Its packet does not
+                // replace the saved settings: a client sends the defaults on join, and the saved ones win. The server
+                // answers with them (`update_settings`), which is how the client learns them. Only `prefs` changes them.
+                // A player with none saved gets the defaults saved, as the original's `PlayerSettingsService` gives them.
                 self.hud.insert(player);
-                host.write_file(SETTINGS_FILE, &store::settings_to_json(&self.settings));
+                if !self.settings.contains_key(&player) {
+                    self.settings.insert(player, PlayerSettings::default());
+                    host.write_file(SETTINGS_FILE, &store::settings_to_json(&self.settings));
+                }
+                send(host, player, wire::update_settings(&self.settings[&player]));
             }
             return;
         }
@@ -1169,7 +1175,7 @@ impl Session {
 
     /// `bingo prefs <setting> [on|off]`: changes one of the player's settings, the value given or its opposite. As the
     /// original's `BingoPrefsCommand`, the change marks the tutorial as seen, is saved, and goes back to the client
-    /// (`update_settings`), which otherwise sends its own settings on the next join. A bossbar turned off is hidden at once.
+    /// (`update_settings`), which keeps the client's copy the same as the saved one. A bossbar turned off is hidden at once.
     /// The held tutorial book is refreshed for the new values (`refresh_book`), as the original updates every held book.
     /// The scoreboard setting is the client's: the server sends it back, and the client leaves its sidebar out
     /// (`BingoClient::hides_layer`), since the sidebar is one for everyone (`sidebar`).

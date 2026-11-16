@@ -5,7 +5,7 @@
 //! per second, so 130 ticks is 6500 ms, and a countdown of 0 starts play at once.
 use std::collections::HashMap;
 
-use horizon_bingo::buf::{decode, encode};
+use horizon_bingo::buf::decode;
 use horizon_bingo::game_over::GameOverPacket;
 use horizon_bingo::server::game::GameOptions;
 use horizon_bingo::server::host::ServerHost;
@@ -15,7 +15,6 @@ use horizon_bingo::server::session::{Session, SessionOptions};
 use horizon_bingo::server::store::{self, entry_to_line, parse_history, HistoryEntry, HistoryPlayer, HistoryTeam};
 use horizon_bingo::server::types::Player;
 use horizon_bingo::update_card_tiles::CardTilesPacket;
-use horizon_bingo::update_settings::PlayerSettings;
 
 const ALICE: u128 = 1;
 const BOB: u128 = 2;
@@ -353,8 +352,8 @@ fn a_find_is_told_only_to_the_player_who_wants_it_when_another_turned_item_messa
     let mut session = Session::new(options(7, 0, None));
     let names = started_round(&mut host, &mut session, 5);
 
-    let quiet = PlayerSettings { item_messages: false, ..PlayerSettings::default() };
-    session.on_packet(&mut host, ALICE, "update_settings", &encode(|w| quiet.write(w)));
+    // Alice turns the item messages off with `prefs`: her client's packets do not change her saved settings.
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "prefs item_messages off"), "Set 'Item Scored' = Off");
     let saved = store::settings_from_json(&host.files["player-settings.json"]);
     assert!(!saved[&ALICE].item_messages);
 
@@ -399,8 +398,8 @@ fn the_boss_bar_follows_the_bossbar_setting_of_each_player() {
         let mut host = FakeHost::default();
         let mut session = Session::new(options(7, 0, None));
         lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "blue")]);
-        let settings = PlayerSettings { bossbar: alice_wants_bar, ..PlayerSettings::default() };
-        session.on_packet(&mut host, ALICE, "update_settings", &encode(|w| settings.write(w)));
+        let said = if alice_wants_bar { "On" } else { "Off" };
+        assert_eq!(run(&mut session, &mut host, Some(ALICE), &format!("prefs bossbar {}", said.to_lowercase())), format!("Set 'Bossbar' = {said}"));
         assert!(run(&mut session, &mut host, None, "timelimit 1").starts_with("Time limit set to 1"));
         run(&mut session, &mut host, Some(ALICE), "start");
         host.take();
