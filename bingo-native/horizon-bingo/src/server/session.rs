@@ -11,6 +11,7 @@ use super::commands::{self, Command, VoteChoice};
 use super::difficulty;
 use super::game::{Event, Game, GameOptions, GameSnapshot};
 use super::hidden_consume::{self, CardMode, HeldStack, Sight, TileView};
+use super::infobook;
 use super::host::ServerHost;
 use super::kit::{self, KitCommand};
 use super::map_items::{self, Flashes, MapItems, SquareState, Want, FILLED_MAP, MAP_IDS_FILE, PREVIEW_KEY};
@@ -162,6 +163,8 @@ pub struct Session {
     maps: MapItems,
     /// The squares that flash on the team maps, since they were scored.
     flashes: Flashes,
+    /// The players given the lobby's tutorial book this session (`infobook`), so each gets one once.
+    books_given: HashSet<u128>,
 }
 
 impl Session {
@@ -213,6 +216,7 @@ impl Session {
             reported: HashSet::new(),
             maps: MapItems::new(),
             flashes: Flashes::default(),
+            books_given: HashSet::new(),
             options,
         }
     }
@@ -981,6 +985,51 @@ impl Session {
             Command::StatsOf(name) => self.stats_of_player(host, &name),
             Command::Menu => "The menu opens in a player's game chat: type bingo menu in game.".to_string(),
             Command::Kit(command) => self.kit_command(host, command),
+            Command::Book => self.book_command(host, player),
+        }
+    }
+
+    /// `bingo book`: the tutorial book for the player. Only when the lobby does not give it (`lobby_tutorial_book` off).
+    fn book_command(&mut self, host: &mut dyn ServerHost, player: Option<u128>) -> String {
+        if self.rules.lobby_tutorial_book {
+            return "bingo book is off: the lobby gives the tutorial book (lobby_tutorial_book is on).".to_string();
+        }
+        let Some(uuid) = player else {
+            return "Only a player can get the book.".to_string();
+        };
+        let Some(player) = host.players().into_iter().find(|p| p.uuid == uuid) else {
+            return "You are not on the server.".to_string();
+        };
+        if self.give_book(host, &player, false) {
+            "You got the bingo book.".to_string()
+        } else {
+            "The bingo book could not be given.".to_string()
+        }
+    }
+
+    /// Gives one player the tutorial book, its pages written for their settings and operator rights. False when the host
+    /// could not give it.
+    fn give_book(&self, host: &mut dyn ServerHost, player: &Player, keep: bool) -> bool {
+        let settings = self.settings.get(&player.uuid).cloned().unwrap_or_default();
+        let operator = host.is_operator(player.uuid);
+        let pages = infobook::pages(&infobook::PageView { settings: &settings, operator });
+        let components = infobook::components(&player.name, &pages, keep);
+        host.give_item(player.uuid, infobook::ITEM, &components)
+    }
+
+    /// The lobby's tutorial book (`lobby_tutorial_book`): each online player is given one once this session, the first
+    /// time they are in the lobby. Nothing is given while the option is off.
+    fn give_lobby_books(&mut self, host: &mut dyn ServerHost, players: &[Player]) {
+        if !self.rules.lobby_tutorial_book {
+            return;
+        }
+        for player in players {
+            if self.books_given.contains(&player.uuid) {
+                continue;
+            }
+            if self.give_book(host, player, true) {
+                self.books_given.insert(player.uuid);
+            }
         }
     }
 
@@ -1037,6 +1086,7 @@ impl Session {
     /// ready screen every 10 ticks.
     fn tick_lobby(&mut self, host: &mut dyn ServerHost) {
         let players = host.players();
+        self.give_lobby_books(host, &players);
         let online: Vec<u128> = players.iter().map(|player| player.uuid).collect();
         // A lockout warning stops the countdown from running (the original's start waits for the operator too).
         let eligible = match self.plan_start(&players, false) {

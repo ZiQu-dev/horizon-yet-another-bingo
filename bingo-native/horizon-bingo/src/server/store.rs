@@ -84,6 +84,10 @@ pub fn options_to_json(o: &Options) -> String {
     if o.objectives {
         value["objectives"] = Value::Bool(true);
     }
+    // The lobby's tutorial book is written only when off, so a round with the default keeps the text it always had.
+    if !o.lobby_tutorial_book {
+        value["lobbyTutorialBook"] = Value::Bool(false);
+    }
     serde_json::to_string_pretty(&value).expect("a JSON value always serializes")
 }
 
@@ -123,6 +127,7 @@ pub fn options_from_json(s: &str) -> Options {
         sidebar: flag(&root, "sidebar", d.sidebar),
         kit: Kit::read_from(&root),
         objectives: flag(&root, "objectives", d.objectives),
+        lobby_tutorial_book: flag(&root, "lobbyTutorialBook", d.lobby_tutorial_book),
     }
 }
 

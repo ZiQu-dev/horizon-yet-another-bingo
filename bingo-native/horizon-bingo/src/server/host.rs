@@ -73,4 +73,15 @@ pub trait ServerHost {
     fn give_map(&mut self, _player: u128, _snbt: &str) -> bool {
         false
     }
+    /// Whether a player has the bingo operator level (`bingo.op`), which the lobby's book and menu read. The default is
+    /// `false`.
+    fn is_operator(&self, _player: u128) -> bool {
+        false
+    }
+    /// Gives one item of a kind with its components, in the `give` command's syntax (`minecraft:written_book[...]`),
+    /// for example the tutorial book (`infobook`). The adapter runs it as a `give` command, so a `true` means the player
+    /// was online to get it, not that the item is already in their inventory. The default is false.
+    fn give_item(&mut self, _player: u128, _item: &str, _components: &str) -> bool {
+        false
+    }
 }

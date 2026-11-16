@@ -84,6 +84,9 @@ pub struct Options {
     /// Advanced squares on the cards: the advancements and scorable challenges of the original's tier lists are drawn
     /// with the items (`objectives`, in `options.json` only when on). Off by default: the cards are then all items.
     pub objectives: bool,
+    /// The lobby's tutorial book, given to each player once in the lobby (`lobby_tutorial_book`, in `options.json` only
+    /// when off). On by default, as the original's `lobbyTutorialBook`. `infobook.rs`.
+    pub lobby_tutorial_book: bool,
 }
 
 impl Default for Options {
@@ -107,6 +110,7 @@ impl Default for Options {
             sidebar: true,
             kit: Kit::default(),
             objectives: false,
+            lobby_tutorial_book: true,
         }
     }
 }

@@ -27,3 +27,4 @@ pub mod chat;
 pub mod sidebar;
 pub mod kit;
 pub mod texts;
+pub mod infobook;

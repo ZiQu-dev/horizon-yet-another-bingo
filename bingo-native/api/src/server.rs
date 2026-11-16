@@ -33,8 +33,9 @@ const OP_LEVEL: u8 = 2;
 const SHORTCUTS: [&str; 3] = ["join", "ready", "spectator"];
 /// The usages the mod registers, each with a line that parses to what it runs. The operator level comes from
 /// `commands::requires_op`, so the rule lives in one place.
-const USAGES: [(&str, &str); 50] = [
+const USAGES: [(&str, &str); 51] = [
     ("bingo status", "status"),
+    ("bingo book", "book"),
     ("bingo help", "help"),
     ("bingo card", "card"),
     ("bingo spectator", "spectator"),
@@ -305,6 +306,20 @@ impl ServerHost for ServerAdapter<'_> {
         };
         // `give_stack` returns what did not fit, so none means the whole stack went to the player.
         self.host.give_stack(player, stack).is_none()
+    }
+
+    fn is_operator(&self, player: u128) -> bool {
+        self.host.has_permission(player, "bingo.op", OP_LEVEL)
+    }
+
+    fn give_item(&mut self, player: u128, item: &str, components: &str) -> bool {
+        // Best effort: the item goes out as a `give` command, run at the next tick, so the pages are the command's
+        // components. Only a player who is online can be given it.
+        let Some(name) = self.host.server_players().into_iter().find(|p| p.uuid == player).map(|p| p.name) else {
+            return false;
+        };
+        self.command(&format!("give {name} {item}[{components}]"));
+        true
     }
 }
 

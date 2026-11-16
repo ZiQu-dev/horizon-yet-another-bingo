@@ -60,6 +60,8 @@ pub enum Command {
     Menu,
     /// `kit`, `kit add <item> [count]`, `kit remove <item>` or `kit clear`: the starting kit of team players.
     Kit(KitCommand),
+    /// `book`: the tutorial book, for a player (only when `lobby_tutorial_book` is off, as the original).
+    Book,
 }
 
 /// The answer to the end-of-round vote: play another round, keep playing, or return to the lobby.
@@ -70,7 +72,7 @@ pub enum VoteChoice {
     ReturnToLobby,
 }
 
-const USAGE: &str = "start [ignore_warnings] | end | reset | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout|hidden_items on|off|consume_items on|off | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | playto cards <n>|infinite|replace_goals | stalemate end_game|reroll_card|do_nothing | options | vote next|keep|lobby | resume | stats [player] | difficulty easy|medium|hard|extreme|impossible | difficulty <S> <A> <B> <C> <D> | reroll | teams <n> | autoshuffle on|off | objectives on|off | menu | kit | kit add <item> [count] | kit remove <item> | kit clear";
+const USAGE: &str = "start [ignore_warnings] | end | reset | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout|hidden_items on|off|consume_items on|off | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | playto cards <n>|infinite|replace_goals | stalemate end_game|reroll_card|do_nothing | options | vote next|keep|lobby | resume | stats [player] | difficulty easy|medium|hard|extreme|impossible | difficulty <S> <A> <B> <C> <D> | reroll | teams <n> | autoshuffle on|off | objectives on|off | menu | kit | kit add <item> [count] | kit remove <item> | kit clear | book";
 
 const SPAWN_DISTANCE_MAX: u32 = 1000;
 
@@ -111,6 +113,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
             _ => Err("Too many arguments for 'stats'. Usage: stats [player]".to_string()),
         },
         "menu" => no_args(name, &args, Command::Menu),
+        "book" => no_args(name, &args, Command::Book),
         "options" => no_args(name, &args, Command::Options),
         "resume" => no_args(name, &args, Command::Resume),
         "start" => match args.as_slice() {
@@ -234,7 +237,8 @@ pub fn requires_op(command: &Command) -> bool {
         | Command::Options
         | Command::Vote(_)
         | Command::Stats
-        | Command::Menu => false,
+        | Command::Menu
+        | Command::Book => false,
     }
 }
 
