@@ -1983,6 +1983,10 @@ impl Session {
         if self.rules.team_auto_shuffle {
             text.push_str(&format!(" Auto shuffle: on, {} teams.", self.rules.team_count));
         }
+        // The advanced squares are named only when on, as the other rules that are off by default.
+        if self.rules.objectives {
+            text.push_str(" Objectives: on.");
+        }
         text
     }
 

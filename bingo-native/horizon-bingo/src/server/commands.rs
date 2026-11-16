@@ -70,7 +70,7 @@ pub enum VoteChoice {
     ReturnToLobby,
 }
 
-const USAGE: &str = "start [ignore_warnings] | end | reset | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout|hidden_items on|off|consume_items on|off | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | playto cards <n>|infinite|replace_goals | stalemate end_game|reroll_card|do_nothing | options | vote next|keep|lobby | resume | stats [player] | difficulty easy|medium|hard|extreme|impossible | difficulty <S> <A> <B> <C> <D> | reroll | teams <n> | autoshuffle on|off | menu | kit | kit add <item> [count] | kit remove <item> | kit clear";
+const USAGE: &str = "start [ignore_warnings] | end | reset | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout|hidden_items on|off|consume_items on|off | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | playto cards <n>|infinite|replace_goals | stalemate end_game|reroll_card|do_nothing | options | vote next|keep|lobby | resume | stats [player] | difficulty easy|medium|hard|extreme|impossible | difficulty <S> <A> <B> <C> <D> | reroll | teams <n> | autoshuffle on|off | objectives on|off | menu | kit | kit add <item> [count] | kit remove <item> | kit clear";
 
 const SPAWN_DISTANCE_MAX: u32 = 1000;
 
@@ -104,6 +104,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
             _ => Err(format!("Too many arguments for 'teams'. Usage: teams <n> (1 to {})", TEAM_PRESETS.len())),
         },
         "autoshuffle" => parse_toggle(name, Toggle::AutoShuffle, &args),
+        "objectives" => parse_toggle(name, Toggle::Objectives, &args),
         "stats" => match args.as_slice() {
             [] => Ok(Command::Stats),
             [player] => Ok(Command::StatsOf(player.to_string())),

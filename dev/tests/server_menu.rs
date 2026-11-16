@@ -41,11 +41,11 @@ fn every_page_has_its_slots_at_the_documented_places() {
     assert_eq!(CLOSE_SLOT, 35);
     assert_eq!(
         indexes(&Page::Root, &rules),
-        vec![0, 1, 2, 3, 4, 6, 7, 8, 13, 22, 35]
+        vec![0, 1, 2, 3, 4, 6, 7, 8, 10, 12, 13, 14, 15, 16, 22, 35]
     );
     assert_eq!(
         indexes(&Page::Features, &rules),
-        vec![0, 1, 2, 3, 5, 6, 7, 8, 27, 35]
+        vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 27, 35]
     );
     assert_eq!(
         indexes(&Page::Goal, &rules),

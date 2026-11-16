@@ -48,6 +48,8 @@ pub enum Toggle {
     NightVision,
     /// `teamAutoShuffle`: the teams are shuffled when the round starts.
     AutoShuffle,
+    /// `objectives`: the advanced squares of the original's tier lists go on the cards. Pregame only, like the others.
+    Objectives,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,6 +119,7 @@ impl Options {
             Toggle::Elytra => self.elytra = on,
             Toggle::NightVision => self.night_vision = on,
             Toggle::AutoShuffle => self.team_auto_shuffle = on,
+            Toggle::Objectives => self.objectives = on,
         }
     }
 }

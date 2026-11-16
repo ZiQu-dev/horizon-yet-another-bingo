@@ -8,12 +8,15 @@
 //! chest equivalent, so the layout is the port's own. The original's game-mode toggles are independent; the port's
 //! `Mode` is one exclusive value, so Standard, Inventory and Lockout are three choices.
 //!
-//! The Items page offers the five difficulty presets of the `difficulty` command, the card's current one selected.
+//! The Items page offers the five difficulty presets of the `difficulty` command, the card's current one selected. The
+//! Root page has the reroll and the team settings (auto shuffle, team count), the Features page the starting kit. Each
+//! of these runs the command of the same name, so the menu adds no rule of its own.
 
 use super::commands::{parse, requires_op};
 use super::difficulty;
 use super::multicard::{StalemateBehavior, WinCondition};
 use super::options::{EndWhen, Goal, Mode, Options};
+use super::teams::PRESETS as TEAM_PRESETS;
 
 /// Rows of every menu page.
 pub const ROWS: u8 = 4;
@@ -424,6 +427,7 @@ fn rules_lines(rules: &Options) -> Vec<String> {
             "Consume items: {}",
             on_off(rules.hidden_consume.consume_items)
         ),
+        format!("Objectives: {}", on_off(rules.objectives)),
     ]
 }
 
@@ -513,10 +517,32 @@ fn root(view: &View) -> Vec<(usize, Slot)> {
             ),
         ),
         at(
+            10,
+            button(
+                view,
+                "minecraft:ender_pearl",
+                "Reroll card",
+                "Draws the card again with a new seed.",
+                "reroll",
+            ),
+        ),
+        at(
+            12,
+            toggle(
+                view,
+                "minecraft:name_tag",
+                "Auto shuffle",
+                "The teams are shuffled when the round starts.",
+                rules.team_auto_shuffle,
+                "autoshuffle",
+            ),
+        ),
+        at(
             13,
             info("minecraft:book", "Current rules", rules_lines(rules)),
         ),
     ];
+    out.extend(team_count_slots(view));
     let mut start_lore = vec!["Starts the round, as bingo start does.".to_string()];
     start_lore.extend(gate(view));
     out.push(at(
@@ -532,6 +558,51 @@ fn root(view: &View) -> Vec<(usize, Slot)> {
         ),
     ));
     out.push(at(CLOSE_SLOT, close_button()));
+    out
+}
+
+/// The team count of the auto shuffle: a button one fewer (slot 14), the count (15) and a button one more (16). The
+/// buttons stop at one team and at the most the teams presets allow, where they only show.
+fn team_count_slots(view: &View) -> Vec<(usize, Slot)> {
+    let teams = view.rules.team_count;
+    let most = TEAM_PRESETS.len();
+    let mut out = Vec::new();
+    if teams > 1 {
+        out.push(at(
+            14,
+            button(
+                view,
+                "minecraft:red_dye",
+                "Fewer teams",
+                "Makes one team fewer in the auto shuffle.",
+                &format!("teams {}", teams - 1),
+            ),
+        ));
+    } else {
+        out.push(at(14, info("minecraft:red_dye", "Fewer teams", vec!["At least one team.".to_string()])));
+    }
+    out.push(at(
+        15,
+        info(
+            "minecraft:white_banner",
+            &format!("Teams: {teams}"),
+            vec!["The teams the auto shuffle makes.".to_string()],
+        ),
+    ));
+    if teams < most {
+        out.push(at(
+            16,
+            button(
+                view,
+                "minecraft:lime_dye",
+                "More teams",
+                "Makes one team more in the auto shuffle.",
+                &format!("teams {}", teams + 1),
+            ),
+        ));
+    } else {
+        out.push(at(16, info("minecraft:lime_dye", "More teams", vec![format!("At most {most} teams.")])));
+    }
     out
 }
 
@@ -582,6 +653,7 @@ fn features(view: &View) -> Vec<(usize, Slot)> {
                 "nightvision",
             ),
         ),
+        at(4, kit_slot(view)),
     ];
     for (offset, chunks) in SPAWN_DISTANCES.into_iter().enumerate() {
         let name = format!("Spawn distance: {chunks} chunks");
@@ -600,6 +672,34 @@ fn features(view: &View) -> Vec<(usize, Slot)> {
     }
     back_and_close(&mut out, Page::Root);
     out
+}
+
+/// The starting kit. The kit has no on or off of its own: it is on when it has items. Clicking clears it (`kit clear`,
+/// before the start); turning it on takes `bingo kit add`, which the lore names.
+fn kit_slot(view: &View) -> (usize, Slot) {
+    let kit = &view.rules.kit;
+    if kit.is_empty() {
+        let mut lore = vec!["No items. Add some with bingo kit add <item> [count].".to_string()];
+        lore.extend(gate(view));
+        return info("minecraft:chest", "Starting kit: off", lore);
+    }
+    let mut lore = vec![format!(
+        "{} kind(s) of item are given to team players at the start.",
+        kit.items.len()
+    )];
+    lore.push("Click to clear the kit.".to_string());
+    lore.extend(gate(view));
+    (
+        0,
+        slot("minecraft:chest", "Starting kit: on", lore, Action::Run("kit clear".to_string())),
+    )
+}
+
+/// A button that runs `command`, with the gate lore.
+fn button(view: &View, item: &'static str, name: &str, description: &str, command: &str) -> (usize, Slot) {
+    let mut lore = vec![description.to_string()];
+    lore.extend(gate(view));
+    (0, slot(item, name, lore, Action::Run(command.to_string())))
 }
 
 fn goal(view: &View) -> Vec<(usize, Slot)> {
