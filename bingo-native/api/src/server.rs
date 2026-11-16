@@ -6,7 +6,6 @@ use horizon_bingo::server::chat;
 use horizon_bingo::server::commands::{Command, chat_shortcut, parse, requires_op};
 use horizon_bingo::server::game::GameOptions;
 use horizon_bingo::server::host::ServerHost;
-use horizon_bingo::server::infobook;
 use horizon_bingo::server::items::{ItemIds, NO_ICONS_NOTE, missing_names_warning};
 use horizon_bingo::server::map_render::{DirtyRect, FileIcons, IconSource, MAP_BYTES, Overlays};
 use horizon_bingo::server::menu::{self, Menus, Outcome, Page, View};
@@ -222,13 +221,6 @@ impl ServerHost for ServerAdapter<'_> {
         } else {
             log(&format!("bingo: console command `{line}` dropped, the queue is full"));
         }
-    }
-
-    fn command_result(&mut self, line: &str) -> Option<i32> {
-        // Horizon's `run_command_with_output` runs the line now and returns its feedback as plain text; the count is read
-        // from that text (`infobook::count_from_feedback`). Needs the Horizon revision that has the method.
-        let result = self.host.run_command_with_output(line);
-        infobook::count_from_feedback(result.success, &result.feedback)
     }
 
     fn stat_value(&self, player: u128, stat_type: &str, stat_name: Option<&str>) -> Option<i64> {
