@@ -47,6 +47,34 @@ impl Line {
     }
 }
 
+/// `%s has scored %s!`, for a team that scored lines (`GameMessageService`). `lines` is the count, as [`count_text`] writes it.
+pub fn scored_line(team: &str, lines: &str) -> Line {
+    Line::new("bingo.game.message.scored_line", "%s has scored %s!", &[team, lines])
+}
+
+/// The leading team's message (`GameMessageService.createLeadingTeamMessage`): `%s is in the lead!` and its tied form,
+/// with the score when `with_score` (the original's `showCompletedItems`).
+pub fn leading_team(team: &str, score: &str, tied: bool, with_score: bool) -> Line {
+    match (tied, with_score) {
+        (true, true) => Line::new("bingo.game.message.leading_tied_with_score", "%s is tied in the lead with %s!", &[team, score]),
+        (true, false) => Line::new("bingo.game.message.leading_tied", "%s is tied in the lead!", &[team]),
+        (false, true) => Line::new("bingo.game.message.leading_with_score", "%s is in the lead with %s!", &[team, score]),
+        (false, false) => Line::new("bingo.game.message.leading", "%s is in the lead!", &[team]),
+    }
+}
+
+/// The score a leading-team message shows: the cards when the team has one, else its lines on a lines goal when it has
+/// any, else its items (`createLeadingTeamMessage`). `1 line`, `3 items`.
+pub fn leading_score(score: crate::score_update::TeamScore, lines_goal: bool) -> String {
+    if score.cards > 0 {
+        count_text(score.cards as u32, "card", "cards")
+    } else if lines_goal && score.lines > 0 {
+        count_text(score.lines as u32, "line", "lines")
+    } else {
+        count_text(score.items.max(0) as u32, "item", "items")
+    }
+}
+
 /// `%s reached the goal!`, for a team that reached the goal before the game ends.
 pub fn team_reached_goal(team: &str) -> Line {
     Line::new("bingo.native.team_reached_goal", "%s reached the goal!", &[team])

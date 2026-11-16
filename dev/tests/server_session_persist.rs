@@ -360,10 +360,18 @@ fn a_find_is_told_only_to_the_player_who_wants_it_when_another_turned_item_messa
 
     // The start's banner went to the team players as tells; this test is about the finds, so it is read and dropped.
     host.take_tells();
-    // Bob finds a square: Alice, who turned the messages off, gets nothing; Bob gets his own line; no broadcast.
+    // Bob finds a square: Alice, who turned the item messages off, gets no find line; Bob gets his own. The find makes
+    // blue the leader, and every player who keeps the leading messages on is told it (`GameMessageService`).
     session.on_inventory(&mut host, BOB, &held(&names[0..1]));
     host.take();
-    assert_eq!(host.take_tells(), [(BOB, format!("Bob found {}", short(&names[0])))]);
+    assert_eq!(
+        host.take_tells(),
+        [
+            (BOB, format!("Bob found {}", short(&names[0]))),
+            (ALICE, "Blue is in the lead with 1 item!".to_string()),
+            (BOB, "Blue is in the lead with 1 item!".to_string()),
+        ]
+    );
     assert!(host.take_broadcasts().is_empty(), "no broadcast when someone opted out");
 }
 
@@ -378,7 +386,11 @@ fn without_settings_a_find_is_broadcast() {
     session.on_inventory(&mut host, BOB, &held(&names[0..1]));
     host.take();
     assert_eq!(host.take_broadcasts(), [format!("Bob found {}", short(&names[0]))]);
-    assert!(host.take_tells().is_empty());
+    // The find makes blue the leader: the leading message goes to each player, as the original sends it.
+    assert_eq!(
+        host.take_tells(),
+        [(ALICE, "Blue is in the lead with 1 item!".to_string()), (BOB, "Blue is in the lead with 1 item!".to_string())]
+    );
 }
 
 #[test]
