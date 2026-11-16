@@ -51,7 +51,7 @@ It is a port of the upstream client code and its packet formats. Upstream projec
 
 ## Requirements
 
-- Horizon built from commit `7b59041a89c3f1bc8e458f43d6b8ec48a0f814d3` (pinned in `horizon-mixin.toml`). The launcher
+- Horizon built from commit `918dc1f01d85c68c4a8d4b4a6ac0c87b76cd7746` (pinned in `horizon-mixin.toml`). The launcher
   refuses a build on another commit unless you pass `--allow-version-mismatch`; that was not tried.
 - Linux: `cc`, `pkg-config`, ALSA and libudev development files (on Debian and Ubuntu:
   `sudo apt install build-essential pkg-config libasound2-dev libudev-dev`; see `docs/native-mods.md` in the Horizon
@@ -207,7 +207,7 @@ The live check of this route is in `phase4/live-title-button/REPORT.md` of the d
   until you bind them.
 - **Card position button does nothing.** Known; see "What it does not do".
 - **The build stops with a version mismatch.** The Horizon you build on is not the pinned commit. Use a build from
-  `7b59041a89c3f1bc8e458f43d6b8ec48a0f814d3`, or try `--allow-version-mismatch` (not tried).
+  `918dc1f01d85c68c4a8d4b4a6ac0c87b76cd7746`, or try `--allow-version-mismatch` (not tried).
 - **Build fails on Linux with a missing library.** Install the packages named under Requirements.
 
 ## Environment variables (debugging)

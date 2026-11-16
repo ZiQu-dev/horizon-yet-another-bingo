@@ -26,9 +26,9 @@ pub trait ServerHost {
     /// that fail are only logged by the game. The default does nothing, so a test host need not implement it.
     fn command(&mut self, _line: &str) {}
     /// Runs a console command now and returns its result (vanilla's count for `clear ... 0`, a success count for others),
-    /// or `None` when the host cannot read it. Unlike `command`, this is not queued. The default is `None`, and the
-    /// Horizon adapter keeps it: the pinned Horizon `Host` has `run_command` (a bool) only, so callers fall back to the
-    /// queued commands alone.
+    /// or `None` when the host cannot read it. Unlike `command`, this is not queued. The default is `None`; the Horizon
+    /// adapter answers from `run_command_with_output` (Horizon 918dc1f01d and later), and a host without it gets `None`,
+    /// so callers fall back to the queued commands alone.
     fn command_result(&mut self, _line: &str) -> Option<i32> {
         None
     }

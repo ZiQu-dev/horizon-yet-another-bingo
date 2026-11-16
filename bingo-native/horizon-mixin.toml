@@ -4,7 +4,7 @@ id = "bingo_native"
 version = "0.0.1"
 
 [compatibility]
-horizon_revision = "7b59041a89c3f1bc8e458f43d6b8ec48a0f814d3"
+horizon_revision = "918dc1f01d85c68c4a8d4b4a6ac0c87b76cd7746"
 
 [api]
 path = "api"

@@ -8,8 +8,8 @@
 //! The card HUD is known from the client's settings (see `Session::has_card_hud`): the hints name its keybind, and the
 //! settings page lists the auto hide only without it. Each toggle runs `bingo prefs` (`prefs::click_command`). Not ported:
 //! the book is refreshed when a setting changes (`Session::prefs`): the held copies are cleared and one written for the new
-//! settings is given. Limits: a refresh needs the held count (`ServerHost::command_result`), which the Horizon adapter
-//! cannot read yet, so until then a held book keeps the values it was given with; a refreshed book is written with the
+//! settings is given. Limits: a refresh needs the held count (`ServerHost::command_result`); a host that cannot read it
+//! answers `None`, and then a held book keeps the values it was given with; a refreshed book is written with the
 //! keep tag of the current rule (`lobby_tutorial_book`), not the tag of the book it replaces.
 use super::prefs::{self, Setting};
 use crate::update_settings::PlayerSettings;
@@ -24,6 +24,26 @@ const HELD_PREDICATE: &str = "minecraft:written_book[minecraft:custom_data~{bing
 /// result is the number). Read through `ServerHost::command_result`.
 pub fn count_command(player: &str) -> String {
     format!("clear {player} {HELD_PREDICATE} 0")
+}
+
+/// The count a `count_command` answers, read from the command's feedback lines (plain text, as Horizon's
+/// `run_command_with_output` gives them). Vanilla's `clear` with a max count of 0 says `Found N matching item(s) on
+/// player P` or `Found N matching item(s) on M players`; when nothing matches it fails with `No items were found on
+/// player P` (or `... on M players`), which is a count of 0. Anything else, such as a refused command or a server
+/// whose feedback is in another language, is `None`, and the caller falls back as it does without a count.
+pub fn count_from_feedback(success: bool, feedback: &[String]) -> Option<i32> {
+    for line in feedback {
+        if let Some(rest) = line.strip_prefix("Found ") {
+            if let Some((count, target)) = rest.split_once(" matching item(s) on ") {
+                if target.starts_with("player ") || target.ends_with(" players") {
+                    return count.parse().ok();
+                }
+            }
+        } else if !success && line.starts_with("No items were found on ") {
+            return Some(0);
+        }
+    }
+    None
 }
 
 /// The command that removes every tutorial book a player holds, so a refreshed book leaves exactly one.
