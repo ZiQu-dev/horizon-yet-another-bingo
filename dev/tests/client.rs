@@ -1741,3 +1741,31 @@ fn the_placement_screen_draws_its_buttons_and_help_text_with_a_shadow() {
     let help_x = 213 - 6 * help.chars().count() as i32 / 2;
     assert!(host.texts.contains(&(help_x, 8, help.to_string(), 0xffa3_f5a3, true)), "{:?}", host.texts);
 }
+
+// The sidebar (`scoreboard` setting). The original's ScoreboardService.shouldDisplayScoreboard returns false for a
+// player who turned the scoreboard off, and the layer is then left out for them; the other layers are not.
+
+#[test]
+fn a_player_who_turned_the_scoreboard_off_does_not_get_the_sidebar_layer() {
+    let mut client = BingoClient::new();
+    assert!(!client.hides_layer("scoreboard_sidebar"), "the scoreboard is on by default");
+    let off = PlayerSettings { scoreboard: false, ..PlayerSettings::default() };
+    client.on_packet(&id("update_settings"), &encode(|w| off.write(w)));
+    assert!(client.hides_layer("scoreboard_sidebar"));
+    assert!(!client.hides_layer("hotbar"), "only the sidebar is left out");
+    assert!(!client.hides_layer("title"));
+    let on_again = PlayerSettings { scoreboard: true, ..PlayerSettings::default() };
+    client.on_packet(&id("update_settings"), &encode(|w| on_again.write(w)));
+    assert!(!client.hides_layer("scoreboard_sidebar"), "turned back on, the sidebar comes back");
+}
+
+#[test]
+fn the_stored_settings_hide_the_sidebar_until_the_server_sends_its_own() {
+    let mut client = BingoClient::new();
+    client.set_settings(PlayerSettings { scoreboard: false, ..PlayerSettings::default() });
+    assert!(client.hides_layer("scoreboard_sidebar"));
+    let on = PlayerSettings { scoreboard: true, ..PlayerSettings::default() };
+    client.on_packet(&id("update_settings"), &encode(|w| on.write(w)));
+    assert!(!client.hides_layer("scoreboard_sidebar"), "the server's settings are the newer ones");
+}
+

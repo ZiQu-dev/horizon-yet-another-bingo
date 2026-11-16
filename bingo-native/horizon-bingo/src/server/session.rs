@@ -1020,7 +1020,8 @@ impl Session {
     /// original's `BingoPrefsCommand`, the change marks the tutorial as seen, is saved, and goes back to the client
     /// (`update_settings`), which otherwise sends its own settings on the next join. A bossbar turned off is hidden at once.
     /// The held tutorial book is refreshed for the new values (`refresh_book`), as the original updates every held book.
-    /// The scoreboard setting does nothing yet: the sidebar is one for everyone (`sidebar`).
+    /// The scoreboard setting is the client's: the server sends it back, and the client leaves its sidebar out
+    /// (`BingoClient::hides_layer`), since the sidebar is one for everyone (`sidebar`).
     fn prefs(&mut self, host: &mut dyn ServerHost, player: Option<u128>, setting: Setting, value: Option<bool>) -> String {
         let Some(uuid) = player else {
             return "Only a player can change the player settings.".to_string();

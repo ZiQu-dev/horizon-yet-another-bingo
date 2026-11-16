@@ -10,7 +10,7 @@ use horizon_bingo::state::SoundKey;
 use horizon_client::mod_api::{
     ClientDisconnectingEvent, ClientPacketEvent, ClientPlayerNetworkLoggingInEvent, ClientTickPostEvent,
     ClientboundPlayPacket, ConfigLoadingEvent, ConfigReloadingEvent, CustomPayloadFromClientEvent, Flow,
-    GuiLayerPostEvent, Hooks, Host, HudBatch, KeyCode, MenuClickedEvent, MenuClosedEvent, NativeConfig, NativeConfigFile, NativeConfigKind,
+    GuiLayerPostEvent, GuiLayerPreEvent, Hooks, Host, HudBatch, KeyCode, MenuClickedEvent, MenuClosedEvent, NativeConfig, NativeConfigFile, NativeConfigKind,
     NativeScreenKind, PerformCommandEvent, PerformConsoleCommandEvent, PlayerChatEvent, ServerAboutToStartEvent, PlayerInventoryChangedEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent,
     RegisterCommandsEvent, RegisterConfigsEvent, ScreenKeyPressedPreEvent, ScreenMouseButtonPressedPreEvent,
     ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent,
@@ -744,6 +744,11 @@ impl Hooks for Mod {
             Some(true) => Flow::Cancel,
             _ => Flow::Continue,
         }
+    }
+
+    fn gui_layer_pre(&self, _host: &mut dyn Host, event: &mut GuiLayerPreEvent<'_>) -> Flow {
+        // The sidebar is left out for a player who turned the scoreboard off (`BingoClient::hides_layer`).
+        if self.lock_client().hides_layer(event.layer) { Flow::Cancel } else { Flow::Continue }
     }
 
     fn gui_layer_post(&self, host: &mut dyn Host, event: &mut GuiLayerPostEvent<'_>) {

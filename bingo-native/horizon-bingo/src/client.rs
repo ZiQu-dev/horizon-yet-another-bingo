@@ -32,6 +32,8 @@ use crate::update_settings::PlayerSettings;
 
 /// The client's tick is 50 ms (20 ticks a second); the state's clock is `ticks * 50`.
 pub const TICK_MS: u64 = 50;
+/// The HUD layer vanilla draws the sidebar in (`RenderGuiLayerEvent.Pre`'s id, `BingoClient::hides_layer`).
+pub const SIDEBAR_LAYER: &str = "scoreboard_sidebar";
 
 /// Which of the mod's screens is open. Both are the mod's own screen (`mod_screen_open`), so at most one is up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,6 +220,15 @@ impl BingoClient {
     pub fn set_settings(&mut self, settings: PlayerSettings) {
         self.settings = Some(settings);
         self.settings_sent = false;
+    }
+
+    /// Whether the client leaves one of vanilla's HUD layers out for this player. The sidebar (`scoreboard_sidebar`) is
+    /// left out when the player turned the scoreboard off, as the original's `ScoreboardService.shouldDisplayScoreboard`
+    /// does: the server's sidebar is one for everyone, so only the player's own client can hide it for one player. The
+    /// settings are the last the server sent (`update_settings`), else the stored ones; none means the defaults.
+    pub fn hides_layer(&self, layer: &str) -> bool {
+        let settings = self.state.settings.as_ref().or(self.settings.as_ref());
+        layer == SIDEBAR_LAYER && settings.is_some_and(|settings| !settings.scoreboard)
     }
 
     /// The original mod's files, loaded by the host from the prepared folder (or why that failed).
