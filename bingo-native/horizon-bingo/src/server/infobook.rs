@@ -7,13 +7,29 @@
 //!
 //! The card HUD is known from the client's settings (see `Session::has_card_hud`): the hints name its keybind, and the
 //! settings page lists the auto hide only without it. Each toggle runs `bingo prefs` (`prefs::click_command`). Not ported:
-//! the book's refresh when a setting changes (a given book is never changed in place, and the book is given once, in the
-//! lobby, or by `bingo book`), so the toggles show the values the book was given with.
+//! the book is refreshed when a setting changes (`Session::prefs`): the held copies are cleared and one written for the new
+//! settings is given. Limits: a refresh needs the held count (`ServerHost::command_result`), which the Horizon adapter
+//! cannot read yet, so until then a held book keeps the values it was given with; a refreshed book is written with the
+//! keep tag of the current rule (`lobby_tutorial_book`), not the tag of the book it replaces.
 use super::prefs::{self, Setting};
 use crate::update_settings::PlayerSettings;
 
 /// The item the book is.
 pub const ITEM: &str = "minecraft:written_book";
+/// Any tutorial book a player holds: a written book whose custom data has the book's tag (`custom_data~`, the partial
+/// match, so the book's other tags and its pages do not matter). The original's `NBT_BINGO_INFO_BOOK` lookup.
+const HELD_PREDICATE: &str = "minecraft:written_book[minecraft:custom_data~{bingo_info_book:1b}]";
+
+/// The command that counts the tutorial books a player holds (`clear` with a max count of 0 only counts; vanilla's
+/// result is the number). Read through `ServerHost::command_result`.
+pub fn count_command(player: &str) -> String {
+    format!("clear {player} {HELD_PREDICATE} 0")
+}
+
+/// The command that removes every tutorial book a player holds, so a refreshed book leaves exactly one.
+pub fn clear_command(player: &str) -> String {
+    format!("clear {player} {HELD_PREDICATE}")
+}
 /// The version the book's text names (`v...`): the original mod's version whose English this follows.
 pub const VERSION: &str = "2.15.1";
 /// The book's title (`bingo.full_name`).

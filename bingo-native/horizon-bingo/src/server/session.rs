@@ -1019,8 +1019,8 @@ impl Session {
     /// `bingo prefs <setting> [on|off]`: changes one of the player's settings, the value given or its opposite. As the
     /// original's `BingoPrefsCommand`, the change marks the tutorial as seen, is saved, and goes back to the client
     /// (`update_settings`), which otherwise sends its own settings on the next join. A bossbar turned off is hidden at once.
-    /// The book is not rewritten (a given book is never changed in place, see `infobook`), so its toggles show the new
-    /// values from the next book on. The scoreboard setting does nothing yet: the sidebar is one for everyone (`sidebar`).
+    /// The held tutorial book is refreshed for the new values (`refresh_book`), as the original updates every held book.
+    /// The scoreboard setting does nothing yet: the sidebar is one for everyone (`sidebar`).
     fn prefs(&mut self, host: &mut dyn ServerHost, player: Option<u128>, setting: Setting, value: Option<bool>) -> String {
         let Some(uuid) = player else {
             return "Only a player can change the player settings.".to_string();
@@ -1035,7 +1035,22 @@ impl Session {
             self.hide_boss_bars_of(host, uuid);
         }
         send(host, uuid, wire::update_settings(&settings));
+        self.refresh_book(host, uuid);
         prefs::changed_text(setting, on)
+    }
+
+    /// Replaces the tutorial book a player holds with one written for their settings now. Only when the held count is
+    /// above zero: the clear runs first and the new book is given after it (both queued, so in that order), which leaves
+    /// one book. Without a count the held book is left as it was (see `infobook`'s limits).
+    fn refresh_book(&self, host: &mut dyn ServerHost, uuid: u128) {
+        let Some(player) = host.players().into_iter().find(|p| p.uuid == uuid) else {
+            return;
+        };
+        if !held_books(host, &player.name).is_some_and(|count| count > 0) {
+            return;
+        }
+        host.command(&infobook::clear_command(&player.name));
+        self.give_book(host, &player, self.rules.lobby_tutorial_book);
     }
 
     /// Hides the boss bars shown to one player, and forgets them.
@@ -1092,6 +1107,12 @@ impl Session {
             let waiting = !self.has_card_hud(player.uuid)
                 && self.joined_at.get(&player.uuid).is_some_and(|joined| self.ticks < joined + BOOK_HUD_WAIT_TICKS);
             if waiting {
+                continue;
+            }
+            // A player who already holds the book (from before a restart, when `books_given` was empty) is not given a
+            // second one. Without a count (`held_books` is `None`) the book is given as before.
+            if held_books(host, &player.name).is_some_and(|count| count > 0) {
+                self.books_given.insert(player.uuid);
                 continue;
             }
             if self.give_book(host, player, true) {
@@ -2282,6 +2303,12 @@ impl Session {
 }
 
 /// A card as `card_value` writes it: its squares, each an item and a tier.
+/// How many tutorial books a player holds, from the host's count (`ServerHost::command_result`); `None` when the host
+/// cannot read it.
+fn held_books(host: &mut dyn ServerHost, player: &str) -> Option<i32> {
+    host.command_result(&infobook::count_command(player))
+}
+
 fn card_value(card: &Card) -> Value {
     Value::Array(card.squares.iter().map(|square| json!({ "item": square.item, "tier": square.tier.name() })).collect())
 }

@@ -25,6 +25,13 @@ pub trait ServerHost {
     /// A console command (for example `team add bingo_red`), queued and run at the next server tick. Commands
     /// that fail are only logged by the game. The default does nothing, so a test host need not implement it.
     fn command(&mut self, _line: &str) {}
+    /// Runs a console command now and returns its result (vanilla's count for `clear ... 0`, a success count for others),
+    /// or `None` when the host cannot read it. Unlike `command`, this is not queued. The default is `None`, and the
+    /// Horizon adapter keeps it: the pinned Horizon `Host` has `run_command` (a bool) only, so callers fall back to the
+    /// queued commands alone.
+    fn command_result(&mut self, _line: &str) -> Option<i32> {
+        None
+    }
     /// Shows or updates a boss bar for one player. `progress` is 0.0 to 1.0. `visible` false removes it.
     fn boss_bar(&mut self, _player: u128, _id: &str, _title: &str, _progress: f32, _visible: bool) {}
     /// A title and a subtitle in the middle of one player's screen (`/title`), with the default times. The default does
