@@ -20,7 +20,7 @@ use super::texts::{self, Line};
 use super::multicard::{
     complete_card, finish_card_on_goal, reroll_card, round_ends, settle_pending, stalemate_action, stalemate_reason,
     team_score, CardCompletion, CardState, Completion, CompletionOutcome, EndCause, Rules, StalemateAction,
-    StalemateBehavior, TeamRound, WinCondition,
+    compare_teams, leading_team, StalemateBehavior, TeamRound, WinCondition,
 };
 use super::objectives::{self, Runtime};
 use super::options::{EndWhen, Goal, Mode, Options};
@@ -175,7 +175,29 @@ pub struct Session {
     hud: HashSet<u128>,
     /// The tick each player joined at, for the lobby book's wait for the client's answer (see `give_lobby_books`).
     joined_at: HashMap<u128, u64>,
+    /// Players the night vision controller has given the effect and not taken it back from. Not saved: after a restart a
+    /// player keeps the effect they have until the controller next checks them.
+    night_vision: BTreeSet<u128>,
+    /// The tick each team's score last changed at, for the tie announcement (the original's `scoreUpdatedAt`).
+    score_updated: BTreeMap<String, u64>,
 }
+
+/// A team's score and the round's leader before its progress changes. The change is announced from these and the
+/// score after it (`ScoredItemCheck.updateScores` and `postTickCards`).
+#[derive(Debug, Clone)]
+struct Standing {
+    score: TeamScore,
+    leader: Option<String>,
+}
+
+/// `BingoConfig.nightVisionInSpectator` and `nightVisionInPostgame`, at their defaults: the port has no config file yet.
+const NIGHT_VISION_IN_SPECTATOR: bool = true;
+const NIGHT_VISION_IN_POSTGAME: bool = true;
+/// `BingoOptions.showCompletedLines`, `showCompletedItems` and `showLeadingTeam`, at their defaults (all shown): the
+/// session has no such options yet.
+const SHOW_COMPLETED_LINES: bool = true;
+const SHOW_COMPLETED_ITEMS: bool = true;
+const SHOW_LEADING_TEAM: bool = true;
 
 impl Session {
     /// Replaces the card pool; the adapter installs the pool read from the assets folder (its item tags).
@@ -229,6 +251,8 @@ impl Session {
             books_given: HashSet::new(),
             hud: HashSet::new(),
             joined_at: HashMap::new(),
+            night_vision: BTreeSet::new(),
+            score_updated: BTreeMap::new(),
             options,
         }
     }
@@ -445,6 +469,7 @@ impl Session {
             self.apply_objectives(host, Some(player), &team);
             return;
         }
+        let standing = self.standing(&team);
         let newly_seen = self.record_seen(&team, held);
         let index = self.card_index_of(&team);
         let (items, lost) = {
@@ -479,7 +504,9 @@ impl Session {
         for item in items {
             self.announce_find(host, &format!("{finder} found {}", short_name(&item)));
         }
+        self.announce_lines(host, &team, &standing);
         self.check_goals(host);
+        self.announce_leader(host, &standing);
         self.save_playing(host);
     }
 
@@ -493,6 +520,93 @@ impl Session {
         } else {
             for player in players.iter().filter(|player| wants(player.uuid)) {
                 host.tell(player.uuid, line);
+            }
+        }
+    }
+
+    /// The team's score and the round's leader, read before its progress changes.
+    fn standing(&self, team: &str) -> Standing {
+        Standing { score: self.score(team), leader: self.leader() }
+    }
+
+    /// The leading team of the round (`ScoreService.getLeading`), or `None` when the top is tied.
+    fn leader(&self) -> Option<String> {
+        let rounds = self.rounds_view();
+        leading_team(&rounds, self.rules.goal, false).map(|index| rounds[index].key.clone())
+    }
+
+    /// Whether a player gets the line messages of a team: `scoreMessages` is on, and either the player is on that team, a
+    /// spectator or on no team, or every team's lines are shown (`GameMessageService.isEnabled`).
+    fn wants_line_message(&self, player: u128, team: &str) -> bool {
+        let on_team_or_spectator = self.teams.team_of(player).map_or(true, |own| own == team);
+        let wants = self.settings.get(&player).map_or(true, |settings| settings.score_messages);
+        wants && (SHOW_COMPLETED_LINES || on_team_or_spectator)
+    }
+
+    /// After a team's progress changed, before the goals are checked: the team's score is stamped as changed now if it
+    /// differs, and a team that scored lines (on a lines goal) is announced to the players who want it, with its total
+    /// lines (`ScoredItemCheck.updateScores`, `sendLineCaptured`).
+    fn announce_lines(&mut self, host: &mut dyn ServerHost, team: &str, before: &Standing) {
+        let after = self.score(team);
+        if after != before.score {
+            self.score_updated.insert(team.to_string(), self.ticks);
+        }
+        if !matches!(self.rules.goal, Goal::Lines(_)) || after.lines <= before.score.lines {
+            return;
+        }
+        let lines = texts::count_text(after.lines as u32, "line", "lines");
+        let line = texts::scored_line(team_name(team), &lines);
+        for player in host.players() {
+            if self.wants_line_message(player.uuid, team) {
+                host.tell_line(player.uuid, &line);
+            }
+        }
+    }
+
+    /// The team a tie is announced for: the leader when ties are allowed (`getLeading(allowTies = true)`), then among the
+    /// teams that tie with it the one whose score changed last (`maxByOrNull`, so the first of equals).
+    fn tied_team(&self, rounds: &[TeamRound]) -> Option<String> {
+        let goal = self.rules.goal;
+        let top = leading_team(rounds, goal, true)?;
+        let updated = |index: usize| self.score_updated.get(&rounds[index].key).copied().unwrap_or(0);
+        let mut best: Option<usize> = None;
+        for (index, round) in rounds.iter().enumerate() {
+            if compare_teams(goal, round, &rounds[top]) != std::cmp::Ordering::Equal {
+                continue;
+            }
+            match best {
+                Some(current) if updated(index) <= updated(current) => {}
+                _ => best = Some(index),
+            }
+        }
+        best.map(|index| rounds[index].key.clone())
+    }
+
+    /// After the goals are checked: when the leading team changed while the game still runs, the new leader (or the tie)
+    /// is announced to the players who keep `leadingMessages` on. Nothing with a single team, and nothing when the change
+    /// ended the game, as `postTickCards` returns before the leader is checked (`sendTeamLeading`, `sendTeamTied`).
+    fn announce_leader(&self, host: &mut dyn ServerHost, before: &Standing) {
+        if self.game.status() != GameStatus::Playing || !SHOW_LEADING_TEAM || self.teams.teams().len() < 2 {
+            return;
+        }
+        let leader = self.leader();
+        if leader == before.leader {
+            return;
+        }
+        let rounds = self.rounds_view();
+        let (team, tied) = match leader {
+            Some(team) => (team, false),
+            None => match self.tied_team(&rounds) {
+                Some(team) => (team, true),
+                None => return,
+            },
+        };
+        let score = texts::leading_score(self.score(&team), matches!(self.rules.goal, Goal::Lines(_)));
+        let line = texts::leading_team(team_name(&team), &score, tied, SHOW_COMPLETED_ITEMS);
+        for player in host.players() {
+            let wants = self.settings.get(&player.uuid).map_or(true, |settings| settings.leading_messages);
+            if wants {
+                host.tell_line(player.uuid, &line);
             }
         }
     }
@@ -827,6 +941,12 @@ impl Session {
     /// One server tick. Before play, the ready timer runs and starts the game when it ends. Otherwise the game moves
     /// on, and its events go to everyone.
     pub fn tick(&mut self, host: &mut dyn ServerHost) {
+        self.tick_game(host);
+        self.tick_night_vision(host);
+    }
+
+    /// The game's part of a tick: the lobby, the game's own tick and its events.
+    fn tick_game(&mut self, host: &mut dyn ServerHost) {
         self.ensure_loaded(host);
         self.ticks += 1;
         if self.game.status() != GameStatus::Pregame {
@@ -858,6 +978,37 @@ impl Session {
             self.send_boss_bars(host);
         }
         self.tick_maps(host);
+    }
+
+    /// The night vision effect (`NightVisionController`), checked on every tick for each online player. A player who should
+    /// have it and has not gets an infinite one; a player who has it and should not loses it. Who should: the player's
+    /// setting is on, and then a team player while the round starts or plays with the option on, a spectator or a player
+    /// on no team while it starts or plays, and everyone after the game.
+    fn tick_night_vision(&mut self, host: &mut dyn ServerHost) {
+        let status = self.game.status();
+        for player in host.players() {
+            let setting = self.settings.get(&player.uuid).map_or(true, |settings| settings.night_vision);
+            let should = setting
+                && match status {
+                    GameStatus::Starting | GameStatus::Playing => {
+                        if self.teams.team_of(player.uuid).is_some() {
+                            self.rules.night_vision
+                        } else {
+                            NIGHT_VISION_IN_SPECTATOR
+                        }
+                    }
+                    GameStatus::Postgame => NIGHT_VISION_IN_POSTGAME,
+                    GameStatus::Pregame => false,
+                };
+            let has = self.night_vision.contains(&player.uuid);
+            if should && !has {
+                host.command(&format!("effect give {} night_vision infinite 0 true", player.name));
+                self.night_vision.insert(player.uuid);
+            } else if !should && has {
+                host.command(&format!("effect clear {} night_vision", player.name));
+                self.night_vision.remove(&player.uuid);
+            }
+        }
     }
 
     /// The players' map items for this tick (`map_items`): each player without the client's HUD holds the item their
@@ -1368,9 +1519,6 @@ impl Session {
                 for command in self.rules.kit.give_commands(&player.name) {
                     host.command(&command);
                 }
-                if self.rules.night_vision {
-                    host.command(&format!("effect give {} night_vision infinite 0 true", player.name));
-                }
             } else {
                 host.command(&format!("gamemode spectator {}", player.name));
             }
@@ -1692,6 +1840,7 @@ impl Session {
         if members.is_empty() || online.iter().any(|uuid| members.contains(uuid) && !self.reported.contains(uuid)) {
             return;
         }
+        let standing = self.standing(team);
         let before: Vec<usize> = self.progress.get(team).map(|progress| progress.found.clone()).unwrap_or_default();
         let mut found = before.clone();
         let inventory_mode = self.rules.mode == Mode::Inventory;
@@ -1727,7 +1876,9 @@ impl Session {
         }
         self.send_tiles_after_find(host, team);
         self.send_score_to_all(host, team);
+        self.announce_lines(host, team, &standing);
         self.check_goals(host);
+        self.announce_leader(host, &standing);
         self.save_playing(host);
     }
 

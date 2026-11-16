@@ -338,7 +338,7 @@ fn goal_key(goal: Goal, items: i32, lines: i32) -> (i32, i32) {
 
 /// `ScoreService.comparator` (`compareByItems`): finished teams first, the earliest finisher first; then more cards,
 /// more lines, more items. The score comes from `team_score`.
-fn compare_teams(goal: Goal, a: &TeamRound, b: &TeamRound) -> Ordering {
+pub(super) fn compare_teams(goal: Goal, a: &TeamRound, b: &TeamRound) -> Ordering {
     let finished_at = |t: &TeamRound| match t.state {
         CardState::Finished { completed_at } => completed_at,
         _ => u64::MAX,
