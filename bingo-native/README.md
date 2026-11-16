@@ -162,6 +162,39 @@ Sound names: `item_scored`, `item_lost`, `opponent_scored`, `game_won`, `game_lo
 The HUD toggle key keeps its own value as a file named `enable_hud` in the mod's data folder, separate from
 `enableHud`. How the two interact was not checked.
 
+## The title screen's BINGO! button (feature `world-request`)
+
+The original mod adds a "BINGO!" button to the main menu, which opens the bingo lobby world. This package has it
+behind the Cargo feature `world-request` (off by default). The feature needs a Horizon that has
+`host.request_world(folder)`, which is **Horizon PR horizon-rust/horizon#17246** (API 646, branch
+`native-request-world`, fork ZiQu-dev/horizon). The released Horizon does not have it, so the default build has no
+button and the released bundle is unchanged.
+
+- The button sits on the title's main page, right of its Singleplayer button, and says "BINGO!" (translated when the
+  original's language files have the key `bingo.title.button`). A press asks Horizon to open `saves/bingo`.
+- The lobby world's folder is `LOBBY_FOLDER` in `horizon-bingo/src/title_button.rs` ("bingo"). Create a world with
+  that folder name first: a missing one shows a red hint under the button for a few seconds.
+- The answers are mapped in `api/src/title_button.rs`; the hint wording is in `horizon-bingo/src/title_button.rs`.
+  `NotTitle` and `Busy` show nothing. `NotPermitted` means the manifest lacks `"world_control": true`.
+- Pure logic (the hints, the folder rule, the button's place, the hit test) is in `dev/tests/title_button.rs`.
+
+Build it: the manifest is the one thing the feature changes. `world_control` is declared in `horizon-native.json`, the
+manifest of an unpacked `.hnmod`, not in `horizon-mixin.toml`, so the feature build is laid out with the tool:
+
+```sh
+python3 -I tools/pack_hnmod.py --horizon <commit with request_world> --out <folder> --world-request
+horizon-launcher native-build <folder> --instance <instance> --trust-native-code
+```
+
+`tools/pack_hnmod.py` writes `horizon-native.json` (`"hooks": 646` and `"world_control": true`) and a copy of this
+folder under `mixins/bingo_native/` whose `horizon_revision` is the commit, with `world-request` on by default in the
+copy's `api/Cargo.toml` (the launcher passes no features of the mod's own). The repository files stay as they are.
+Use `--without-hooks` only for a Horizon commit that is not on GitHub: the launcher checks `"hooks"` there, and a
+local test build cannot pass that check. The Horizon used must contain the helper: a launcher build against a
+Horizon without it fails to compile the `world-request` code.
+
+The live check of this route is in `phase4/live-title-button/REPORT.md` of the development notes, not in the repository.
+
 ## Troubleshooting
 
 - **A line `assets: <reason>` in the top-left corner.** The assets did not load. The reason names the file: no
@@ -225,6 +258,7 @@ run from the bundle). Do not run `cargo` inside the bundle: it writes a `Cargo.l
 ## Layout
 
 - `horizon-mixin.toml`: the bundle: id, version, pinned Horizon commit, and the trait-mod package (`api/`).
+- `tools/pack_hnmod.py` (repository root): lays out the unpacked `.hnmod` with its manifest, for the feature build.
 - `api/src/lib.rs`: the wiring to Horizon's hooks, environment variables, asset and language loading.
 - `horizon-bingo/src/`: the client logic, wire codecs, drawing and screens. Nothing here imports Horizon; the
   host adapter is `api/src/lib.rs`.

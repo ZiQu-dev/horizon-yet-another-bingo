@@ -264,6 +264,11 @@ impl BingoClient {
         self.ticks
     }
 
+    /// A translation of the original mod's language files, when they are loaded (the title screen's button uses it).
+    pub fn translate(&self, key: &str) -> Option<String> {
+        self.assets.as_ref().and_then(|a| a.translate(key))
+    }
+
     /// Call once a client tick. Registers the channels as soon as the player has joined, then plays queued sounds.
     pub fn on_tick(&mut self, host: &mut dyn Host) {
         self.ticks += 1;

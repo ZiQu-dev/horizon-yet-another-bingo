@@ -11,3 +11,8 @@ horizon-bingo = { path = "../horizon-bingo" }
 # The always-on warning about missing item names goes to Horizon's log (`horizon_client::logging::write_as`), which takes a
 # `log::Level`. The crate is in Horizon's Cargo.lock already.
 log = "0.4"
+
+[features]
+# The title screen's BINGO! button, which opens the lobby world through `host.request_world` (Horizon API 646, PR
+# horizon-rust/horizon#17246). Off by default: the released bundle has no button and needs no such Horizon. See README.md.
+world-request = []

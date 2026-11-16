@@ -24,6 +24,8 @@ use std::{
 };
 
 mod server;
+#[cfg(feature = "world-request")]
+mod title_button;
 
 /// How many text widths are kept before the cache starts again.
 const WIDTH_CACHE_MAX: usize = 2048;
@@ -607,6 +609,8 @@ fn width_fn(host: &dyn Host) -> impl Fn(&str) -> i32 + '_ {
 
 impl Hooks for Mod {
     fn client_tick_post(&self, host: &mut dyn Host, _: &mut ClientTickPostEvent) {
+        #[cfg(feature = "world-request")]
+        guarded("title button", || title_button::tick(host));
         guarded("client tick", || {
             let mut client = self.lock_client();
             if !self.key_bound.swap(true, std::sync::atomic::Ordering::Relaxed) {
@@ -654,6 +658,8 @@ impl Hooks for Mod {
     }
 
     fn screen_render_post(&self, host: &dyn Host, event: &mut ScreenRenderPostEvent<'_>) {
+        #[cfg(feature = "world-request")]
+        guarded("title button draw", || title_button::render(self, host, event));
         if mod_screen_up(host) {
             // The original's screens sit over vanilla's blurred menu background.
             host.apply_screen_blur();
@@ -664,6 +670,10 @@ impl Hooks for Mod {
     }
 
     fn screen_mouse_button_pressed_pre(&self, host: &dyn Host, event: &mut ScreenMouseButtonPressedPreEvent<'_>) -> Flow {
+        #[cfg(feature = "world-request")]
+        if let Some(flow) = title_button::press(event) {
+            return flow;
+        }
         if !mod_screen_up(host) {
             return Flow::Continue;
         }
