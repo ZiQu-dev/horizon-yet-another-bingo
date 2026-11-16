@@ -6,8 +6,10 @@
 //! The English is the original's `en_us` text, under the original's keys, so a client's translation applies.
 //!
 //! The card HUD is known from the client's settings (see `Session::has_card_hud`): the hints name its keybind, and the
-//! settings page lists the auto hide only without it. Not ported: the book's refresh when a setting changes or the
-//! client's answer comes in (a book is written when it is given, and a given book is never changed in place).
+//! settings page lists the auto hide only without it. Each toggle runs `bingo prefs` (`prefs::click_command`). Not ported:
+//! the book's refresh when a setting changes (a given book is never changed in place, and the book is given once, in the
+//! lobby, or by `bingo book`), so the toggles show the values the book was given with.
+use super::prefs::{self, Setting};
 use crate::update_settings::PlayerSettings;
 
 /// The item the book is.
@@ -65,6 +67,7 @@ struct Style {
     bold: bool,
     underlined: bool,
     url: Option<&'static str>,
+    run: Option<String>,
     hover: Option<Box<Part>>,
 }
 
@@ -107,6 +110,12 @@ impl Part {
     /// Opens `url` when clicked.
     pub fn open_url(mut self, url: &'static str) -> Part {
         self.style.url = Some(url);
+        self
+    }
+
+    /// Runs `command` (a slash command) when clicked.
+    pub fn run_command(mut self, command: String) -> Part {
+        self.style.run = Some(command);
         self
     }
 
@@ -161,6 +170,9 @@ impl Part {
         }
         if let Some(url) = self.style.url {
             fields.push(format!("click_event:{{action:\"open_url\",url:{}}}", snbt_string(url)));
+        }
+        if let Some(command) = &self.style.run {
+            fields.push(format!("click_event:{{action:\"run_command\",command:{}}}", snbt_string(command)));
         }
         if let Some(hover) = &self.style.hover {
             fields.push(format!("hover_event:{{action:\"show_text\",value:{}}}", hover.snbt()));
@@ -274,13 +286,14 @@ fn settings_page(settings: &PlayerSettings, hud: bool) -> Part {
     let mut parts = vec![
         Part::translate("bingo.player_settings", "Player Settings", vec![]).bold(),
         Part::text("\n\n"),
-        toggle(settings.bossbar, "bingo.player_settings.bossbar", "Bossbar", "bingo.player_settings.bossbar.description", "Shows the time remaining in a bossbar."),
+        toggle(Setting::Bossbar, settings.bossbar, "bingo.player_settings.bossbar", "Bossbar", "bingo.player_settings.bossbar.description", "Shows the time remaining in a bossbar."),
         Part::text("\n\n"),
-        toggle(settings.scoreboard, "bingo.player_settings.scoreboard", "Scoreboard", "bingo.player_settings.scoreboard.description", "Shows game info and time remaining in a scoreboard."),
+        toggle(Setting::Scoreboard, settings.scoreboard, "bingo.player_settings.scoreboard", "Scoreboard", "bingo.player_settings.scoreboard.description", "Shows game info and time remaining in a scoreboard."),
     ];
     if !hud {
         parts.push(Part::text("\n"));
         parts.push(toggle(
+            Setting::ScoreboardAutoHide,
             settings.scoreboard_auto_hide,
             "bingo.player_settings.scoreboard_auto_hide",
             "Scoreboard Auto Hide",
@@ -292,19 +305,20 @@ fn settings_page(settings: &PlayerSettings, hud: bool) -> Part {
         Part::text("\n\n"),
         Part::translate("bingo.player_settings.messages", "Floating Messages", vec![]),
         Part::text(":\n"),
-        toggle(settings.leading_messages, "bingo.player_settings.messages.leading", "Leading Team", "bingo.player_settings.messages.leading.description", "Shows a message when the leading team is changed."),
+        toggle(Setting::LeadingMessages, settings.leading_messages, "bingo.player_settings.messages.leading", "Leading Team", "bingo.player_settings.messages.leading.description", "Shows a message when the leading team is changed."),
         Part::text("\n"),
-        toggle(settings.score_messages, "bingo.player_settings.messages.lines", "Line Scored", "bingo.player_settings.messages.lines.description", "Shows a message when a line is scored."),
+        toggle(Setting::ScoreMessages, settings.score_messages, "bingo.player_settings.messages.lines", "Line Scored", "bingo.player_settings.messages.lines.description", "Shows a message when a line is scored."),
         Part::text("\n"),
-        toggle(settings.item_messages, "bingo.player_settings.messages.items", "Item Scored", "bingo.player_settings.messages.items.description", "Shows a message when any item is scored."),
+        toggle(Setting::ItemMessages, settings.item_messages, "bingo.player_settings.messages.items", "Item Scored", "bingo.player_settings.messages.items.description", "Shows a message when any item is scored."),
         Part::text("\n\n"),
-        toggle(settings.night_vision, "bingo.player_settings.night_vision", "Night Vision", "bingo.player_settings.night_vision.description", "Receive night vision when the feature is enabled, spectating, or post-game."),
+        toggle(Setting::NightVision, settings.night_vision, "bingo.player_settings.night_vision", "Night Vision", "bingo.player_settings.night_vision.description", "Receive night vision when the feature is enabled, spectating, or post-game."),
     ]);
     Part::group(parts)
 }
 
 /// One setting's line: its mark (green when on, red when off), its name and an information mark with the description.
 fn toggle(
+    setting: Setting,
     on: bool,
     name_key: &'static str,
     name: &'static str,
@@ -320,6 +334,8 @@ fn toggle(
             .color("gray")
             .hover(Part::translate(description_key, description, vec![])),
     ])
+    // A click on the line sets the setting to its opposite (`BingoPrefsCommand.getCommand`).
+    .run_command(prefs::click_command(setting, !on))
 }
 
 /// Replaces each `%s` of `template` with the next argument (left as `%s` when there is none). `%%` is a percent sign.

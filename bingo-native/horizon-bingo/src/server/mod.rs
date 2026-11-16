@@ -28,3 +28,4 @@ pub mod sidebar;
 pub mod kit;
 pub mod texts;
 pub mod infobook;
+pub mod prefs;

@@ -23,6 +23,7 @@ use crate::server::types::{Card, Player, CARD_SQUARES};
 use crate::text::Text;
 use crate::timer::{CountdownPacket, TimerPacket};
 use crate::update_card_tiles::CardTilesPacket;
+use crate::update_settings::PlayerSettings;
 
 /// `game_status`: the in-game and the remaining time, each `None` when absent. Milliseconds, as the mod sends them.
 pub fn game_status(ingame_ms: Option<i64>, remaining_ms: Option<i64>) -> (&'static str, Vec<u8>) {
@@ -31,6 +32,11 @@ pub fn game_status(ingame_ms: Option<i64>, remaining_ms: Option<i64>) -> (&'stat
         remaining_duration: remaining_ms.map(JavaDuration::of_millis),
     };
     ("game_status", encode(|w| packet.write(w)))
+}
+
+/// `update_settings`: a player's settings, sent back to their client when a `bingo prefs` command changes them.
+pub fn update_settings(settings: &PlayerSettings) -> (&'static str, Vec<u8>) {
+    ("update_settings", encode(|w| settings.write(w)))
 }
 
 /// `timer`: seconds remaining until the game ends.

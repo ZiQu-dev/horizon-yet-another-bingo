@@ -6,6 +6,7 @@ use super::hidden_consume::CardMode;
 use super::kit::{self, KitCommand};
 use super::multicard::{StalemateBehavior, WinCondition};
 use super::options::{EndWhen, Goal, Mode, Toggle};
+use super::prefs::Setting;
 use super::teams::PRESETS as TEAM_PRESETS;
 
 /// One parsed command.
@@ -62,6 +63,8 @@ pub enum Command {
     Kit(KitCommand),
     /// `book`: the tutorial book, for a player (only when `lobby_tutorial_book` is off, as the original).
     Book,
+    /// `prefs <setting> [on|off]`: a player's own setting, the value given or its opposite (`None`).
+    Prefs { setting: Setting, value: Option<bool> },
 }
 
 /// The answer to the end-of-round vote: play another round, keep playing, or return to the lobby.
@@ -72,7 +75,7 @@ pub enum VoteChoice {
     ReturnToLobby,
 }
 
-const USAGE: &str = "start [ignore_warnings] | end | reset | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout|hidden_items on|off|consume_items on|off | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | playto cards <n>|infinite|replace_goals | stalemate end_game|reroll_card|do_nothing | options | vote next|keep|lobby | resume | stats [player] | difficulty easy|medium|hard|extreme|impossible | difficulty <S> <A> <B> <C> <D> | reroll | teams <n> | autoshuffle on|off | objectives on|off | menu | kit | kit add <item> [count] | kit remove <item> | kit clear | book";
+const USAGE: &str = "start [ignore_warnings] | end | reset | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout|hidden_items on|off|consume_items on|off | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | playto cards <n>|infinite|replace_goals | stalemate end_game|reroll_card|do_nothing | options | vote next|keep|lobby | resume | stats [player] | difficulty easy|medium|hard|extreme|impossible | difficulty <S> <A> <B> <C> <D> | reroll | teams <n> | autoshuffle on|off | objectives on|off | menu | kit | kit add <item> [count] | kit remove <item> | kit clear | book | prefs <setting> [on|off]";
 
 const SPAWN_DISTANCE_MAX: u32 = 1000;
 
@@ -114,6 +117,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
         },
         "menu" => no_args(name, &args, Command::Menu),
         "book" => no_args(name, &args, Command::Book),
+        "prefs" => parse_prefs(&args),
         "options" => no_args(name, &args, Command::Options),
         "resume" => no_args(name, &args, Command::Resume),
         "start" => match args.as_slice() {
@@ -238,7 +242,8 @@ pub fn requires_op(command: &Command) -> bool {
         | Command::Vote(_)
         | Command::Stats
         | Command::Menu
-        | Command::Book => false,
+        | Command::Book
+        | Command::Prefs { .. } => false,
     }
 }
 
@@ -248,6 +253,29 @@ fn no_args(name: &str, args: &[&str], command: Command) -> Result<Command, Strin
     } else {
         Err(format!("'{name}' takes no arguments."))
     }
+}
+
+fn parse_prefs(args: &[&str]) -> Result<Command, String> {
+    const PREFS_USAGE: &str = "Usage: prefs <setting> [on|off]";
+    let (word, value) = match args {
+        [] => return Err(PREFS_USAGE.to_string()),
+        [word] => (*word, None),
+        [word, value] => (*word, Some(*value)),
+        _ => return Err(format!("Too many arguments for 'prefs'. {PREFS_USAGE}")),
+    };
+    let Some(setting) = Setting::from_word(word) else {
+        return Err(format!("Unknown setting '{word}'. {PREFS_USAGE}"));
+    };
+    let value = match value {
+        None if setting.needs_value() => return Err(format!("Usage: prefs {} on|off", setting.word())),
+        None => None,
+        Some(value) => match value.to_lowercase().as_str() {
+            "on" | "true" => Some(true),
+            "off" | "false" => Some(false),
+            _ => return Err(format!("prefs {} needs on or off, got '{value}'", setting.word())),
+        },
+    };
+    Ok(Command::Prefs { setting, value })
 }
 
 fn parse_goal(args: &[&str]) -> Result<Command, String> {

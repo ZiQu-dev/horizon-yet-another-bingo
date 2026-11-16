@@ -33,7 +33,7 @@ const OP_LEVEL: u8 = 2;
 const SHORTCUTS: [&str; 3] = ["join", "ready", "spectator"];
 /// The usages the mod registers, each with a line that parses to what it runs. The operator level comes from
 /// `commands::requires_op`, so the rule lives in one place.
-const USAGES: [(&str, &str); 51] = [
+const USAGES: [(&str, &str); 53] = [
     ("bingo status", "status"),
     ("bingo book", "book"),
     ("bingo help", "help"),
@@ -82,6 +82,8 @@ const USAGES: [(&str, &str); 51] = [
     ("bingo kit add <item:word> <count:integer>", "kit add diamond 2"),
     ("bingo kit remove <item:word>", "kit remove diamond"),
     ("bingo kit clear", "kit clear"),
+    ("bingo prefs <setting:word>", "prefs bossbar"),
+    ("bingo prefs <setting:word> <value:word>", "prefs bossbar on"),
     ("join <team:word>", "join Red"),
     ("ready", "ready"),
     ("spectator", "spectator"),
@@ -569,7 +571,8 @@ pub fn perform_console_command(host: &mut dyn Host, command: &str) -> Flow {
     let reply = guarded("bingo console command", || {
         with_session(|s| s.command(&mut ServerAdapter { host: &mut *host }, None, &line))
     });
-    if let Some(reply) = reply {
+    // An empty reply says nothing (a setting turned off that has no message, `prefs::changed_text`).
+    if let Some(reply) = reply.filter(|reply| !reply.is_empty()) {
         host.feedback(Text::literal(reply));
     }
     if let Some(note) = names_note(&*host, &line) {
@@ -602,7 +605,8 @@ pub fn perform_command(host: &mut dyn Host, uuid: u128, command: &str) -> Flow {
     let reply = guarded("bingo command", || {
         with_session(|s| s.command(&mut ServerAdapter { host: &mut *host }, Some(uuid), &line))
     });
-    if let Some(reply) = reply {
+    // An empty reply says nothing (a setting turned off that has no message, `prefs::changed_text`).
+    if let Some(reply) = reply.filter(|reply| !reply.is_empty()) {
         let _ = host.tell(uuid, Text::literal(reply));
     }
     if let Some(note) = names_note(&*host, &line) {

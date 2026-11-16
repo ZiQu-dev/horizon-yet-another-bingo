@@ -24,6 +24,7 @@ use super::multicard::{
 };
 use super::objectives::{self, Runtime};
 use super::options::{EndWhen, Goal, Mode, Options};
+use super::prefs::{self, Setting};
 use super::ready::{encode_update_v2, ReadyOptions, ReadyTimer};
 use super::stats::{self, Captures};
 use super::store::{self, HistoryEntry, HistoryPlayer, HistoryTeam};
@@ -1011,6 +1012,39 @@ impl Session {
             Command::Menu => "The menu opens in a player's game chat: type bingo menu in game.".to_string(),
             Command::Kit(command) => self.kit_command(host, command),
             Command::Book => self.book_command(host, player),
+            Command::Prefs { setting, value } => self.prefs(host, player, setting, value),
+        }
+    }
+
+    /// `bingo prefs <setting> [on|off]`: changes one of the player's settings, the value given or its opposite. As the
+    /// original's `BingoPrefsCommand`, the change marks the tutorial as seen, is saved, and goes back to the client
+    /// (`update_settings`), which otherwise sends its own settings on the next join. A bossbar turned off is hidden at once.
+    /// The book is not rewritten (a given book is never changed in place, see `infobook`), so its toggles show the new
+    /// values from the next book on. The scoreboard setting does nothing yet: the sidebar is one for everyone (`sidebar`).
+    fn prefs(&mut self, host: &mut dyn ServerHost, player: Option<u128>, setting: Setting, value: Option<bool>) -> String {
+        let Some(uuid) = player else {
+            return "Only a player can change the player settings.".to_string();
+        };
+        let mut settings = self.settings.get(&uuid).cloned().unwrap_or_default();
+        let on = value.unwrap_or(!setting.get(&settings));
+        setting.set(&mut settings, on);
+        settings.seen_tutorial = true;
+        self.settings.insert(uuid, settings.clone());
+        host.write_file(SETTINGS_FILE, &store::settings_to_json(&self.settings));
+        if setting == Setting::Bossbar && !on {
+            self.hide_boss_bars_of(host, uuid);
+        }
+        send(host, uuid, wire::update_settings(&settings));
+        prefs::changed_text(setting, on)
+    }
+
+    /// Hides the boss bars shown to one player, and forgets them.
+    fn hide_boss_bars_of(&mut self, host: &mut dyn ServerHost, player: u128) {
+        let (hidden, kept): (BTreeSet<(u128, String)>, BTreeSet<(u128, String)>) =
+            std::mem::take(&mut self.boss_bars).into_iter().partition(|(member, _)| *member == player);
+        self.boss_bars = kept;
+        for (member, id) in hidden {
+            host.boss_bar(member, &id, "", 0.0, false);
         }
     }
 
