@@ -3,6 +3,7 @@
 //! player reads, not against the code that builds them.
 use std::collections::{HashMap, HashSet};
 
+use horizon_bingo::buf::encode;
 use horizon_bingo::server::commands::{parse, requires_op, Command};
 use horizon_bingo::server::host::ServerHost;
 use horizon_bingo::server::infobook::{self, Part, PageView};
@@ -117,7 +118,7 @@ fn well_formed(text: &str) -> bool {
 #[test]
 fn a_new_player_reads_the_welcome_page_first_then_the_settings_and_the_hints() {
     let settings = PlayerSettings::default();
-    let pages = plain_pages(PageView { settings: &settings, operator: false });
+    let pages = plain_pages(PageView { settings: &settings, operator: false, hud: false });
     assert_eq!(pages.len(), 3);
     assert_eq!(
         pages[0],
@@ -135,7 +136,7 @@ fn a_new_player_reads_the_welcome_page_first_then_the_settings_and_the_hints() {
 #[test]
 fn a_player_who_has_seen_the_tutorial_reads_the_settings_page_first() {
     let settings = PlayerSettings { seen_tutorial: true, ..PlayerSettings::default() };
-    let pages = plain_pages(PageView { settings: &settings, operator: false });
+    let pages = plain_pages(PageView { settings: &settings, operator: false, hud: false });
     assert!(pages[0].starts_with("Player Settings\n\n"));
     assert!(pages[1].starts_with("Welcome to Yet Another Bingo!"));
     assert!(pages[2].starts_with("Hints\n\n"));
@@ -144,7 +145,7 @@ fn a_player_who_has_seen_the_tutorial_reads_the_settings_page_first() {
 #[test]
 fn an_operator_is_told_to_use_the_menu_instead_of_the_settings_line() {
     let settings = PlayerSettings::default();
-    let pages = plain_pages(PageView { settings: &settings, operator: true });
+    let pages = plain_pages(PageView { settings: &settings, operator: true, hud: false });
     assert_eq!(
         pages[0],
         "Welcome to Yet Another Bingo!\nv2.15.1\n\nUse the menu in front of you to configure the game.\n\n\
@@ -156,7 +157,7 @@ fn an_operator_is_told_to_use_the_menu_instead_of_the_settings_line() {
 fn the_settings_page_marks_each_setting_on_or_off_with_its_english_name() {
     // Night vision, the scoreboard and the message kinds are on by default; the bossbar and the auto hide are off.
     let settings = PlayerSettings::default();
-    let pages = plain_pages(PageView { settings: &settings, operator: false });
+    let pages = plain_pages(PageView { settings: &settings, operator: false, hud: false });
     let expected = format!(
         "Player Settings\n\n{CHECK_OFF} Bossbar {INFO}\n\n{CHECK_ON} Scoreboard {INFO}\n{CHECK_OFF} Scoreboard Auto Hide {INFO}\n\n\
          Floating Messages:\n{CHECK_ON} Leading Team {INFO}\n{CHECK_ON} Line Scored {INFO}\n{CHECK_ON} Item Scored {INFO}\n\n\
@@ -168,10 +169,10 @@ fn the_settings_page_marks_each_setting_on_or_off_with_its_english_name() {
 #[test]
 fn a_switched_off_setting_shows_the_off_mark_and_its_description_on_hover() {
     let settings = PlayerSettings { bossbar: true, night_vision: false, ..PlayerSettings::default() };
-    let pages = plain_pages(PageView { settings: &settings, operator: false });
+    let pages = plain_pages(PageView { settings: &settings, operator: false, hud: false });
     assert!(pages[1].contains(&format!("{CHECK_ON} Bossbar {INFO}")));
     assert!(pages[1].contains(&format!("{CHECK_OFF} Night Vision {INFO}")));
-    let snbt = infobook::components("Alice", &infobook::pages(&PageView { settings: &settings, operator: false }), false);
+    let snbt = infobook::components("Alice", &infobook::pages(&PageView { settings: &settings, operator: false, hud: false }), false);
     // The description of the night vision setting is a hover text of its information mark.
     assert!(snbt.contains("\"Receive night vision when the feature is enabled, spectating, or post-game.\""));
 }
@@ -181,7 +182,7 @@ fn a_switched_off_setting_shows_the_off_mark_and_its_description_on_hover() {
 #[test]
 fn the_book_is_titled_and_signed_by_the_player_with_the_bingo_tags() {
     let settings = PlayerSettings::default();
-    let pages = infobook::pages(&PageView { settings: &settings, operator: false });
+    let pages = infobook::pages(&PageView { settings: &settings, operator: false, hud: false });
     let components = infobook::components("Alice", &pages, true);
     assert!(components.starts_with(
         "minecraft:written_book_content={title:\"Yet Another Bingo\",author:\"Alice\",pages:["
@@ -196,7 +197,7 @@ fn the_book_is_titled_and_signed_by_the_player_with_the_bingo_tags() {
 #[test]
 fn the_book_given_by_bingo_book_has_no_keep_tag() {
     let settings = PlayerSettings::default();
-    let pages = infobook::pages(&PageView { settings: &settings, operator: false });
+    let pages = infobook::pages(&PageView { settings: &settings, operator: false, hud: false });
     let components = infobook::components("Bob", &pages, false);
     assert!(components.ends_with("minecraft:custom_data={bingo_info_book:1b,bingo_ignore:1b,bingo_vanish:1b}"));
 }
@@ -204,7 +205,7 @@ fn the_book_given_by_bingo_book_has_no_keep_tag() {
 #[test]
 fn the_pages_are_text_components_with_the_wiki_links_and_a_bold_title() {
     let settings = PlayerSettings::default();
-    let pages = infobook::pages(&PageView { settings: &settings, operator: false });
+    let pages = infobook::pages(&PageView { settings: &settings, operator: false, hud: false });
     let welcome = pages[0].snbt();
     assert!(welcome.contains("translate:\"bingo.intro.welcome\""));
     assert!(welcome.contains("bold:1b"));
@@ -220,7 +221,7 @@ fn the_pages_are_text_components_with_the_wiki_links_and_a_bold_title() {
 #[test]
 fn a_quote_in_a_name_is_escaped_in_the_book() {
     let settings = PlayerSettings::default();
-    let pages = infobook::pages(&PageView { settings: &settings, operator: false });
+    let pages = infobook::pages(&PageView { settings: &settings, operator: false, hud: false });
     let components = infobook::components("Al\"ice", &pages, false);
     assert!(components.contains("author:\"Al\\\"ice\""));
     assert!(well_formed(&components));
@@ -325,4 +326,77 @@ fn bingo_book_needs_a_player_and_the_console_gets_no_book() {
     let mut session = session();
     assert_eq!(session.command(&mut host, None, "book"), "Only a player can get the book.");
     assert!(host.gives.is_empty());
+}
+
+// The card HUD: the hints name its keybind, and the auto hide setting is listed only without it.
+
+#[test]
+fn a_player_with_the_card_hud_is_told_the_open_card_key_and_no_auto_hide() {
+    let settings = PlayerSettings::default();
+    let pages = plain_pages(PageView { settings: &settings, operator: false, hud: true });
+    assert_eq!(
+        pages[2],
+        "Hints\n\nPress [bingo.keybind.open_card] to see the Bingo Card in an inventory view.\n\n\
+         Use \"/coords\" to keep track of coordinates and share them with your team."
+    );
+    assert!(!pages[1].contains("Scoreboard Auto Hide"), "the scoreboard never auto hides with the HUD");
+    assert!(pages[1].contains(&format!("{CHECK_OFF} Bossbar {INFO}")), "the other toggles stay");
+}
+
+// The session knows whether a player's client runs the HUD: its settings packet, sent this session.
+
+fn book_of(host: &Host, player: u128) -> String {
+    host.gives.iter().find(|(given, _, _)| *given == player).expect("the player was given a book").2.clone()
+}
+
+#[test]
+fn a_client_that_sends_its_settings_has_the_hud_and_a_saved_setting_alone_does_not() {
+    let mut host = Host { online: vec![player(ALICE, "Alice")], ..Host::default() };
+    host.files.insert("options.json".to_string(), "{\"lobbyTutorialBook\": false}".to_string());
+    // Bob's settings were saved by an earlier session; his client sends nothing this time.
+    host.files.insert("player-settings.json".to_string(), store::settings_to_json(&HashMap::from([(BOB, PlayerSettings::default())])));
+    let mut session = session();
+    assert!(!session.has_card_hud(ALICE));
+    session.on_packet(&mut host, ALICE, "update_settings", &encode(|w| PlayerSettings::default().write(w)));
+    assert!(session.has_card_hud(ALICE));
+    assert!(!session.has_card_hud(BOB), "a saved setting is not a client that runs the HUD");
+
+    host.online.push(player(BOB, "Bob"));
+    session.command(&mut host, Some(ALICE), "book");
+    session.command(&mut host, Some(BOB), "book");
+    assert!(book_of(&host, ALICE).contains("keybind:\"bingo.keybind.open_card\""));
+    assert!(book_of(&host, BOB).contains("keybind:\"key.use\""));
+    assert!(book_of(&host, BOB).contains("bingo.player_settings.scoreboard_auto_hide"), "Bob has no HUD: the auto hide is listed");
+    assert!(!book_of(&host, ALICE).contains("bingo.player_settings.scoreboard_auto_hide"));
+}
+
+#[test]
+fn leaving_the_server_takes_the_hud_away_until_the_client_sends_its_settings_again() {
+    let mut host = Host { online: vec![player(ALICE, "Alice")], ..Host::default() };
+    let mut session = session();
+    session.on_packet(&mut host, ALICE, "update_settings", &encode(|w| PlayerSettings::default().write(w)));
+    assert!(session.has_card_hud(ALICE));
+    session.on_leave(&mut host, ALICE);
+    assert!(!session.has_card_hud(ALICE));
+}
+
+#[test]
+fn the_lobby_book_waits_three_seconds_for_a_client_that_may_run_the_hud() {
+    let mut host = Host { online: vec![player(ALICE, "Alice"), player(BOB, "Bob")], ..Host::default() };
+    let mut session = session();
+    session.on_join(&mut host, &player(ALICE, "Alice"));
+    session.on_join(&mut host, &player(BOB, "Bob"));
+    // Alice's client answers at once; Bob's never does.
+    session.on_packet(&mut host, ALICE, "update_settings", &encode(|w| PlayerSettings::default().write(w)));
+    session.tick(&mut host);
+    let given: Vec<u128> = host.gives.iter().map(|(player, _, _)| *player).collect();
+    assert_eq!(given, vec![ALICE], "Alice's book is written with her HUD known");
+
+    for _ in 0..58 {
+        session.tick(&mut host);
+    }
+    assert_eq!(host.gives.len(), 1, "Bob still waits at 59 ticks, under 3 seconds of the join");
+    session.tick(&mut host);
+    assert_eq!(host.gives.len(), 2, "Bob's book comes at 60 ticks, when the wait ends");
+    assert!(book_of(&host, BOB).contains("keybind:\"key.use\""));
 }

@@ -63,6 +63,9 @@ const REROLL_NOTICE: &str = "A stalemate: every team on the card gets a new card
 const AUTO_SHUFFLE_SALT: u64 = 0x5EED_7EA5_0000_0001;
 /// Server ticks between two reads of the objective squares that no event reports (stats, advancements): one second.
 const OBJECTIVE_POLL_TICKS: u64 = 20;
+/// Server ticks a player's lobby book waits, after the join, for the client's settings that tell whether it runs the
+/// card HUD: three seconds. A client without the mod never answers, and gets its book when the wait ends.
+const BOOK_HUD_WAIT_TICKS: u64 = 60;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionOptions {
@@ -165,6 +168,12 @@ pub struct Session {
     flashes: Flashes,
     /// The players given the lobby's tutorial book this session (`infobook`), so each gets one once.
     books_given: HashSet<u128>,
+    /// Players whose client has sent its settings since they joined: such a client registered the mod's channels, so it
+    /// runs the card HUD (the original's `CardViewService.supportsCardHud`). Not read from the saved settings, which
+    /// keep the players of earlier sessions. Cleared when the player leaves.
+    hud: HashSet<u128>,
+    /// The tick each player joined at, for the lobby book's wait for the client's answer (see `give_lobby_books`).
+    joined_at: HashMap<u128, u64>,
 }
 
 impl Session {
@@ -217,6 +226,8 @@ impl Session {
             maps: MapItems::new(),
             flashes: Flashes::default(),
             books_given: HashSet::new(),
+            hud: HashSet::new(),
+            joined_at: HashMap::new(),
             options,
         }
     }
@@ -387,6 +398,7 @@ impl Session {
     pub fn on_join(&mut self, host: &mut dyn ServerHost, player: &Player) {
         self.ensure_loaded(host);
         self.await_rejoin = false;
+        self.joined_at.insert(player.uuid, self.ticks);
         send(host, player.uuid, self.game_status());
         match self.game.status() {
             GameStatus::Pregame => self.send_ready_updates(host),
@@ -406,6 +418,8 @@ impl Session {
     /// A player leaves. Their ready flag goes. Before play they also leave their team; during play the team stays, so
     /// a player who comes back is on it again.
     pub fn on_leave(&mut self, host: &mut dyn ServerHost, player: u128) {
+        self.hud.remove(&player);
+        self.joined_at.remove(&player);
         self.ready.remove(player);
         if self.game.status() == GameStatus::Pregame {
             self.teams.leave(player);
@@ -758,8 +772,12 @@ impl Session {
     /// and only before play. A payload that does not decode is ignored.
     pub fn on_packet(&mut self, host: &mut dyn ServerHost, player: u128, path: &str, data: &[u8]) {
         if path == "update_settings" {
-            if let Ok(settings) = decode(data, PlayerSettings::read) {
+            if let Ok(mut settings) = decode(data, PlayerSettings::read) {
+                // The client's settings reach the server, so its channels are registered: it runs the card HUD. The
+                // lobby prompt's flag is the server's, not the client's (`PlayerSettingsController`).
+                settings.hide_lobby_prompt = self.settings.get(&player).is_some_and(|saved| saved.hide_lobby_prompt);
                 self.settings.insert(player, settings);
+                self.hud.insert(player);
                 host.write_file(SETTINGS_FILE, &store::settings_to_json(&self.settings));
             }
             return;
@@ -786,6 +804,13 @@ impl Session {
     /// The round options (`/bingo options`), for the lobby menu.
     pub fn rules(&self) -> &Options {
         &self.rules
+    }
+
+    /// Whether the player's client runs the card HUD: it sent its settings in this session, after it registered the mod's
+    /// channels, and has not left since. The original's `supportsCardHud`. A client without the mod has no HUD, and so
+    /// does a player whose settings were only saved by an earlier session.
+    pub fn has_card_hud(&self, player: u128) -> bool {
+        self.hud.contains(&player)
     }
 
     /// Whether no game has started yet (`Pregame`): the only time the round options can change.
@@ -849,8 +874,8 @@ impl Session {
                     status,
                     team,
                     self.teams.is_spectator(player.uuid),
-                    // A player who sent the client's settings runs our HUD and needs no map.
-                    self.settings.contains_key(&player.uuid),
+                    // A player whose client runs our HUD needs no map.
+                    self.has_card_hud(player.uuid),
                     won,
                 );
                 (player.uuid, player.name, want)
@@ -1012,7 +1037,8 @@ impl Session {
     fn give_book(&self, host: &mut dyn ServerHost, player: &Player, keep: bool) -> bool {
         let settings = self.settings.get(&player.uuid).cloned().unwrap_or_default();
         let operator = host.is_operator(player.uuid);
-        let pages = infobook::pages(&infobook::PageView { settings: &settings, operator });
+        let hud = self.has_card_hud(player.uuid);
+        let pages = infobook::pages(&infobook::PageView { settings: &settings, operator, hud });
         let components = infobook::components(&player.name, &pages, keep);
         host.give_item(player.uuid, infobook::ITEM, &components)
     }
@@ -1025,6 +1051,13 @@ impl Session {
         }
         for player in players {
             if self.books_given.contains(&player.uuid) {
+                continue;
+            }
+            // The book names the keybind of the card HUD, and a client answers with its settings a moment after it joins.
+            // The book waits for that answer, up to `BOOK_HUD_WAIT_TICKS` after the join (a book is never replaced).
+            let waiting = !self.has_card_hud(player.uuid)
+                && self.joined_at.get(&player.uuid).is_some_and(|joined| self.ticks < joined + BOOK_HUD_WAIT_TICKS);
+            if waiting {
                 continue;
             }
             if self.give_book(host, player, true) {

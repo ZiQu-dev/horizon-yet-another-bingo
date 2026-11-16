@@ -5,9 +5,9 @@
 //!
 //! The English is the original's `en_us` text, under the original's keys, so a client's translation applies.
 //!
-//! Not ported: the card HUD's keybind (the server does not know whether a player has the HUD, so the map's keybind is
-//! always written), the settings' click commands (there is no `prefs` command here, the settings are changed on the
-//! settings screen), and the book's refresh when a setting changes (the pages are written when the book is given).
+//! The card HUD is known from the client's settings (see `Session::has_card_hud`): the hints name its keybind, and the
+//! settings page lists the auto hide only without it. Not ported: the book's refresh when a setting changes or the
+//! client's answer comes in (a book is written when it is given, and a given book is never changed in place).
 use crate::update_settings::PlayerSettings;
 
 /// The item the book is.
@@ -19,8 +19,10 @@ pub const TITLE: &str = "Yet Another Bingo";
 /// The wiki, and its page on what the game is (`URL_WIKI`, `URL_WIKI_WHAT_IS_BINGO` of the original).
 pub const URL_WIKI: &str = "https://horrific.dev/bingo/";
 pub const URL_WIKI_WHAT_IS_BINGO: &str = "https://horrific.dev/bingo/what-is-bingo/";
-/// The key the map's hint names (`key.use`, the right click).
+/// The key the map's hint names (`key.use`, the right click), and the key that opens the card with the HUD (the mod's
+/// `KEYBIND_OPEN_CARD`, `bingo.keybind.open_card`).
 const KEYBIND_USE: &str = "key.use";
+const KEYBIND_OPEN_CARD: &str = "bingo.keybind.open_card";
 /// The check mark of an on setting (U+2611) and of an off one (U+2610), and the information mark after a setting's name.
 const ON_MARK: &str = "\u{2611}";
 const OFF_MARK: &str = "\u{2610}";
@@ -32,11 +34,13 @@ const TAG_IGNORE: &str = "bingo_ignore";
 const TAG_VANISH: &str = "bingo_vanish";
 const TAG_KEEP: &str = "bingo_keep";
 
-/// Who reads the book: the player's settings (which page comes first, and the toggles on the settings page) and whether
-/// the player is an operator (the configure-game text on the welcome page).
+/// Who reads the book: the player's settings (which page comes first, and the toggles on the settings page), whether
+/// the player is an operator (the configure-game text on the welcome page) and whether the player's client runs the
+/// card HUD (the keybind the hints name, and the auto hide setting, which needs no HUD to be useful).
 pub struct PageView<'a> {
     pub settings: &'a PlayerSettings,
     pub operator: bool,
+    pub hud: bool,
 }
 
 /// A piece of text: a plain string, a translatable text with its English and arguments, a keybind, or a list of pieces.
@@ -169,8 +173,8 @@ impl Part {
 /// the welcome page first otherwise, and the hints last. The settings page is for every player.
 pub fn pages(view: &PageView) -> Vec<Part> {
     let welcome = welcome_page(view.operator);
-    let settings = settings_page(view.settings);
-    let hints = hints_page();
+    let settings = settings_page(view.settings, view.hud);
+    let hints = hints_page(view.hud);
     if view.settings.seen_tutorial {
         vec![settings, welcome, hints]
     } else {
@@ -234,16 +238,26 @@ fn welcome_page(operator: bool) -> Part {
     Part::group(parts)
 }
 
-/// The hints page: the key that shows the card's items on a map, and the coordinates command.
-fn hints_page() -> Part {
-    Part::group(vec![
-        Part::translate("bingo.intro.hints", "Hints", vec![]).bold(),
-        Part::text("\n\n"),
+/// The hints page: the key that opens the card (with the HUD) or that shows its items on a map (without it), and the
+/// coordinates command.
+fn hints_page(hud: bool) -> Part {
+    let keybind = if hud {
+        Part::translate(
+            "bingo.intro.keybind_hud",
+            "Press [%s] to see the Bingo Card in an inventory view.",
+            vec![Part::keybind(KEYBIND_OPEN_CARD).color("dark_green")],
+        )
+    } else {
         Part::translate(
             "bingo.intro.keybind_map",
             "When holding a Bingo Card, press [%s] to see its items.",
             vec![Part::keybind(KEYBIND_USE).color("dark_green")],
-        ),
+        )
+    };
+    Part::group(vec![
+        Part::translate("bingo.intro.hints", "Hints", vec![]).bold(),
+        Part::text("\n\n"),
+        keybind,
         Part::text("\n\n"),
         Part::translate(
             "bingo.intro.use_coords",
@@ -254,22 +268,27 @@ fn hints_page() -> Part {
 }
 
 /// The settings page: the player's own toggles, with a mark for each (on or off) and a hover text for what it does.
-/// The scoreboard's auto hide is listed, as a player without the card HUD sees it.
-fn settings_page(settings: &PlayerSettings) -> Part {
-    Part::group(vec![
+/// The scoreboard's auto hide is listed only for a player without the card HUD: with the HUD the scoreboard never
+/// auto hides (the original's `ScoreboardService.shouldDisplayScoreboard`).
+fn settings_page(settings: &PlayerSettings, hud: bool) -> Part {
+    let mut parts = vec![
         Part::translate("bingo.player_settings", "Player Settings", vec![]).bold(),
         Part::text("\n\n"),
         toggle(settings.bossbar, "bingo.player_settings.bossbar", "Bossbar", "bingo.player_settings.bossbar.description", "Shows the time remaining in a bossbar."),
         Part::text("\n\n"),
         toggle(settings.scoreboard, "bingo.player_settings.scoreboard", "Scoreboard", "bingo.player_settings.scoreboard.description", "Shows game info and time remaining in a scoreboard."),
-        Part::text("\n"),
-        toggle(
+    ];
+    if !hud {
+        parts.push(Part::text("\n"));
+        parts.push(toggle(
             settings.scoreboard_auto_hide,
             "bingo.player_settings.scoreboard_auto_hide",
             "Scoreboard Auto Hide",
             "bingo.player_settings.scoreboard_auto_hide.description",
             "Hides the scoreboard when you aren't holding the bingo card.",
-        ),
+        ));
+    }
+    parts.extend([
         Part::text("\n\n"),
         Part::translate("bingo.player_settings.messages", "Floating Messages", vec![]),
         Part::text(":\n"),
@@ -280,7 +299,8 @@ fn settings_page(settings: &PlayerSettings) -> Part {
         toggle(settings.item_messages, "bingo.player_settings.messages.items", "Item Scored", "bingo.player_settings.messages.items.description", "Shows a message when any item is scored."),
         Part::text("\n\n"),
         toggle(settings.night_vision, "bingo.player_settings.night_vision", "Night Vision", "bingo.player_settings.night_vision.description", "Receive night vision when the feature is enabled, spectating, or post-game."),
-    ])
+    ]);
+    Part::group(parts)
 }
 
 /// One setting's line: its mark (green when on, red when off), its name and an information mark with the description.
