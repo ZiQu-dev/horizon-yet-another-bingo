@@ -1,5 +1,5 @@
 //! The server half of "Yet Another Minecraft BINGO": one game session, driven by Horizon's server hooks. The game is
-//! `horizon-bingo`'s `server` modules; this file adapts Horizon's `Host` to their `ServerHost` and keeps the session.
+//! `horizon-bingo`'s `server` modules; this file adapts the mod API's `ServerHost` to their `ServerHost` and keeps the session.
 //! Each hook runs under `guarded`, and a poisoned lock is taken as it is, so one panic does not end the server's mod.
 use super::{MOD_ID, guarded, log};
 use horizon_bingo::server::chat;
@@ -7,17 +7,20 @@ use horizon_bingo::server::commands::{Command, chat_shortcut, parse, requires_op
 use horizon_bingo::server::game::GameOptions;
 use horizon_bingo::server::host::ServerHost;
 use horizon_bingo::server::items::{ItemIds, NO_ICONS_NOTE, missing_names_warning};
-use horizon_bingo::server::map_render::{DirtyRect, FileIcons, IconSource, MAP_BYTES, Overlays};
+use horizon_bingo::server::map_render::{DirtyRect, FileIcons, IconSource, Overlays};
 use horizon_bingo::server::menu::{self, Menus, Outcome, Page, View};
+use horizon_bingo::server::options::Options;
 use horizon_bingo::server::ready::ReadyOptions;
 use horizon_bingo::server::session::{Session, SessionOptions};
-use horizon_bingo::server::options::Options;
 use horizon_bingo::server::sidebar::Shown;
 use horizon_bingo::server::texts::Line;
 use horizon_bingo::server::types::Player;
-use horizon_client::mod_api::{Flow, Host, ItemStack, NativeBossBar, NativeCommand, ServerTickPhase, Text};
+use mod_api::{
+    ConfigFileError, ConfigPath, Flow, Identifier, ItemKey, ItemStack, MenuReplace, PayloadBytes,
+    PayloadId, ServerTickPhase, StatType, Text,
+};
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     path::PathBuf,
     sync::{Mutex, OnceLock, PoisonError},
     time::{SystemTime, UNIX_EPOCH},
@@ -52,8 +55,14 @@ const USAGES: [(&str, &str); 53] = [
     ("bingo goal items <n:integer>", "goal items 5"),
     ("bingo goal full_card", "goal full_card"),
     ("bingo mode <mode:word>", "mode lockout"),
-    ("bingo mode hidden_items <state:word>", "mode hidden_items on"),
-    ("bingo mode consume_items <state:word>", "mode consume_items on"),
+    (
+        "bingo mode hidden_items <state:word>",
+        "mode hidden_items on",
+    ),
+    (
+        "bingo mode consume_items <state:word>",
+        "mode consume_items on",
+    ),
     ("bingo endwhen <when:word>", "endwhen never"),
     ("bingo endwhen teams_win <n:integer>", "endwhen teams_win 2"),
     ("bingo pvp <state:word>", "pvp on"),
@@ -70,7 +79,10 @@ const USAGES: [(&str, &str); 53] = [
     ("bingo resume", "resume"),
     ("bingo stats", "stats"),
     ("bingo difficulty <preset:word>", "difficulty medium"),
-    ("bingo difficulty <s:integer> <a:integer> <b:integer> <c:integer> <d:integer>", "difficulty 0 0 3 10 12"),
+    (
+        "bingo difficulty <s:integer> <a:integer> <b:integer> <c:integer> <d:integer>",
+        "difficulty 0 0 3 10 12",
+    ),
     ("bingo reroll", "reroll"),
     ("bingo teams <n:integer>", "teams 3"),
     ("bingo autoshuffle <state:word>", "autoshuffle on"),
@@ -79,11 +91,17 @@ const USAGES: [(&str, &str); 53] = [
     ("bingo menu", "menu"),
     ("bingo kit", "kit"),
     ("bingo kit add <item:word>", "kit add diamond"),
-    ("bingo kit add <item:word> <count:integer>", "kit add diamond 2"),
+    (
+        "bingo kit add <item:word> <count:integer>",
+        "kit add diamond 2",
+    ),
     ("bingo kit remove <item:word>", "kit remove diamond"),
     ("bingo kit clear", "kit clear"),
     ("bingo prefs <setting:word>", "prefs bossbar"),
-    ("bingo prefs <setting:word> <value:word>", "prefs bossbar on"),
+    (
+        "bingo prefs <setting:word> <value:word>",
+        "prefs bossbar on",
+    ),
     ("join <team:word>", "join Red"),
     ("ready", "ready"),
     ("spectator", "spectator"),
@@ -102,6 +120,12 @@ static COMMANDS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static LOBBY_MENUS: Mutex<Menus> = Mutex::new(Menus::new());
 /// The item registry's names, read once. `None` when the assets are missing (logged once).
 static ITEM_IDS: OnceLock<Option<ItemIds>> = OnceLock::new();
+/// The item names in the names file's order, read with `ITEM_IDS`; the API knows items only by key, so these map to keys.
+static ITEM_NAMES: OnceLock<Vec<String>> = OnceLock::new();
+/// The item keys by name, built once from `ITEM_NAMES` (see `item_key_names`).
+static ITEM_KEY_NAMES: OnceLock<HashMap<ItemKey, String>> = OnceLock::new();
+/// The advancements the mod has seen a player finish, by player and id, from `advancement_done`.
+static ADVANCEMENTS_DONE: Mutex<BTreeSet<(u128, String)>> = Mutex::new(BTreeSet::new());
 /// Chat lines during team chat, `(player, line)`, queued by the chat hook and sent on the next tick (the hook has no host).
 static TEAM_CHAT: Mutex<Vec<(u128, String)>> = Mutex::new(Vec::new());
 /// The sidebar as last shown on the server (`sidebar::Shown`).
@@ -109,7 +133,9 @@ static SIDEBAR: Mutex<Shown> = Mutex::new(Shown::new());
 
 /// A session that starts from the clock's time, with the default game options.
 fn new_session() -> Session {
-    let seed = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64);
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64);
     let mut session = Session::new(SessionOptions {
         seed,
         game: GameOptions::default(),
@@ -122,7 +148,9 @@ fn new_session() -> Session {
         session.set_pool(pool.clone());
     }
     if let Some((dir, overlays)) = MAP_ART.get() {
-        let icons: Box<dyn IconSource + Send> = Box::new(FileIcons { dir: dir.join("item_icons") });
+        let icons: Box<dyn IconSource + Send> = Box::new(FileIcons {
+            dir: dir.join("item_icons"),
+        });
         session.set_map_assets(icons, overlays.clone());
     }
     session
@@ -133,12 +161,9 @@ static CARD_POOL: OnceLock<horizon_bingo::server::card_gen::Pool> = OnceLock::ne
 
 /// Reads the item tags beside the item names and installs the pool in the session, once per process. Tags missing from
 /// the folder are logged: the pool then leaves those tags out.
-fn load_card_pool(host: &dyn Host) {
+fn load_card_pool(host: &dyn mod_api::Host) {
     CARD_POOL.get_or_init(|| {
-        let dir = match std::env::var_os("BINGO_ASSETS") {
-            Some(dir) => PathBuf::from(dir),
-            None => host.data_dir(MOD_ID).join("assets"),
-        };
+        let dir = assets_dir(host);
         let pool = horizon_bingo::server::pool::pool_from_assets(&dir);
         if pool.skipped_tags.is_empty() {
             log(&format!("bingo: card pool: {} vanilla item tag files read from {}", pool.tag_files, dir.display()));
@@ -167,50 +192,113 @@ fn with_session<T>(f: impl FnOnce(&mut Session) -> T) -> T {
 /// A new server (a world opens): the old game and its players belong to the previous world.
 pub fn server_about_to_start() {
     *SESSION.lock().unwrap_or_else(PoisonError::into_inner) = None;
-    CHAT_VOTES.lock().unwrap_or_else(PoisonError::into_inner).clear();
-    LOBBY_MENUS.lock().unwrap_or_else(PoisonError::into_inner).clear();
-    TEAM_CHAT.lock().unwrap_or_else(PoisonError::into_inner).clear();
+    CHAT_VOTES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clear();
+    LOBBY_MENUS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clear();
+    TEAM_CHAT
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clear();
+    ADVANCEMENTS_DONE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clear();
     *SIDEBAR.lock().unwrap_or_else(PoisonError::into_inner) = Shown::new();
 }
 
-/// Horizon's `Host` as the crate's `ServerHost`.
+/// A player finished an advancement (the mod's `player_advancement_done` hook calls this). Kept for `has_advancement`.
+pub fn advancement_done(player: u128, id: &str) {
+    ADVANCEMENTS_DONE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert((player, id.to_owned()));
+}
+
+/// Sends a chat line to one online player. An offline or unknown uuid gets nothing.
+fn tell_player(host: &mut dyn mod_api::ServerHost, uuid: u128, text: Text) {
+    if let Some(player) = host.player(uuid) {
+        let _ = player.tell(host, text);
+    }
+}
+
+/// The name of an online player, or `None` when no such player is online.
+fn online_name(host: &dyn mod_api::ServerHost, uuid: u128) -> Option<String> {
+    host.players()
+        .server_players()
+        .into_iter()
+        .find(|p| p.uuid() == uuid)
+        .map(|p| p.name(host).unwrap_or_default())
+}
+
+/// Whether a player has the operator level the mod's operator commands need.
+// PORT-GAP: the API has no permission nodes, so the node `bingo.op` is read as operator level 2 (a permissions plugin
+// can no longer grant it on its own).
+fn is_op(host: &dyn mod_api::Host, uuid: u128) -> bool {
+    host.player(uuid)
+        .and_then(|p| p.permission_level(host))
+        .is_some_and(|level| level >= OP_LEVEL)
+}
+
+/// Horizon's `ServerHost` (the mod API) as the crate's `ServerHost`.
 struct ServerAdapter<'a> {
-    host: &'a mut dyn Host,
+    host: &'a mut dyn mod_api::ServerHost,
 }
 
 impl ServerHost for ServerAdapter<'_> {
     fn send(&mut self, player: u128, path: &str, payload: Vec<u8>) {
         let channel = format!("{CHANNEL_PREFIX}{path}");
-        if let Err(e) = self.host.send_custom_payload_to_player(player, &channel, &payload) {
-            log(&format!("bingo: {channel} to {player:032x} not sent: {e}"));
+        // The channel is declared once at registration (`Hooks::register`, `payload_handlers`), so the id must match it.
+        let sent = match self.host.player(player) {
+            Some(handle) => handle
+                .send_payload(
+                    &mut *self.host,
+                    &PayloadId(channel.clone()),
+                    PayloadBytes(payload),
+                )
+                .is_ok(),
+            None => false,
+        };
+        if !sent {
+            log(&format!("bingo: {channel} to {player:032x} not sent"));
         }
     }
 
     fn tell(&mut self, player: u128, line: &str) {
-        let _ = self.host.tell(player, Text::literal(line));
+        tell_player(&mut *self.host, player, Text::literal(line));
     }
 
     fn broadcast(&mut self, line: &str) {
-        self.host.broadcast(Text::literal(line));
+        let _ = self.host.messages().broadcast(Text::literal(line));
     }
 
     fn tell_line(&mut self, player: u128, line: &Line) {
-        let _ = self.host.tell(player, translated(line));
+        tell_player(&mut *self.host, player, translated(line));
     }
 
     fn broadcast_line(&mut self, line: &Line) {
-        self.host.broadcast(translated(line));
+        let _ = self.host.messages().broadcast(translated(line));
     }
 
     fn players(&self) -> Vec<Player> {
-        self.host
+        let host: &dyn mod_api::ServerHost = &*self.host;
+        host.players()
             .server_players()
             .into_iter()
-            .map(|p| Player { uuid: p.uuid, name: p.name })
+            .map(|p| Player {
+                uuid: p.uuid(),
+                name: p.name(host).unwrap_or_default(),
+            })
             .collect()
     }
 
     fn item_numeric_id(&self, item: &str) -> Option<i32> {
+        // The number is the line of the item in the names file (the registry order), as before; the API has no numeric
+        // item id to read.
         item_ids(&*self.host).as_ref()?.id(item)
     }
 
@@ -219,86 +307,143 @@ impl ServerHost for ServerAdapter<'_> {
         if queue.len() < COMMAND_QUEUE_MAX {
             queue.push(line.to_owned());
         } else {
-            log(&format!("bingo: console command `{line}` dropped, the queue is full"));
+            log(&format!(
+                "bingo: console command `{line}` dropped, the queue is full"
+            ));
         }
     }
 
     fn stat_value(&self, player: u128, stat_type: &str, stat_name: Option<&str>) -> Option<i64> {
-        // Horizon's `player_stat` reads one counter (`minecraft:mined`, `minecraft:stone`); without a name there is none.
+        // A player's counter of one statistic (`minecraft:mined`, `minecraft:stone`); without a name there is none.
         let key = stat_name?;
-        self.host.player_stat(player, stat_type, key).map(i64::from)
+        let kind = stat_kind(stat_type)?;
+        self.host
+            .player(player)?
+            .stat(&*self.host, kind, key)
+            .map(i64::from)
     }
 
     fn has_advancement(&self, player: u128, id: &str) -> bool {
-        // Horizon's `player_advancements` gives vanilla's progress JSON (`objectives::advancement_done_json` reads it).
-        self.host
-            .player_advancements(player)
-            .is_some_and(|progress| horizon_bingo::server::objectives::advancement_done_json(&progress, id))
+        // PORT-GAP: the API has no per-player progress read. Only advancements finished while the mod runs are known
+        // (`advancement_done`, fed by the `player_advancement_done` hook); earlier ones read as not done.
+        ADVANCEMENTS_DONE
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(&(player, id.to_owned()))
     }
 
     fn now_ms(&self) -> i64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as i64)
     }
 
     fn read_file(&mut self, name: &str) -> Option<String> {
-        std::fs::read_to_string(self.host.data_dir(MOD_ID).join(name)).ok()
+        let path = ConfigPath::new(name).ok()?;
+        let bytes = self.host.world_data_files().read(&path).ok()?;
+        String::from_utf8(bytes).ok()
     }
 
     fn write_file(&mut self, name: &str, content: &str) {
-        let dir = self.host.data_dir(MOD_ID);
-        let result = std::fs::create_dir_all(&dir).and_then(|()| write_atomic(&dir.join(name), content));
+        let result = ConfigPath::new(name).and_then(|path| {
+            self.host
+                .world_data_files()
+                .write(&path, content.as_bytes())
+        });
         if let Err(e) = result {
-            log(&format!("bingo: {name} not written: {e}"));
+            log(&format!("bingo: {name} not written: {e:?}"));
         }
     }
 
     fn warn(&mut self, line: &str) {
-        horizon_client::logging::write_as(MOD_ID, ::log::Level::Warn, line);
+        ::log::warn!("{line}");
     }
 
     fn append_line(&mut self, name: &str, line: &str) {
-        use std::io::Write;
-        let dir = self.host.data_dir(MOD_ID);
-        let result = std::fs::create_dir_all(&dir).and_then(|()| {
-            let mut file = std::fs::OpenOptions::new().create(true).append(true).open(dir.join(name))?;
-            writeln!(file, "{line}")
+        // PORT-GAP: the API has no append. The file is read, the line added and the whole file written back, so each
+        // line costs the file's size (fine for the mod's small logs).
+        let result = ConfigPath::new(name).and_then(|path| {
+            let files = self.host.world_data_files();
+            let mut bytes = match files.read(&path) {
+                Ok(bytes) => bytes,
+                Err(ConfigFileError::NotFound) => Vec::new(),
+                Err(e) => return Err(e),
+            };
+            bytes.extend_from_slice(line.as_bytes());
+            bytes.push(b'\n');
+            files.write(&path, &bytes)
         });
         if let Err(e) = result {
-            log(&format!("bingo: {name} not appended: {e}"));
+            log(&format!("bingo: {name} not appended: {e:?}"));
         }
     }
 
     fn boss_bar(&mut self, player: u128, id: &str, title: &str, progress: f32, visible: bool) {
-        let bar = visible.then(|| NativeBossBar {
-            name: Text::literal(title),
-            progress: progress.clamp(0.0, 1.0),
-            ..NativeBossBar::default()
-        });
-        if !self.host.boss_bar(player, bar_uuid(id), bar.as_ref()) {
+        // Bars are saved custom boss events keyed by id, each with its own viewers, so the player is added to or removed
+        // from the bar. The bar's maximum is 1000, so the progress keeps a tenth of a percent.
+        let Some(member) = self.host.player(player) else {
             log(&format!("bingo: boss bar {id} for {player:032x} not shown"));
+            return;
+        };
+        if !visible {
+            if let Some(bar) = self.host.boss_bar(id) {
+                let _ = bar.remove_player(&mut *self.host, member);
+            }
+            return;
         }
+        let bar = match self.host.boss_bar(id) {
+            Some(bar) => bar,
+            None => match self.host.create_boss_bar(id, Text::literal(title)) {
+                Ok(Some(bar)) => {
+                    let _ = bar.set_max(&mut *self.host, 1000);
+                    bar
+                }
+                _ => {
+                    log(&format!("bingo: boss bar {id} not made"));
+                    return;
+                }
+            },
+        };
+        let _ = bar.set_name(&mut *self.host, Text::literal(title));
+        let _ = bar.set_value(
+            &mut *self.host,
+            (progress.clamp(0.0, 1.0) * 1000.0).round() as i32,
+        );
+        let _ = bar.add_player(&mut *self.host, member);
     }
 
     fn title(&mut self, player: u128, title: &Line, subtitle: &Line) {
-        // Vanilla's default times (10, 70, 20 ticks), as the original's sendTitle uses.
-        if !self.host.title(player, &translated(title), &translated(subtitle), 10, 70, 20) {
+        // PORT-GAP: the API has no title or subtitle call. The title goes to the action bar (over the hotbar) and the
+        // subtitle to chat, so a title moment shows as those lines.
+        if let Some(handle) = self.host.player(player) {
+            let _ = handle.action_bar(&mut *self.host, translated(title));
+        } else {
             log(&format!("bingo: title for {player:032x} not shown"));
+            return;
+        }
+        if !subtitle.render().is_empty() {
+            tell_player(&mut *self.host, player, translated(subtitle));
         }
     }
 
-    fn new_map(&mut self, pixels: &[u8]) -> Option<i32> {
-        let colors: &[u8; MAP_BYTES] = pixels.try_into().ok()?;
-        self.host.new_map(MAP_DIMENSION, colors)
+    fn new_map(&mut self, _pixels: &[u8]) -> Option<i32> {
+        // PORT-GAP: the API has no call that makes a map id (`new_map` is gone). Without one, the mod's map pictures
+        // (the card and score maps) are not made; cards and the rest work without them.
+        None
     }
 
-    fn paint_map(&mut self, map_id: i32, pixels: &[u8], _dirty: DirtyRect) -> bool {
-        // Horizon's `paint_map` takes the whole picture and sends it to each carrier, so the dirty part is not used here.
-        let Ok(colors) = <&[u8; MAP_BYTES]>::try_from(pixels) else { return false };
-        self.host.paint_map(map_id, colors)
+    fn paint_map(&mut self, _map_id: i32, _pixels: &[u8], _dirty: DirtyRect) -> bool {
+        // PORT-GAP: no map id is ever made (see `new_map`), so there is no map to repaint. `level.set_map_data` only
+        // paints saved map data that vanilla made.
+        false
     }
 
     fn send_map(&mut self, player: u128, map_id: i32, pixels: &[u8]) -> bool {
-        self.host.send_map(player, map_id, pixels)
+        // The server keeps no map picture: the API's `send_map` is sent again after each join by the session.
+        match self.host.player(player) {
+            Some(handle) => handle.send_map(&mut *self.host, map_id, pixels),
+            None => false,
+        }
     }
 
     fn give_map(&mut self, player: u128, snbt: &str) -> bool {
@@ -306,18 +451,22 @@ impl ServerHost for ServerAdapter<'_> {
             log("bingo: a map item's SNBT was not read");
             return false;
         };
-        // `give_stack` returns what did not fit, so none means the whole stack went to the player.
-        self.host.give_stack(player, stack).is_none()
+        // An item that does not fit is thrown from the player's eyes, so the give itself succeeds whenever the player is
+        // here (before, the leftover was returned and had to be checked).
+        match self.host.player(player) {
+            Some(handle) => handle.give_stack(&mut *self.host, stack).is_ok(),
+            None => false,
+        }
     }
 
     fn is_operator(&self, player: u128) -> bool {
-        self.host.has_permission(player, "bingo.op", OP_LEVEL)
+        is_op(&*self.host, player)
     }
 
     fn give_item(&mut self, player: u128, item: &str, components: &str) -> bool {
         // Best effort: the item goes out as a `give` command, run at the next tick, so the pages are the command's
         // components. Only a player who is online can be given it.
-        let Some(name) = self.host.server_players().into_iter().find(|p| p.uuid == player).map(|p| p.name) else {
+        let Some(name) = online_name(&*self.host, player) else {
             return false;
         };
         self.command(&format!("give {name} {item}[{components}]"));
@@ -325,23 +474,46 @@ impl ServerHost for ServerAdapter<'_> {
     }
 }
 
-/// The overworld: the dimension the maps are made in, as the original makes them.
-const MAP_DIMENSION: &str = "minecraft:overworld";
+/// The statistic kind of a vanilla statistic name (`minecraft:mined`), or `None` for a name the API has no kind for.
+fn stat_kind(name: &str) -> Option<StatType> {
+    let path = name.strip_prefix("minecraft:")?;
+    [
+        StatType::Mined,
+        StatType::Crafted,
+        StatType::Used,
+        StatType::Broken,
+        StatType::PickedUp,
+        StatType::Dropped,
+        StatType::Killed,
+        StatType::KilledBy,
+        StatType::Custom,
+    ]
+    .into_iter()
+    .find(|kind| kind.path() == path)
+}
 
 /// The pictures the maps are drawn with, read once: the item pictures folder and the map overlays. The assets folder is
 /// BINGO_ASSETS, else the mod's data folder, as the item names are read.
 static MAP_ART: OnceLock<(PathBuf, Overlays)> = OnceLock::new();
 
-fn assets_dir(host: &dyn Host) -> PathBuf {
+/// The folder of the mod's assets: `BINGO_ASSETS`, else the mod's folder in the game (`horizon-mod-data/<id>/assets`).
+// PORT-GAP: the API gives the mod's data folders as `ConfigFiles` (bytes, no path), and bingo's loaders read folders of
+// files, so the folder is the game's instance folder plus the documented layout. Moving the assets elsewhere needs
+// BINGO_ASSETS.
+fn assets_dir(host: &dyn mod_api::Host) -> PathBuf {
     match std::env::var_os("BINGO_ASSETS") {
         Some(dir) => PathBuf::from(dir),
-        None => host.data_dir(MOD_ID).join("assets"),
+        None => host
+            .instance_dir()
+            .join("horizon-mod-data")
+            .join(MOD_ID)
+            .join("assets"),
     }
 }
 
 /// Reads the map pictures once, and installs them in the session. A missing overlay is drawn as the original's fallback
 /// would not (see `map_render`); a damaged one is logged and left out.
-fn load_map_art(host: &dyn Host) {
+fn load_map_art(host: &dyn mod_api::Host) {
     if MAP_ART.get().is_some() {
         return;
     }
@@ -352,56 +524,82 @@ fn load_map_art(host: &dyn Host) {
     });
     let _ = MAP_ART.set((dir, overlays));
     if let Some((dir, overlays)) = MAP_ART.get() {
-        let icons: Box<dyn IconSource + Send> = Box::new(FileIcons { dir: dir.join("item_icons") });
+        let icons: Box<dyn IconSource + Send> = Box::new(FileIcons {
+            dir: dir.join("item_icons"),
+        });
         with_session(|s| s.set_map_assets(icons, overlays.clone()));
     }
 }
 
-/// The line as a translatable text: its key, with the English as the fallback, so a client without the key shows the
-/// English. The arguments are plain text.
+/// The line as a text the client translates: its key, with the arguments as plain text.
+// PORT-GAP: `Text::translate_with_fallback` has no equivalent, so the English template is lost; a client without the
+// key shows the raw key. The lang files must cover every language the mod ships.
 fn translated(line: &Line) -> Text {
-    let args: Vec<Text> = line.args.iter().map(|arg| Text::literal(arg.as_str())).collect();
-    Text::translate_with_fallback(line.key, line.template, &args)
-}
-
-/// The UUID of the boss bar called `id`: FNV-1a over its bytes, so each name always gives the same bar and no two
-/// names of the mod's collide in practice.
-fn bar_uuid(id: &str) -> u128 {
-    const OFFSET_BASIS: u128 = 0x6c62272e07bb014262b821756295c58d;
-    const PRIME: u128 = (1 << 88) + 0x13b;
-    id.bytes().fold(OFFSET_BASIS, |hash, byte| (hash ^ u128::from(byte)).wrapping_mul(PRIME))
+    let args: Vec<Text> = line
+        .args
+        .iter()
+        .map(|arg| Text::literal(arg.as_str()))
+        .collect();
+    Text::translate(line.key, args)
 }
 
 /// The item names, loaded on the first use: BINGO_ASSETS, else the mod's data folder, as the client reads them.
-fn item_ids(host: &dyn Host) -> &'static Option<ItemIds> {
+fn item_ids(host: &dyn mod_api::Host) -> &'static Option<ItemIds> {
     ITEM_IDS.get_or_init(|| load_item_ids(host))
 }
 
-fn load_item_ids(host: &dyn Host) -> Option<ItemIds> {
-    let dir = match std::env::var_os("BINGO_ASSETS") {
-        Some(dir) => PathBuf::from(dir),
-        None => host.data_dir(MOD_ID).join("assets"),
-    };
-    let path = dir.join("item_names.txt");
+fn load_item_ids(host: &dyn mod_api::Host) -> Option<ItemIds> {
+    let path = assets_dir(host).join("item_names.txt");
     match std::fs::read_to_string(&path) {
-        Ok(text) => Some(ItemIds::from_names(&text)),
+        Ok(text) => {
+            let names = text
+                .lines()
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned)
+                .collect();
+            let _ = ITEM_NAMES.set(names);
+            Some(ItemIds::from_names(&text))
+        }
         Err(e) => {
-            log(&format!("bingo: item ids not loaded from {}: {e}", path.display()));
+            log(&format!(
+                "bingo: item ids not loaded from {}: {e}",
+                path.display()
+            ));
             // Always on, not only with BINGO_H0_LOG: an operator has to see that the cards have no icons.
-            horizon_client::logging::write_as(MOD_ID, ::log::Level::Warn, &missing_names_warning(&path, &e.to_string()));
+            ::log::warn!("{}", missing_names_warning(&path, &e.to_string()));
             None
         }
     }
 }
 
+/// The item keys by name. A stack gives its item only as a key, so the names file's items are looked up once; an item
+/// the game does not have is left out.
+fn item_key_names(host: &dyn mod_api::Host) -> &'static HashMap<ItemKey, String> {
+    let _ = item_ids(host);
+    ITEM_KEY_NAMES.get_or_init(|| {
+        let mut keys = HashMap::new();
+        for name in ITEM_NAMES.get().map(Vec::as_slice).unwrap_or_default() {
+            let Some(id) = Identifier::parse_namespaced(name) else {
+                continue;
+            };
+            if let Some(key) = host.item_key(&id) {
+                keys.insert(key, name.clone());
+            }
+        }
+        keys
+    })
+}
+
 /// The line for an operator's `status` or `start` while the item names are missing; `None` otherwise.
-fn names_note(host: &dyn Host, line: &str) -> Option<&'static str> {
+fn names_note(host: &dyn mod_api::Host, line: &str) -> Option<&'static str> {
     let word = line.split_whitespace().next()?.to_lowercase();
-    (matches!(word.as_str(), "status" | "start") && item_ids(host).is_none()).then_some(NO_ICONS_NOTE)
+    (matches!(word.as_str(), "status" | "start") && item_ids(host).is_none())
+        .then_some(NO_ICONS_NOTE)
 }
 
 /// The authoritative tick: the session advances once per server tick that starts.
-pub fn server_tick(host: &mut dyn Host, phase: ServerTickPhase) {
+pub fn server_tick(host: &mut dyn mod_api::ServerHost, phase: ServerTickPhase) {
     if !matches!(phase, ServerTickPhase::ServerTickStart { .. }) {
         return;
     }
@@ -413,7 +611,9 @@ pub fn server_tick(host: &mut dyn Host, phase: ServerTickPhase) {
     }
     // The map pictures, once per process, like the card pool (a session made later takes them in `new_session`).
     load_map_art(&*host);
-    guarded("server tick",|| with_session(|s| s.tick(&mut ServerAdapter { host: &mut *host })));
+    guarded("server tick", || {
+        with_session(|s| s.tick(&mut ServerAdapter { host: &mut *host }))
+    });
     guarded("bingo chat votes", || run_chat_votes(&mut *host));
     guarded("bingo team chat", || run_team_chat(&mut *host));
     guarded("bingo sidebar", || update_sidebar(&mut *host));
@@ -423,14 +623,14 @@ pub fn server_tick(host: &mut dyn Host, phase: ServerTickPhase) {
 
 /// Runs the chat votes queued since the last tick, in the order they were typed; each voter is told the answer, as a
 /// typed `bingo vote` is.
-fn run_chat_votes(host: &mut dyn Host) {
+fn run_chat_votes(host: &mut dyn mod_api::ServerHost) {
     let votes = std::mem::take(&mut *CHAT_VOTES.lock().unwrap_or_else(PoisonError::into_inner));
     for (uuid, command) in votes {
         let reply = guarded("bingo chat vote", || {
             with_session(|s| s.run(&mut ServerAdapter { host: &mut *host }, Some(uuid), command))
         });
         if let Some(reply) = reply {
-            let _ = host.tell(uuid, Text::literal(reply));
+            tell_player(host, uuid, Text::literal(reply));
         }
     }
 }
@@ -447,7 +647,9 @@ pub fn player_chat(player: u128, message: &str) -> Flow {
                 if votes.len() < COMMAND_QUEUE_MAX {
                     votes.push((player, command));
                 } else {
-                    log(&format!("bingo: chat vote from {player:032x} dropped, the queue is full"));
+                    log(&format!(
+                        "bingo: chat vote from {player:032x} dropped, the queue is full"
+                    ));
                 }
             });
             return Flow::Cancel;
@@ -459,7 +661,9 @@ pub fn player_chat(player: u128, message: &str) -> Flow {
             if lines.len() < COMMAND_QUEUE_MAX {
                 lines.push((player, message.to_owned()));
             } else {
-                log(&format!("bingo: team chat from {player:032x} dropped, the queue is full"));
+                log(&format!(
+                    "bingo: team chat from {player:032x} dropped, the queue is full"
+                ));
             }
         });
         return Flow::Cancel;
@@ -469,7 +673,7 @@ pub fn player_chat(player: u128, message: &str) -> Flow {
 
 /// Sends the team chat lines queued since the last tick: each to the recipients `chat.rs` picks. If the game has stopped
 /// taking team chat since the line was typed, it goes to everyone, so no line is lost.
-fn run_team_chat(host: &mut dyn Host) {
+fn run_team_chat(host: &mut dyn mod_api::ServerHost) {
     let lines = std::mem::take(&mut *TEAM_CHAT.lock().unwrap_or_else(PoisonError::into_inner));
     for (uuid, message) in lines {
         let mut adapter = ServerAdapter { host: &mut *host };
@@ -480,75 +684,100 @@ fn run_team_chat(host: &mut dyn Host) {
                 adapter.tell(recipient, &routed.line);
             }
         } else {
-            let name = players.iter().find(|p| p.uuid == uuid).map_or("", |p| p.name.as_str());
+            let name = players
+                .iter()
+                .find(|p| p.uuid == uuid)
+                .map_or("", |p| p.name.as_str());
             adapter.broadcast(&chat::global_line(name, &message));
         }
     }
 }
 
 /// Shows the sidebar as the session says it should be (`sidebar::Shown` sends only the changes).
-fn update_sidebar(host: &mut dyn Host) {
+fn update_sidebar(host: &mut dyn mod_api::ServerHost) {
     let rows = with_session(|s| s.sidebar_rows());
     let mut shown = SIDEBAR.lock().unwrap_or_else(PoisonError::into_inner);
     shown.update(&mut ServerAdapter { host: &mut *host }, rows);
 }
 
 /// Runs the console commands queued since the last tick, in order; a failed one is logged.
-fn run_queued_commands(host: &mut dyn Host) {
+fn run_queued_commands(host: &mut dyn mod_api::ServerHost) {
     let lines = std::mem::take(&mut *COMMANDS.lock().unwrap_or_else(PoisonError::into_inner));
     for line in lines {
-        if !host.run_command(&line) {
+        if !host.commands().run_command(&line) {
             log(&format!("bingo: console command `{line}` did not run"));
         }
     }
 }
 
-pub fn player_logged_in(host: &mut dyn Host, uuid: u128, name: &str) {
-    let player = Player { uuid, name: name.to_owned() };
+pub fn player_logged_in(host: &mut dyn mod_api::ServerHost, uuid: u128, name: &str) {
+    let player = Player {
+        uuid,
+        name: name.to_owned(),
+    };
     guarded("player logged in", || {
         with_session(|s| s.on_join(&mut ServerAdapter { host: &mut *host }, &player))
     });
 }
 
-pub fn player_logged_out(host: &mut dyn Host, uuid: u128) {
-    guarded("player logged out", || with_session(|s| s.on_leave(&mut ServerAdapter { host: &mut *host }, uuid)));
+pub fn player_logged_out(host: &mut dyn mod_api::ServerHost, uuid: u128) {
+    guarded("player logged out", || {
+        with_session(|s| s.on_leave(&mut ServerAdapter { host: &mut *host }, uuid))
+    });
 }
 
-/// The stacks of a player's inventory, counted by item id (empty slots and stacks of nothing add nothing).
-pub fn player_inventory_changed(host: &mut dyn Host, uuid: u128, stacks: &[Option<ItemStack>]) {
+/// The stacks of a player's inventory, counted by item name (empty slots and stacks of nothing add nothing).
+pub fn player_inventory_changed(
+    host: &mut dyn mod_api::ServerHost,
+    uuid: u128,
+    stacks: &[Option<ItemStack>],
+) {
     guarded("inventory changed", || {
+        let names = item_key_names(&*host);
         let mut held: HashMap<String, u32> = HashMap::new();
         for stack in stacks.iter().flatten() {
-            let count = held.entry(stack.item.to_string()).or_insert(0);
-            *count = count.saturating_add(stack.count);
+            let Some(name) = names.get(&stack.item()) else {
+                continue;
+            };
+            let count = held.entry(name.clone()).or_insert(0);
+            *count = count.saturating_add(stack.count());
         }
         with_session(|s| s.on_inventory(&mut ServerAdapter { host: &mut *host }, uuid, &held));
     });
 }
 
 /// A plugin channel message: the mod's own channels go to the session, with the part after the namespace as the path.
-pub fn custom_payload_from_client(host: &mut dyn Host, uuid: u128, channel: &str, data: &[u8]) {
-    let Some(path) = channel.strip_prefix(CHANNEL_PREFIX) else { return };
+pub fn custom_payload_from_client(
+    host: &mut dyn mod_api::ServerHost,
+    uuid: u128,
+    channel: &str,
+    data: &[u8],
+) {
+    let Some(path) = channel.strip_prefix(CHANNEL_PREFIX) else {
+        return;
+    };
     guarded("custom payload", || {
         with_session(|s| s.on_packet(&mut ServerAdapter { host: &mut *host }, uuid, path, data));
     });
 }
 
 /// The usages the commands tree gets: `bingo ...`, and the shortcuts. Operators get the ones `requires_op` names.
-pub fn register_commands(commands: &mut Vec<NativeCommand>) {
+pub fn register_commands(commands: &mut Vec<mod_api::Command>) {
     // `g`, `global` and `all` send a line to everyone during a game (the original's global command aliases).
     for alias in chat::GLOBAL_COMMANDS {
-        commands.push(NativeCommand::new(&format!("{alias} <message:text>")));
+        commands.push(mod_api::Command::new(&format!("{alias} <message:text>")));
     }
     for (usage, sample) in USAGES {
         let Ok(command) = parse(sample) else {
-            log(&format!("bingo: usage `{usage}` has no parsable sample `{sample}`"));
+            log(&format!(
+                "bingo: usage `{usage}` has no parsable sample `{sample}`"
+            ));
             continue;
         };
         if requires_op(&command) {
-            commands.push(NativeCommand::op(usage, OP_LEVEL));
+            commands.push(mod_api::Command::op(usage, OP_LEVEL));
         } else {
-            commands.push(NativeCommand::new(usage));
+            commands.push(mod_api::Command::new(usage));
         }
     }
 }
@@ -556,7 +785,10 @@ pub fn register_commands(commands: &mut Vec<NativeCommand>) {
 /// The session's line for a typed command: the rest after `bingo`, or the whole line for a shortcut. `None` for any
 /// other command, which is left to the game.
 fn session_line(command: &str) -> Option<String> {
-    if let Some(rest) = command.strip_prefix(COMMAND).filter(|rest| rest.is_empty() || rest.starts_with(' ')) {
+    if let Some(rest) = command
+        .strip_prefix(COMMAND)
+        .filter(|rest| rest.is_empty() || rest.starts_with(' '))
+    {
         return Some(rest.trim().to_owned());
     }
     let word = command.split_whitespace().next()?;
@@ -564,7 +796,7 @@ fn session_line(command: &str) -> Option<String> {
 }
 
 /// A `bingo ...` command, or a shortcut, typed on the dedicated server's console; the answer goes to the console.
-pub fn perform_console_command(host: &mut dyn Host, command: &str) -> Flow {
+pub fn perform_console_command(host: &mut dyn mod_api::ServerHost, command: &str) -> Flow {
     let Some(line) = session_line(command) else {
         return Flow::Continue;
     };
@@ -573,19 +805,21 @@ pub fn perform_console_command(host: &mut dyn Host, command: &str) -> Flow {
     });
     // An empty reply says nothing (a setting turned off that has no message, `prefs::changed_text`).
     if let Some(reply) = reply.filter(|reply| !reply.is_empty()) {
-        host.feedback(Text::literal(reply));
+        let _ = host.commands().feedback(Text::literal(reply));
     }
     if let Some(note) = names_note(&*host, &line) {
-        host.feedback(Text::literal(note));
+        let _ = host.commands().feedback(Text::literal(note));
     }
     Flow::Cancel
 }
 
 /// A typed `bingo ...` command, or a shortcut, run by the session; its answer goes to the player who typed it.
-pub fn perform_command(host: &mut dyn Host, uuid: u128, command: &str) -> Flow {
+pub fn perform_command(host: &mut dyn mod_api::ServerHost, uuid: u128, command: &str) -> Flow {
     if let Some(text) = chat::global_text(command) {
-        let name = host.server_players().into_iter().find(|p| p.uuid == uuid).map(|p| p.name).unwrap_or_default();
-        host.broadcast(Text::literal(chat::global_line(&name, text)));
+        let name = online_name(&*host, uuid).unwrap_or_default();
+        let _ = host
+            .messages()
+            .broadcast(Text::literal(chat::global_line(&name, text)));
         return Flow::Cancel;
     }
     let Some(line) = session_line(command) else {
@@ -598,8 +832,12 @@ pub fn perform_command(host: &mut dyn Host, uuid: u128, command: &str) -> Flow {
     }
     // Horizon checks a command's operator level on its first word only, and `bingo` also has commands for everyone,
     // so the commands that need an operator are checked here.
-    if parse(&line).is_ok_and(|command| requires_op(&command)) && !host.has_permission(uuid, "bingo.op", OP_LEVEL) {
-        let _ = host.tell(uuid, Text::literal("You must be an operator to use this command.".to_string()));
+    if parse(&line).is_ok_and(|command| requires_op(&command)) && !is_op(&*host, uuid) {
+        tell_player(
+            host,
+            uuid,
+            Text::literal("You must be an operator to use this command.".to_string()),
+        );
         return Flow::Cancel;
     }
     let reply = guarded("bingo command", || {
@@ -607,10 +845,10 @@ pub fn perform_command(host: &mut dyn Host, uuid: u128, command: &str) -> Flow {
     });
     // An empty reply says nothing (a setting turned off that has no message, `prefs::changed_text`).
     if let Some(reply) = reply.filter(|reply| !reply.is_empty()) {
-        let _ = host.tell(uuid, Text::literal(reply));
+        tell_player(host, uuid, Text::literal(reply));
     }
     if let Some(note) = names_note(&*host, &line) {
-        let _ = host.tell(uuid, Text::literal(note));
+        tell_player(host, uuid, Text::literal(note));
     }
     Flow::Cancel
 }
@@ -619,14 +857,24 @@ pub fn perform_command(host: &mut dyn Host, uuid: u128, command: &str) -> Flow {
 const MENU_TITLE: &str = "Bingo";
 
 /// The rules, whether the round is still pregame, and whether the player may run operator commands: what the menu shows.
-fn menu_view(host: &dyn Host, uuid: u128) -> (Options, bool, bool) {
+fn menu_view(host: &dyn mod_api::Host, uuid: u128) -> (Options, bool, bool) {
     let (rules, pregame) = with_session(|s| (s.rules().clone(), s.is_pregame()));
-    (rules, pregame, host.has_permission(uuid, "bingo.op", OP_LEVEL))
+    (rules, pregame, is_op(host, uuid))
 }
 
 /// The items of a menu page, as the chest holds them: the slots' items read from their SNBT.
-fn menu_items(host: &dyn Host, page: &Page, rules: &Options, pregame: bool, operator: bool) -> Vec<Option<ItemStack>> {
-    let view = View { rules, pregame, operator };
+fn menu_items(
+    host: &dyn mod_api::Host,
+    page: &Page,
+    rules: &Options,
+    pregame: bool,
+    operator: bool,
+) -> Vec<Option<ItemStack>> {
+    let view = View {
+        rules,
+        pregame,
+        operator,
+    };
     menu::contents(page, &view)
         .into_iter()
         .map(|slot| slot.and_then(|slot| host.item_from_snbt(&menu::item_snbt(&slot))))
@@ -634,56 +882,104 @@ fn menu_items(host: &dyn Host, page: &Page, rules: &Options, pregame: bool, oper
 }
 
 /// `bingo menu`: opens the lobby menu on its root page for the player.
-fn open_lobby_menu(host: &mut dyn Host, uuid: u128) {
+fn open_lobby_menu(host: &mut dyn mod_api::ServerHost, uuid: u128) {
     let (rules, pregame, operator) = menu_view(&*host, uuid);
     let items = menu_items(&*host, &Page::Root, &rules, pregame, operator);
-    match host.open_menu(uuid, menu::ROWS, Text::literal(MENU_TITLE), items) {
-        Some(window) => LOBBY_MENUS.lock().unwrap_or_else(PoisonError::into_inner).open(uuid, window, Page::Root),
-        None => {
-            let _ = host.tell(uuid, Text::literal("The menu could not be opened.".to_string()));
-        }
+    // `CloseFirst` is vanilla's default: a new menu closes the old screen first.
+    match host
+        .open_menu(
+            uuid,
+            menu::ROWS,
+            Text::literal(MENU_TITLE),
+            items,
+            MenuReplace::CloseFirst,
+        )
+        .ok()
+        .flatten()
+    {
+        Some(window) => LOBBY_MENUS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .open(uuid, window, Page::Root),
+        None => tell_player(
+            host,
+            uuid,
+            Text::literal("The menu could not be opened.".to_string()),
+        ),
     }
 }
 
 /// Shows `page` in the player's open lobby menu, refreshing its items. False if that window is not the lobby menu.
-fn show_lobby_page(host: &mut dyn Host, uuid: u128, window: i32, page: Page) -> bool {
+fn show_lobby_page(
+    host: &mut dyn mod_api::ServerHost,
+    uuid: u128,
+    window: i32,
+    page: Page,
+) -> bool {
     let (rules, pregame, operator) = menu_view(&*host, uuid);
     let items = menu_items(&*host, &page, &rules, pregame, operator);
-    if !LOBBY_MENUS.lock().unwrap_or_else(PoisonError::into_inner).turn(uuid, window, page) {
+    if !LOBBY_MENUS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .turn(uuid, window, page)
+    {
         return false;
     }
-    host.set_menu_items(uuid, items);
+    let _ = host.menu_set_items(uuid, window, items);
     true
 }
 
 /// A click in a menu the mod opened (`native_open_menu`): the lobby menu's slots run their outcome. Only a click that
 /// picks up or shift-clicks a slot of the chest counts; the player's inventory and drags do nothing.
-pub fn menu_clicked(host: &mut dyn Host, uuid: u128, window: i32, slot: i32, mode: i32) {
+pub fn menu_clicked(
+    host: &mut dyn mod_api::ServerHost,
+    uuid: u128,
+    window: i32,
+    slot: i32,
+    mode: i32,
+) {
     if !matches!(mode, 0 | 1) {
         return;
     }
-    let Ok(slot) = usize::try_from(slot) else { return };
+    let Ok(slot) = usize::try_from(slot) else {
+        return;
+    };
     if slot >= menu::SLOTS {
         return;
     }
-    let Some(page) = LOBBY_MENUS.lock().unwrap_or_else(PoisonError::into_inner).page(uuid, window) else { return };
+    let Some(page) = LOBBY_MENUS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .page(uuid, window)
+    else {
+        return;
+    };
     let (rules, pregame, operator) = menu_view(&*host, uuid);
-    let view = View { rules: &rules, pregame, operator };
+    let view = View {
+        rules: &rules,
+        pregame,
+        operator,
+    };
     match menu::click(&page, slot, &view) {
         Outcome::Nothing => {}
         Outcome::Show(next) => {
             show_lobby_page(host, uuid, window, next);
         }
         Outcome::Close => {
-            LOBBY_MENUS.lock().unwrap_or_else(PoisonError::into_inner).close(uuid, window);
+            LOBBY_MENUS
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .close(uuid, window);
             host.close_menu(uuid);
         }
         Outcome::Tell(text) => {
-            let _ = host.tell(uuid, Text::literal(text));
+            tell_player(host, uuid, Text::literal(text));
         }
         Outcome::Run(line) => {
             let reply = guarded("bingo menu command", || {
-                with_session(|s| s.command(&mut ServerAdapter { host: &mut *host }, Some(uuid), &line))
+                with_session(|s| {
+                    s.command(&mut ServerAdapter { host: &mut *host }, Some(uuid), &line)
+                })
             })
             .unwrap_or_default();
             if menu::start_refused(&line, &reply) {
@@ -691,9 +987,12 @@ pub fn menu_clicked(host: &mut dyn Host, uuid: u128, window: i32, slot: i32, mod
                 show_lobby_page(host, uuid, window, Page::Warnings(reply));
             } else {
                 if !reply.is_empty() {
-                    let _ = host.tell(uuid, Text::literal(reply));
+                    tell_player(host, uuid, Text::literal(reply));
                 }
-                let page = LOBBY_MENUS.lock().unwrap_or_else(PoisonError::into_inner).page(uuid, window);
+                let page = LOBBY_MENUS
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .page(uuid, window);
                 if let Some(page) = page {
                     show_lobby_page(host, uuid, window, page);
                 }
@@ -704,19 +1003,8 @@ pub fn menu_clicked(host: &mut dyn Host, uuid: u128, window: i32, slot: i32, mod
 
 /// The player's menu window closed: a lobby menu it was is forgotten.
 pub fn menu_closed(uuid: u128, window: i32) {
-    LOBBY_MENUS.lock().unwrap_or_else(PoisonError::into_inner).close(uuid, window);
-}
-
-/// Replaces `path` with `content` without leaving a half-written file behind: the text goes to `<path>.tmp` in the same
-/// folder, which is then renamed over `path`. A crash mid-write leaves the old file (or the temp file), never a truncated
-/// one. Not fsynced: a power cut can still lose the newest write, but cannot cut a file short. A failed rename removes
-/// the temp file.
-fn write_atomic(path: &std::path::Path, content: &str) -> std::io::Result<()> {
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
-    let tmp = std::path::PathBuf::from(tmp);
-    std::fs::write(&tmp, content)?;
-    std::fs::rename(&tmp, path).inspect_err(|_| {
-        let _ = std::fs::remove_file(&tmp);
-    })
+    LOBBY_MENUS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .close(uuid, window);
 }
