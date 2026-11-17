@@ -1,0 +1,12 @@
+id = "bingo"
+name = "Yet Another Bingo"
+version = "0.0.1"
+description = "A port of Yet Another Minecraft BINGO: race to complete a card of objectives."
+authors = ["ZiQu-dev"]
+api = "0.2"
+side = "both"
+
+[native]
+game = "26.3"
+horizon = "c07bfa76e71e8db9e84a7e61832a8fb898718e81"
+mixins = "e59da9094f0c2fdda6c627fe9eff22dec6a906f0"

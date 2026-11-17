@@ -1,0 +1,16 @@
+[package]
+name = "mod-bingo"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+horizon-mod-api = { path = ".horizon/sdk/api/crates/horizon-mod-api" }
+# The logic itself: std-only, tested apart from the game (dev/).
+horizon-bingo = { path = "horizon-bingo" }
+png = "0.18"
+serde_json = "1"
+log = "0.4"
+
+[features]
+# The title screen's BINGO! button (needs horizon-rust/horizon#17246). Off by default.
+world-request = []
