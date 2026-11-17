@@ -1,26 +1,26 @@
 //! The wiring between Horizon's native hooks and `horizon-bingo`'s [`BingoClient`]. All behaviour is in that crate and
-//! tested there against a fake host; this file only adapts Horizon's `Host` and HUD batch to the crate's `Host` trait.
+//! tested there against a fake host; this file only adapts Horizon's hosts and draw context to the crate's `Host` trait.
 //! Logs a status line to the file named by BINGO_H0_LOG, and only when that variable is set.
 use horizon_bingo::assets::Assets;
-use horizon_bingo::buf::encode;
 use horizon_bingo::client::BingoClient;
 use horizon_bingo::config::ClientConfig;
 use horizon_bingo::host::{Argb, Host as BingoHost, scale_alpha};
 use horizon_bingo::state::SoundKey;
-use horizon_client::mod_api::{
-    ClientDisconnectingEvent, ClientPacketEvent, ClientPlayerNetworkLoggingInEvent, ClientTickPostEvent,
-    ClientboundPlayPacket, ConfigLoadingEvent, ConfigReloadingEvent, CustomPayloadFromClientEvent, Flow,
-    GuiLayerPostEvent, GuiLayerPreEvent, Hooks, Host, HudBatch, KeyCode, MenuClickedEvent, MenuClosedEvent, NativeConfig, NativeConfigFile, NativeConfigKind,
-    NativeScreenKind, PerformCommandEvent, PerformConsoleCommandEvent, PlayerChatEvent, ServerAboutToStartEvent, PlayerInventoryChangedEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent,
-    RegisterCommandsEvent, RegisterConfigsEvent, ScreenKeyPressedPreEvent, ScreenMouseButtonPressedPreEvent,
-    ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent,
-    ScreenRenderPostEvent, ServerTickEvent, ServerboundPlayPacket, Text,
+use mod_api::{
+    ClientHost, ClientPacketEvent, ClientPlayerLoggingInEvent, ClientPlayerLoggingOutEvent, ClientTickPostEvent,
+    CommandArgumentValue, CommandInvocation, CommandSource, ConfigPath, DrawContext, Flow, GuiLayerPostEvent,
+    GuiLayerPreEvent, Hooks, IPayloadContext, IPayloadHandler, KeyRegistration, MenuClickedEvent, MenuClosedEvent,
+    PayloadBytes, PayloadHandleError, PayloadId, PlayerInventoryChangedEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent,
+    RegisterCommandsEvent, Registrar, RegistrationContext, RunModCommandEvent, ScreenKeyPressedPreEvent,
+    ScreenMouseButtonPressedPreEvent, ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent,
+    ScreenMouseScrolledPreEvent, ScreenRenderPostEvent, ServerAboutToStartEvent, ServerChatEvent, ServerHost, ServerTickEvent,
+    EntityRef, HudMode, Identifier, ItemKey, SoundPlay, Text,
 };
 use std::{
     collections::HashMap,
     io::Write,
     panic::{AssertUnwindSafe, catch_unwind},
-    sync::{Mutex, MutexGuard, PoisonError},
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 
 mod server;
@@ -33,69 +33,54 @@ const WIDTH_CACHE_MAX: usize = 2048;
 /// when a connection starts or ends (the language and its font may have changed).
 static WIDTHS: Mutex<Option<HashMap<String, i32>>> = Mutex::new(None);
 
-/// `ids::play::serverbound::CUSTOM_PAYLOAD` of protocol 777.
-const PLAY_SERVERBOUND_CUSTOM_PAYLOAD: i32 = 22;
 /// The HUD layer the overlay is drawn after (it is drawn whenever the HUD is).
 const OVERLAY_LAYER: &str = "minecraft:hotbar";
 
 /// The HUD atlas slot Horizon gives a mod's own picture.
 const MOD_IMAGE_SPRITE: &str = "horizon/modimage";
-/// The mod's id, for its own screen and key binding.
-const MOD_ID: &str = "bingo_native";
-/// The client config file, in Horizon's config folder (`config/bingo/client.json`).
+/// The mod's id: its manifest's `id`, for its own screen, key bindings, settings and config folder.
+const MOD_ID: &str = "bingo";
+/// The client config file, in the game's `config/` folder (`config/bingo/client.json`), read and written through the
+/// mod's config files.
 const CONFIG_FILE: &str = "bingo/client.json";
-/// How far the player tooltip's look reaches, in blocks. The mod API does not say the creative reach (5 blocks in
-/// vanilla), so the survival reach is used for both.
-const TOOLTIP_REACH: f64 = 3.0;
-/// Where the client config was read from, kept for its writes. Set when the game reads the file.
-static CONFIG_PATH: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
+/// The default key bindings, as vanilla names. The keys are registered in Controls under these defaults.
+const OPEN_CARD_KEY: &str = "key.keyboard.y";
+const UNBOUND_KEY: &str = "key.keyboard.unknown";
+/// The client config is read again every this many ticks, so an edit of the file is taken as it was on disk.
+const CONFIG_POLL_TICKS: u64 = 20;
+/// The last config text read or written, to tell an edit of the file from the mod's own write.
+static CONFIG_TEXT: Mutex<Option<String>> = Mutex::new(None);
+/// The GUI size of the last frame drawn, in GUI pixels: the presses and the scroll read it, as the GUI size is not
+/// given to a press. Zero before the first frame.
+static LAST_GUI: Mutex<[f32; 2]> = Mutex::new([0.0; 2]);
 
-/// A vanilla key name (`key.keyboard.y`) as a key code: the letters and digits, which is what a card key can be.
-fn key_code(name: &str) -> Option<KeyCode> {
-    let key = name.strip_prefix("key.keyboard.")?;
-    Some(match key {
-        "a" => KeyCode::KeyA, "b" => KeyCode::KeyB, "c" => KeyCode::KeyC, "d" => KeyCode::KeyD, "e" => KeyCode::KeyE,
-        "f" => KeyCode::KeyF, "g" => KeyCode::KeyG, "h" => KeyCode::KeyH, "i" => KeyCode::KeyI, "j" => KeyCode::KeyJ,
-        "k" => KeyCode::KeyK, "l" => KeyCode::KeyL, "m" => KeyCode::KeyM, "n" => KeyCode::KeyN, "o" => KeyCode::KeyO,
-        "p" => KeyCode::KeyP, "q" => KeyCode::KeyQ, "r" => KeyCode::KeyR, "s" => KeyCode::KeyS, "t" => KeyCode::KeyT,
-        "u" => KeyCode::KeyU, "v" => KeyCode::KeyV, "w" => KeyCode::KeyW, "x" => KeyCode::KeyX, "y" => KeyCode::KeyY,
-        "z" => KeyCode::KeyZ,
-        "0" => KeyCode::Digit0, "1" => KeyCode::Digit1, "2" => KeyCode::Digit2, "3" => KeyCode::Digit3,
-        "4" => KeyCode::Digit4, "5" => KeyCode::Digit5, "6" => KeyCode::Digit6, "7" => KeyCode::Digit7,
-        "8" => KeyCode::Digit8, "9" => KeyCode::Digit9,
-        _ => return None,
-    })
+fn last_gui() -> Option<(i32, i32)> {
+    let [w, h] = *LAST_GUI.lock().unwrap_or_else(PoisonError::into_inner);
+    (w > 0.0 && h > 0.0).then_some((w as i32, h as i32))
 }
 
-fn gui_of(host: &dyn Host) -> Option<(i32, i32)> {
-    host.client_state().map(|s| (s.gui_size[0] as i32, s.gui_size[1] as i32))
+fn remember_gui(size: [f32; 2]) {
+    *LAST_GUI.lock().unwrap_or_else(PoisonError::into_inner) = size;
 }
 
-fn mouse_of(host: &dyn Host) -> (i32, i32) {
+fn mouse_of(host: &dyn ClientHost) -> (i32, i32) {
     let c = host.cursor();
     (c[0] as i32, c[1] as i32)
 }
 
-pub fn hooks() -> Box<dyn Hooks> {
-    Box::new(Mod {
-        client: Mutex::new(BingoClient::new()),
-        key_bound: std::sync::atomic::AtomicBool::new(false),
-    })
-}
-
-/// Where the original mod's files are: BINGO_ASSETS, else the mod's own data folder (`horizon-mods/.horizon-mod-data/
-/// bingo_native/assets`), which `tools/prepare_assets.py` fills from the player's copy of the mod.
-fn load_assets(host: &dyn Host) -> (Result<Assets, String>, String) {
+/// Where the mod's assets are: BINGO_ASSETS, else the mod's data folder in the game folder (`horizon-mod-data/bingo/
+/// assets`), which `tools/prepare_assets.py` fills from the player's copy of the mod.
+fn load_assets(host: &dyn ClientHost) -> (Result<Assets, String>, String) {
+    let game = host.instance_dir();
     let dir = match std::env::var("BINGO_ASSETS") {
         Ok(dir) => std::path::PathBuf::from(dir),
-        Err(_) => host.data_dir(MOD_ID).join("assets"),
+        Err(_) => game.join("horizon-mod-data").join(MOD_ID).join("assets"),
     };
     let mut assets = Assets::load(&dir);
     if let Ok(a) = assets.as_mut() {
-        // options.txt sits in the game folder, three levels above the mod's data folder.
-        let game = host.data_dir(MOD_ID).ancestors().nth(3).map(|p| p.to_path_buf());
-        let language = game
-            .and_then(|g| std::fs::read_to_string(g.join("options.txt")).ok())
+        // options.txt sits in the game folder.
+        let language = std::fs::read_to_string(game.join("options.txt"))
+            .ok()
             .and_then(|t| t.lines().find_map(|l| l.strip_prefix("lang:").map(str::to_string)))
             .unwrap_or_else(|| "en_us".into());
         if let Err(e) = a.set_language(&dir, language.trim()) {
@@ -149,28 +134,91 @@ fn dump(channel: &str, data: &[u8]) {
     }
 }
 
-/// Moves the vertices drawn since `start` as `translate(anchor); rotate(rotation); scale(scale)` does to what was drawn
-/// at the origin: scaled about it, turned counter-clockwise by `rotation` radians, then moved to `anchor`.
-fn transform_since(batch: &mut HudBatch, start: usize, anchor: (f32, f32), scale: f32, rotation: f32) {
-    let (s, c) = rotation.sin_cos();
-    for v in batch.vertices.iter_mut().skip(start) {
-        let (x, y) = (v.pos[0] * scale, v.pos[1] * scale);
-        v.pos[0] = anchor.0 + c * x - s * y;
-        v.pos[1] = anchor.1 + s * x + c * y;
+/// One drawing call, kept until the frame takes the run. A run is kept so that `end_alpha` can fade it before it is
+/// drawn, as the old vertex-level fade did.
+enum Op {
+    Fill { rect: [f32; 4], argb: u32 },
+    Quad { points: [[f32; 2]; 4], argb: u32 },
+    Text { text: String, at: [f32; 2], argb: u32, shadow: bool },
+    Sprite { src: [f32; 4], dst: [f32; 4], tint: u32 },
+    Item { key: ItemKey, at: [f32; 2], size: f32 },
+    NineSlice { sprite: String, rect: [f32; 4], argb: u32 },
+    // PORT-GAP: a tooltip is drawn at full alpha; the new draw context gives no way to fade it.
+    Tooltip { lines: Vec<String>, at: [f32; 2] },
+}
+
+impl Op {
+    fn fade(&mut self, alpha: f32) {
+        match self {
+            Op::Fill { argb, .. } | Op::Quad { argb, .. } | Op::Text { argb, .. } | Op::NineSlice { argb, .. } => {
+                *argb = scale_alpha(*argb, alpha)
+            }
+            Op::Sprite { tint, .. } => *tint = scale_alpha(*tint, alpha),
+            // PORT-GAP: items are drawn at full alpha; the item call takes no colour.
+            Op::Item { .. } | Op::Tooltip { .. } => {}
+        }
     }
 }
 
-/// Multiplies the alpha of the vertices drawn since `start` by `alpha`. A vertex's `color` packs its alpha in the top
-/// byte, as `rgba` does for the GUI colours, so `scale_alpha` fades it without touching the colour.
-fn fade_since(batch: &mut HudBatch, start: usize, alpha: f32) {
-    for v in batch.vertices.iter_mut().skip(start) {
-        v.color = scale_alpha(v.color, alpha);
+/// The drawing of one screen or HUD layer, recorded in order and handed to the frame's draw context at the end.
+#[derive(Default)]
+struct Draw {
+    ops: Vec<Op>,
+}
+
+impl Draw {
+    fn flush(self, out: &mut dyn DrawContext) {
+        for op in self.ops {
+            match op {
+                Op::Fill { rect, argb } => out.fill(rect, argb),
+                Op::Quad { points, argb } => out.quad(points, argb),
+                Op::Text { text, at, argb, shadow } => out.text(&text, at, argb, shadow),
+                Op::Sprite { src, dst, tint } => {
+                    let _ = out.sprite(MOD_IMAGE_SPRITE, src, dst, Some(tint));
+                }
+                Op::Item { key, at, size } => {
+                    let _ = out.item(key, at, size);
+                }
+                Op::NineSlice { sprite, rect, argb } => out.gui_nine_slice(&sprite, rect, argb),
+                Op::Tooltip { lines, at } => {
+                    let texts: Vec<Text> = lines.into_iter().map(|l| Text::literal(l)).collect();
+                    let _ = out.gui_tooltip(&texts, at);
+                }
+            }
+        }
+    }
+}
+
+fn gui_pixels(size: [f32; 2]) -> (i32, i32) {
+    (size[0] as i32, size[1] as i32)
+}
+
+/// The config text as the file holds it, None when it cannot be read.
+fn read_client_config(host: &dyn ClientHost) -> Option<String> {
+    let path = ConfigPath::new(CONFIG_FILE).ok()?;
+    host.config_files().read(&path).ok().map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// The config file is written with the crate's defaults when it is missing.
+fn write_client_config(host: &dyn ClientHost, text: &str) {
+    let Ok(path) = ConfigPath::new(CONFIG_FILE) else { return };
+    if let Err(e) = host.config_files().write(&path, text.as_bytes()) {
+        log(&format!("client config not saved: {e:?}"));
     }
 }
 
 struct Mod {
     client: Mutex<BingoClient>,
     key_bound: std::sync::atomic::AtomicBool,
+}
+
+impl Default for Mod {
+    fn default() -> Self {
+        Mod {
+            client: Mutex::new(BingoClient::new()),
+            key_bound: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
 }
 
 impl Mod {
@@ -192,13 +240,13 @@ fn guarded<T>(what: &str, f: impl FnOnce() -> T) -> Option<T> {
 }
 
 /// The width of `text` in the game's font, rounded up, from the cache when it was measured before.
-fn cached_width(host: &dyn Host, text: &str) -> i32 {
+fn cached_width(host: &dyn ClientHost, text: &str) -> i32 {
     let mut cache = WIDTHS.lock().unwrap_or_else(PoisonError::into_inner);
     let map = cache.get_or_insert_with(HashMap::new);
     if let Some(&width) = map.get(text) {
         return width;
     }
-    let width = host.text_width(text).ceil() as i32;
+    let width = host.text_width(&Text::literal(text.to_owned())).unwrap_or(0);
     if map.len() >= WIDTH_CACHE_MAX {
         map.clear();
     }
@@ -211,118 +259,57 @@ fn forget_widths() {
     *WIDTHS.lock().unwrap_or_else(PoisonError::into_inner) = None;
 }
 
-/// Horizon's `Host` (and, inside a HUD layer, its batch) as the crate's `Host`.
+/// Horizon's client host as the crate's `Host`, for the client tick: it writes, plays sounds and reads the config. It
+/// draws nothing: the tick has no draw context, and the crate draws in the screen and HUD hooks.
 struct Adapter<'a> {
-    host: &'a mut dyn Host,
-    batch: Option<&'a mut HudBatch>,
+    host: &'a mut dyn ClientHost,
 }
+
+// PORT-GAP: `looked_at_player` is not answered (the default, None): the new API has no client entity list, and the
+// crosshair's entity has no UUID the client can read (`EntityRef::uuid` is server-side), so the player tooltip is lost.
 
 impl BingoHost for Adapter<'_> {
     fn send_to_server(&mut self, channel: &str, data: &[u8]) -> Result<(), String> {
-        // ServerboundCustomPayloadPacket: the channel as a VarInt-length string, then the data. Built through
-        // `decode` so the mod needs no crate besides horizon-client.
-        let body = encode(|w| {
-            w.write_string(channel);
-            w.write_raw(data);
-        });
-        let packet = ServerboundPlayPacket::decode(PLAY_SERVERBOUND_CUSTOM_PAYLOAD, &body).map_err(|e| e.to_string())?;
-        self.host.send_packet(packet)
-    }
-
-    fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: Argb) {
-        if let Some(batch) = self.batch.as_mut() {
-            self.host.fill(batch, [x as f32, y as f32, w as f32, h as f32], color);
+        // PORT-GAP: `minecraft:register` is vanilla's channel and cannot be declared here, so the client's list of
+        // channels is not sent; raw channels reach the server without it.
+        if channel == horizon_bingo::client::REGISTER_CHANNEL {
+            return Ok(());
         }
+        self.host
+            .send_payload_to_server(&PayloadId(channel.to_owned()), PayloadBytes(data.to_vec()))
+            .map(|_| ())
+            .map_err(|e| format!("{e:?}"))
     }
 
-    fn draw_text(&mut self, x: i32, y: i32, text: &str, color: Argb, shadow: bool) {
-        if let Some(batch) = self.batch.as_mut() {
-            self.host.text(batch, text, [x as f32, y as f32], color & 0x00FF_FFFF, shadow);
-        }
-    }
+    fn fill_rect(&mut self, _: i32, _: i32, _: i32, _: i32, _: Argb) {}
 
-    fn draw_text_xf(&mut self, text: &str, anchor: (f32, f32), offset: (f32, f32), scale: f32, rotation: f32, color: Argb, shadow: bool) {
-        if let Some(batch) = self.batch.as_mut() {
-            let start = batch.vertices.len();
-            self.host.text(batch, text, [offset.0, offset.1], color & 0x00FF_FFFF, shadow);
-            transform_since(batch, start, anchor, scale, rotation);
-        }
-    }
+    fn draw_text(&mut self, _: i32, _: i32, _: &str, _: Argb, _: bool) {}
 
-    fn fill_square_xf(&mut self, cx: f32, cy: f32, half: f32, rotation: f32, color: Argb) {
-        if let Some(batch) = self.batch.as_mut() {
-            let start = batch.vertices.len();
-            self.host.fill(batch, [-half, -half, 2.0 * half, 2.0 * half], color);
-            transform_since(batch, start, (cx, cy), 1.0, rotation);
-        }
-    }
+    fn draw_sprite(&mut self, _: [f32; 4], _: [f32; 4]) {}
 
+    fn draw_item(&mut self, _: &str, _: f32, _: f32, _: f32) {}
+
+    fn draw_vanilla_nine_slice(&mut self, _: &str, _: f32, _: f32, _: f32, _: f32, _: Argb) {}
+
+    fn draw_tooltip(&mut self, _: &[String], _: i32, _: i32) {}
+
+    // PORT-GAP: `player_face` is not overridden (the default, None): the new client API has no skin pixels, so the
+    // card and score faces are dropped.
     fn upload_image(&mut self, width: u32, height: u32, rgba: &[u8]) -> bool {
         self.host.mod_image(width, height, rgba)
-    }
-
-    fn player_face(&mut self, uuid: u128) -> Option<Vec<u8>> {
-        let profiles = self.host.client_profiles();
-        let Some(profile) = profiles.into_iter().find(|p| p.uuid == uuid) else {
-            log(&format!("face {uuid:032x}: no profile"));
-            return None;
-        };
-        let skin = profile.skin;
-        let Some(tex) = self.host.client_texture(&skin) else {
-            log(&format!("face {uuid:032x}: no texture for {skin:?}"));
-            return None;
-        };
-        let (w, h) = (tex.width as usize, tex.height as usize);
-        if w < 64 || h < 16 || tex.rgba.len() < w * h * 4 {
-            return None;
-        }
-        // The face is the skin's 8 x 8 at (8, 8); the hat layer at (40, 8) goes over it where it is not clear.
-        let px = |x: usize, y: usize| -> [u8; 4] {
-            let i = (y * w + x) * 4;
-            [tex.rgba[i], tex.rgba[i + 1], tex.rgba[i + 2], tex.rgba[i + 3]]
-        };
-        let mut out = Vec::with_capacity(8 * 8 * 4);
-        for y in 0..8 {
-            for x in 0..8 {
-                let (base, hat) = (px(8 + x, 8 + y), px(40 + x, 8 + y));
-                let a = hat[3] as u32;
-                for c in 0..3 {
-                    out.push(((hat[c] as u32 * a + base[c] as u32 * (255 - a)) / 255) as u8);
-                }
-                out.push(255);
-            }
-        }
-        Some(out)
-    }
-
-    fn draw_sprite(&mut self, src: [f32; 4], dst: [f32; 4]) {
-        if let Some(batch) = self.batch.as_mut() {
-            self.host.sprite(batch, MOD_IMAGE_SPRITE, src, dst);
-        }
-    }
-
-    fn draw_item(&mut self, name: &str, x: f32, y: f32, size: f32) {
-        if let Some(batch) = self.batch.as_mut() {
-            self.host.item(batch, name, [x, y], size);
-        }
-    }
-
-    fn begin_alpha(&mut self) -> usize {
-        self.batch.as_ref().map_or(0, |batch| batch.vertices.len())
-    }
-
-    fn end_alpha(&mut self, start: usize, alpha: f32) {
-        if let Some(batch) = self.batch.as_mut() {
-            fade_since(batch, start, alpha);
-        }
     }
 
     fn text_width(&self, text: &str) -> i32 {
         cached_width(&*self.host, text)
     }
 
+    fn gui_width(&self) -> Option<i32> {
+        // No frame is being drawn on the tick, so the width is not known here.
+        None
+    }
+
     fn gui_size(&self) -> Option<(i32, i32)> {
-        gui_of(&*self.host)
+        last_gui()
     }
 
     fn cursor(&self) -> (i32, i32) {
@@ -330,31 +317,32 @@ impl BingoHost for Adapter<'_> {
     }
 
     fn is_playing_screen(&self) -> bool {
-        self.host.client_state().is_some_and(|s| matches!(s.screen, NativeScreenKind::Playing))
+        self.host.playing()
     }
 
     fn key_down(&self, key: &str) -> bool {
-        key_code(key).is_some_and(|code| self.host.is_key_down(code))
+        self.host.is_key_down(key)
     }
 
     fn sneaking(&self) -> bool {
-        self.host.sneaking()
+        sneaking(&*self.host)
     }
 
     fn chat_open(&self) -> bool {
-        self.host.client_state().is_some_and(|s| matches!(s.screen, NativeScreenKind::Chat))
+        chat_open(&*self.host)
     }
 
     fn hud_hidden(&self) -> bool {
-        self.host.client_state().is_some_and(|s| s.gui_hidden)
+        hud_hidden(&*self.host)
     }
 
     fn debug_screen(&self) -> bool {
-        self.host.client_state().is_some_and(|s| s.debug_screen)
+        // PORT-GAP: F3's debug screen is not exposed by the new API, so the crate treats it as closed.
+        false
     }
 
     fn tab_list_down(&self) -> bool {
-        self.host.is_key_down(KeyCode::Tab)
+        self.host.is_key_down("key.keyboard.tab")
     }
 
     fn setting(&self, key: &str) -> Option<String> {
@@ -374,31 +362,12 @@ impl BingoHost for Adapter<'_> {
     }
 
     fn screen_is_open(&self) -> bool {
-        self.host.mod_screen() == Some(MOD_ID)
+        mod_screen_up(&*self.host)
     }
 
-    fn draw_vanilla_nine_slice(&mut self, sprite: &str, x: f32, y: f32, w: f32, h: f32, argb: Argb) {
-        if let Some(batch) = self.batch.as_mut() {
-            // The GUI atlas and its `gui.scaling` metadata are keyed by the full path (`gui/sprites/widget/tab`), and
-            // `native_gui_nine_slice` looks the name up as given; the crate names vanilla widgets `widget/...`.
-            let full = match sprite.starts_with("gui/sprites/") {
-                true => sprite.to_string(),
-                false => format!("gui/sprites/{sprite}"),
-            };
-            self.host.gui_nine_slice(batch, &full, [x, y, w, h], argb);
-        }
-    }
-
-    fn draw_tooltip(&mut self, lines: &[String], x: i32, y: i32) {
-        if let Some(batch) = self.batch.as_mut() {
-            let texts: Vec<_> = lines.iter().map(|l| Text::literal(l.clone())).collect();
-            self.host.gui_tooltip(batch, &texts, [x as f32, y as f32]);
-        }
-    }
-
-    fn gui_width(&self) -> Option<i32> {
-        // The HUD batch is in GUI pixels and carries the GUI size (docs: `batch.width` and `batch.height`).
-        self.batch.as_ref().map(|batch| batch.width as i32)
+    fn config_changed(&mut self, json: &str) {
+        write_client_config(&*self.host, json);
+        *CONFIG_TEXT.lock().unwrap_or_else(PoisonError::into_inner) = Some(json.to_owned());
     }
 
     fn play_sound(&mut self, key: SoundKey, volume: f32, pitch: f32) {
@@ -412,177 +381,141 @@ impl BingoHost for Adapter<'_> {
             self.play_local(key, volume, 1.0);
         }
     }
-
-    fn config_changed(&mut self, json: &str) {
-        // The file the game read the config from, else the config folder's copy (the game's own `config/`).
-        let remembered: Option<std::path::PathBuf> = CONFIG_PATH.lock().unwrap_or_else(PoisonError::into_inner).clone();
-        let path = match remembered {
-            Some(path) => path,
-            None => match self.host.config_dir() {
-                Ok(dir) => dir.join(CONFIG_FILE),
-                Err(e) => {
-                    log(&format!("client config not saved: {e}"));
-                    return;
-                }
-            },
-        };
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Err(e) = std::fs::write(&path, json) {
-            log(&format!("client config not saved to {}: {e}", path.display()));
-        }
-    }
-
-    fn looked_at_player(&self) -> Option<u128> {
-        // The view ray is the player's eye and rotation (`client_state`); the players are the living, visible ones
-        // (vanilla's entity picking skips spectators). A player's box is its bounds, with its feet at the bottom middle.
-        let state = self.host.client_state()?;
-        let eye = state.eye_position?;
-        let players: Vec<(u128, [f64; 3], f32, f32)> = self
-            .host
-            .client_entities()
-            .into_iter()
-            .filter(|e| e.alive && !e.spectator)
-            .filter_map(|e| {
-                let uuid = e.player_uuid?;
-                let [lo, hi] = e.bounds;
-                let feet = [(lo[0] + hi[0]) / 2.0, lo[1], (lo[2] + hi[2]) / 2.0];
-                Some((uuid, feet, (hi[0] - lo[0]) as f32, e.height))
-            })
-            .collect();
-        horizon_bingo::hud_tooltip::looked_at_player(eye, state.yaw, state.pitch, &players, TOOLTIP_REACH)
-    }
 }
 
 impl Adapter<'_> {
     /// Plays one of the mod's sounds for this player at their head, at `volume` and `pitch` as Horizon takes them.
+    // PORT-GAP: the sound plays on the UI source at the listener, as the new API's `SoundPlay::ui` does; the old call
+    // named no source.
     fn play_local(&mut self, key: SoundKey, volume: f32, pitch: f32) {
         // The original's own sound event (from the sounds the player's copy of the mod provides as a content mod),
-        // played for this player only, at their head, as the original plays them.
-        let at = self.host.client_state().and_then(|s| s.eye_position).unwrap_or([0.0; 3]);
+        // played for this player only, as the original plays them.
         let event = horizon_bingo::sounds::event_id(key);
-        let ok = self.host.play_local_sound(&event, at, volume, pitch, 0);
+        let sound = SoundPlay::ui(&event).with_volume(volume).with_pitch(pitch);
+        let ok = self.host.play_local_sound(&sound, 0).is_some();
         log(&format!("sound {event} volume {volume} pitch {pitch}: {}", if ok { "played" } else { "no such sound event" }));
     }
 }
 
-/// The client config file as the game read it or read it again: the crate takes its text, and its path is kept for the
-/// writes. Other mods' configs, and this mod's server configs, are not this file.
-fn read_client_config(hooks: &Mod, file: &NativeConfigFile) {
-    if file.mod_id != MOD_ID || file.kind != NativeConfigKind::Client {
-        return;
-    }
-    *CONFIG_PATH.lock().unwrap_or_else(PoisonError::into_inner) = Some(file.path.clone());
-    let config = ClientConfig::from_json(&file.text);
-    guarded("client config", || hooks.lock_client().set_config(config));
+/// Whether the player is sneaking: the local player's own shift key.
+fn sneaking(host: &dyn ClientHost) -> bool {
+    host.local_player()
+        .and_then(|player| EntityRef::from(player).is_shift_key_down(host))
+        .unwrap_or(false)
 }
 
-/// Horizon's `Host` as a read-only crate `Host`: the screen hooks get a `&dyn Host`, so nothing here can send or open.
+/// Whether the chat screen is open.
+fn chat_open(host: &dyn ClientHost) -> bool {
+    host.observed_screen_id().is_some_and(|screen| screen.id == "chat")
+}
+
+/// Whether the HUD is hidden (F1, or the mod's own hide).
+fn hud_hidden(host: &dyn ClientHost) -> bool {
+    host.hud_mode() != HudMode::AllVisible
+}
+
+/// Horizon's client host as a read-only crate `Host`, with the frame's drawing recorded. The screen and HUD hooks get
+/// a `&dyn ClientHost`, so nothing here can send, open or play.
 struct ReadOnly<'a> {
-    host: &'a dyn Host,
-    batch: Option<&'a mut HudBatch>,
+    host: &'a dyn ClientHost,
+    draw: Draw,
+    gui: [f32; 2],
 }
 
+impl<'a> ReadOnly<'a> {
+    fn new(host: &'a dyn ClientHost, gui: [f32; 2]) -> Self {
+        remember_gui(gui);
+        ReadOnly { host, draw: Draw::default(), gui }
+    }
+}
+
+// PORT-GAP: `draw_text_xf` is not overridden, so the crate's default places text by its anchor and offset but draws it
+// upright and unscaled: the text's rotation and scale are lost (the new draw context has no transform).
 impl BingoHost for ReadOnly<'_> {
     fn send_to_server(&mut self, _: &str, _: &[u8]) -> Result<(), String> {
         Err("read-only host".into())
     }
     fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: Argb) {
-        if let Some(batch) = self.batch.as_mut() {
-            self.host.fill(batch, [x as f32, y as f32, w as f32, h as f32], color);
-        }
+        self.draw.ops.push(Op::Fill { rect: [x as f32, y as f32, w as f32, h as f32], argb: color });
     }
     fn draw_text(&mut self, x: i32, y: i32, text: &str, color: Argb, shadow: bool) {
-        if let Some(batch) = self.batch.as_mut() {
-            self.host.text(batch, text, [x as f32, y as f32], color & 0x00FF_FFFF, shadow);
-        }
+        self.draw.ops.push(Op::Text {
+            text: text.to_owned(),
+            at: [x as f32, y as f32],
+            argb: 0xFF00_0000 | (color & 0x00FF_FFFF),
+            shadow,
+        });
     }
     fn text_width(&self, text: &str) -> i32 {
         cached_width(self.host, text)
     }
-    fn draw_text_xf(&mut self, text: &str, anchor: (f32, f32), offset: (f32, f32), scale: f32, rotation: f32, color: Argb, shadow: bool) {
-        if let Some(batch) = self.batch.as_mut() {
-            let start = batch.vertices.len();
-            self.host.text(batch, text, [offset.0, offset.1], color & 0x00FF_FFFF, shadow);
-            transform_since(batch, start, anchor, scale, rotation);
-        }
-    }
-
     fn fill_square_xf(&mut self, cx: f32, cy: f32, half: f32, rotation: f32, color: Argb) {
-        if let Some(batch) = self.batch.as_mut() {
-            let start = batch.vertices.len();
-            self.host.fill(batch, [-half, -half, 2.0 * half, 2.0 * half], color);
-            transform_since(batch, start, (cx, cy), 1.0, rotation);
-        }
+        let (s, c) = rotation.sin_cos();
+        let corner = |x: f32, y: f32| [cx + c * x - s * y, cy + s * x + c * y];
+        let points = [corner(-half, -half), corner(half, -half), corner(half, half), corner(-half, half)];
+        self.draw.ops.push(Op::Quad { points, argb: color });
     }
     fn upload_image(&mut self, _: u32, _: u32, _: &[u8]) -> bool {
         false
     }
     fn draw_sprite(&mut self, src: [f32; 4], dst: [f32; 4]) {
-        if let Some(batch) = self.batch.as_mut() {
-            self.host.sprite(batch, MOD_IMAGE_SPRITE, src, dst);
-        }
+        self.draw.ops.push(Op::Sprite { src, dst, tint: 0xFFFF_FFFF });
     }
     fn draw_vanilla_nine_slice(&mut self, sprite: &str, x: f32, y: f32, w: f32, h: f32, argb: Argb) {
-        if let Some(batch) = self.batch.as_mut() {
-            // The GUI atlas and its `gui.scaling` metadata are keyed by the full path (`gui/sprites/widget/tab`), and
-            // `native_gui_nine_slice` looks the name up as given; the crate names vanilla widgets `widget/...`.
-            let full = match sprite.starts_with("gui/sprites/") {
-                true => sprite.to_string(),
-                false => format!("gui/sprites/{sprite}"),
-            };
-            self.host.gui_nine_slice(batch, &full, [x, y, w, h], argb);
-        }
+        // The GUI atlas and its `gui.scaling` metadata are keyed by the full path (`gui/sprites/widget/tab`), and
+        // the crate names vanilla widgets `widget/...`.
+        let full = match sprite.starts_with("gui/sprites/") {
+            true => sprite.to_string(),
+            false => format!("gui/sprites/{sprite}"),
+        };
+        self.draw.ops.push(Op::NineSlice { sprite: full, rect: [x, y, w, h], argb });
     }
     fn draw_tooltip(&mut self, lines: &[String], x: i32, y: i32) {
-        if let Some(batch) = self.batch.as_mut() {
-            let texts: Vec<_> = lines.iter().map(|l| Text::literal(l.clone())).collect();
-            self.host.gui_tooltip(batch, &texts, [x as f32, y as f32]);
-        }
+        self.draw.ops.push(Op::Tooltip { lines: lines.to_vec(), at: [x as f32, y as f32] });
     }
     fn draw_item(&mut self, name: &str, x: f32, y: f32, size: f32) {
-        if let Some(batch) = self.batch.as_mut() {
-            self.host.item(batch, name, [x, y], size);
-        }
+        let Some(id) = Identifier::parse_namespaced(name) else { return };
+        let Some(key) = self.host.item_key(&id) else { return };
+        self.draw.ops.push(Op::Item { key, at: [x, y], size });
     }
     fn begin_alpha(&mut self) -> usize {
-        self.batch.as_ref().map_or(0, |batch| batch.vertices.len())
+        self.draw.ops.len()
     }
     fn end_alpha(&mut self, start: usize, alpha: f32) {
-        if let Some(batch) = self.batch.as_mut() {
-            fade_since(batch, start, alpha);
+        for op in self.draw.ops.iter_mut().skip(start) {
+            op.fade(alpha);
         }
     }
     fn gui_width(&self) -> Option<i32> {
-        gui_of(self.host).map(|g| g.0)
+        Some(self.gui[0] as i32)
     }
     fn gui_size(&self) -> Option<(i32, i32)> {
-        gui_of(self.host)
+        Some(gui_pixels(self.gui))
     }
     fn cursor(&self) -> (i32, i32) {
         mouse_of(self.host)
     }
     fn is_playing_screen(&self) -> bool {
-        self.host.client_state().is_some_and(|s| matches!(s.screen, NativeScreenKind::Playing))
+        self.host.playing()
     }
     fn key_down(&self, key: &str) -> bool {
-        key_code(key).is_some_and(|code| self.host.is_key_down(code))
+        self.host.is_key_down(key)
     }
     fn sneaking(&self) -> bool {
-        self.host.sneaking()
+        sneaking(self.host)
     }
     fn chat_open(&self) -> bool {
-        self.host.client_state().is_some_and(|s| matches!(s.screen, NativeScreenKind::Chat))
+        chat_open(self.host)
     }
     fn hud_hidden(&self) -> bool {
-        self.host.client_state().is_some_and(|s| s.gui_hidden)
+        hud_hidden(self.host)
     }
     fn debug_screen(&self) -> bool {
-        self.host.client_state().is_some_and(|s| s.debug_screen)
+        // PORT-GAP: F3's debug screen is not exposed by the new API, so the crate treats it as closed.
+        false
     }
     fn tab_list_down(&self) -> bool {
-        self.host.is_key_down(KeyCode::Tab)
+        self.host.is_key_down("key.keyboard.tab")
     }
     fn setting(&self, key: &str) -> Option<String> {
         self.host.setting(MOD_ID, key)
@@ -594,21 +527,69 @@ impl BingoHost for ReadOnly<'_> {
     }
     fn close_screen(&mut self) {}
     fn screen_is_open(&self) -> bool {
-        self.host.mod_screen() == Some(MOD_ID)
+        mod_screen_up(self.host)
     }
     fn play_sound(&mut self, _: SoundKey, _: f32, _: f32) {}
 }
 
-fn mod_screen_up(host: &dyn Host) -> bool {
+fn mod_screen_up(host: &dyn ClientHost) -> bool {
     host.mod_screen() == Some(MOD_ID)
 }
 
-fn width_fn(host: &dyn Host) -> impl Fn(&str) -> i32 + '_ {
+fn width_fn(host: &dyn ClientHost) -> impl Fn(&str) -> i32 + '_ {
     move |s: &str| cached_width(host, s)
 }
 
+/// A raw plugin channel's server side: the mod's own channels reach the session with the channel's full name, from
+/// the player who sent them.
+struct ServerChannel {
+    channel: String,
+}
+
+impl IPayloadHandler for ServerChannel {
+    fn handle(&self, payload: PayloadBytes, context: &mut dyn IPayloadContext) -> Result<(), PayloadHandleError> {
+        let Ok(player) = context.player() else { return Ok(()) };
+        let uuid = player.uuid();
+        let Ok(host) = context.server_host() else { return Ok(()) };
+        guarded("payload", || server::custom_payload_from_client(host, uuid, &self.channel, &payload.0));
+        Ok(())
+    }
+}
+
+/// The typed command as the line the command parser reads: its literals, then its arguments in order. None for an
+/// argument kind no Bingo usage has.
+fn command_line(invocation: &CommandInvocation) -> Option<String> {
+    let mut words: Vec<String> = invocation.literals.clone();
+    for argument in &invocation.arguments {
+        words.push(match &argument.value {
+            CommandArgumentValue::String(text) => text.clone(),
+            CommandArgumentValue::Integer(n) => n.to_string(),
+            CommandArgumentValue::Number(n) => n.to_string(),
+            CommandArgumentValue::Boolean(b) => b.to_string(),
+            _ => return None,
+        });
+    }
+    Some(words.join(" "))
+}
+
+#[mod_api::horizon_mod]
 impl Hooks for Mod {
-    fn client_tick_post(&self, host: &mut dyn Host, _: &mut ClientTickPostEvent) {
+    /// The raw channels the crate uses, declared once: the server hears what the clients send on them.
+    fn register(&self, r: &mut dyn Registrar, _cx: &RegistrationContext) {
+        // PORT-GAP: the labels are the ids (no translation key), as the new registration takes them.
+        r.register_key_mapping(KeyRegistration::new("open_card", OPEN_CARD_KEY));
+        r.register_key_mapping(KeyRegistration::new("toggle_hud", UNBOUND_KEY));
+        r.register_key_mapping(KeyRegistration::new("settings", UNBOUND_KEY));
+        let mut payloads = r.payload_handlers();
+        let mut channels = payloads.registrar("1");
+        for channel in horizon_bingo::channels::CHANNELS.iter() {
+            let name = horizon_bingo::channels::id(channel.path);
+            let handler: Arc<dyn IPayloadHandler> = Arc::new(ServerChannel { channel: name.clone() });
+            channels.play_raw(PayloadId(name), Some(handler));
+        }
+    }
+
+    fn client_tick_post(&self, host: &mut dyn ClientHost, _: &mut ClientTickPostEvent) {
         #[cfg(feature = "world-request")]
         guarded("title button", || title_button::tick(host));
         guarded("client tick", || {
@@ -620,19 +601,39 @@ impl Hooks for Mod {
                     Err(e) => log(&format!("assets NOT loaded from {dir}: {e}")),
                 }
                 client.set_assets(assets);
-                // Registers the key in the player's controls (default Y) and reads what it is bound to.
-                let key = host.mod_key(MOD_ID, "open_card", "key.keyboard.y");
+                // The keys are registered in the player's controls (the card key on Y); the crate reads what each is bound to.
+                let key = host.mod_key(MOD_ID, "open_card").map(|(key, _)| key).unwrap_or_else(|| OPEN_CARD_KEY.into());
                 client.set_open_key(&key);
                 log(&format!("card key: {key}"));
                 // The HUD toggle: unbound by default, bound in the player's controls like the card key.
-                let toggle = host.mod_key(MOD_ID, "toggle_hud", "key.keyboard.unknown");
+                let toggle = host.mod_key(MOD_ID, "toggle_hud").map(|(key, _)| key).unwrap_or_else(|| UNBOUND_KEY.into());
                 client.set_toggle_key(&toggle);
                 // The settings screen's key, unbound by default like the HUD toggle.
-                let settings = host.mod_key(MOD_ID, "settings", "key.keyboard.unknown");
+                let settings = host.mod_key(MOD_ID, "settings").map(|(key, _)| key).unwrap_or_else(|| UNBOUND_KEY.into());
                 client.set_settings_key(&settings);
+                // The client config: the file the player has, or the crate's defaults written in its place.
+                let text = match read_client_config(&*host) {
+                    Some(text) => text,
+                    None => {
+                        let default = ClientConfig::default().to_json();
+                        write_client_config(&*host, &default);
+                        default
+                    }
+                };
+                client.set_config(ClientConfig::from_json(&text));
+                *CONFIG_TEXT.lock().unwrap_or_else(PoisonError::into_inner) = Some(text);
                 forget_widths();
+            } else if client.ticks() % CONFIG_POLL_TICKS == 0 {
+                // An edit of the file on disk (the config's reload, which the new API does not give for this file).
+                if let Some(text) = read_client_config(&*host) {
+                    let mut last = CONFIG_TEXT.lock().unwrap_or_else(PoisonError::into_inner);
+                    if last.as_deref() != Some(text.as_str()) {
+                        client.set_config(ClientConfig::from_json(&text));
+                        *last = Some(text);
+                    }
+                }
             }
-            client.on_tick(&mut Adapter { host, batch: None });
+            client.on_tick(&mut Adapter { host });
             // The crate keeps its screen and firework events until the host takes them; this mod has no use for them yet.
             let _ = client.take_ui_events();
             if client.ticks() % 100 == 0 && logging() {
@@ -648,8 +649,8 @@ impl Hooks for Mod {
         });
     }
 
-    fn client_packet(&self, _host: &mut dyn Host, event: &mut ClientPacketEvent<'_>) {
-        if let ClientboundPlayPacket::CustomPayload(p) = event.packet {
+    fn client_packet(&self, _host: &mut dyn ClientHost, event: &mut ClientPacketEvent<'_>) {
+        if let Some(p) = &event.packet.custom_payload {
             dump(&p.channel, &p.data);
             guarded("payload", || {
                 let _ = self.lock_client().on_packet(&p.channel, &p.data);
@@ -657,19 +658,22 @@ impl Hooks for Mod {
         }
     }
 
-    fn screen_render_post(&self, host: &dyn Host, event: &mut ScreenRenderPostEvent<'_>) {
+    fn screen_render_post(&self, host: &dyn ClientHost, event: &mut ScreenRenderPostEvent<'_>) {
         #[cfg(feature = "world-request")]
         guarded("title button draw", || title_button::render(self, host, event));
         if mod_screen_up(host) {
             // The original's screens sit over vanilla's blurred menu background.
             host.apply_screen_blur();
+            let gui = event.draw.size();
             guarded("screen draw", || {
-                self.lock_client().render_screen(&mut ReadOnly { host, batch: Some(&mut *event.batch) });
+                let mut view = ReadOnly::new(host, gui);
+                self.lock_client().render_screen(&mut view);
+                view.draw.flush(&mut *event.draw);
             });
         }
     }
 
-    fn screen_mouse_button_pressed_pre(&self, host: &dyn Host, event: &mut ScreenMouseButtonPressedPreEvent<'_>) -> Flow {
+    fn screen_mouse_button_pressed_pre(&self, host: &dyn ClientHost, event: &mut ScreenMouseButtonPressedPreEvent<'_>) -> Flow {
         #[cfg(feature = "world-request")]
         if let Some(flow) = title_button::press(event) {
             return flow;
@@ -678,7 +682,8 @@ impl Hooks for Mod {
             return Flow::Continue;
         }
         if event.button == 0 {
-            if let Some(gui) = gui_of(host) {
+            // PORT-GAP: the GUI size is the last frame's (a press does not carry it); zero before the first frame.
+            if let Some(gui) = last_gui() {
                 let width = width_fn(host);
                 if guarded("screen press", || self.lock_client().screen_press(gui, mouse_of(host), &width)).is_none() {
                     return Flow::Continue;
@@ -688,7 +693,7 @@ impl Hooks for Mod {
         Flow::Cancel
     }
 
-    fn screen_mouse_button_released_pre(&self, host: &dyn Host, _: &mut ScreenMouseButtonReleasedPreEvent<'_>) -> Flow {
+    fn screen_mouse_button_released_pre(&self, host: &dyn ClientHost, _: &mut ScreenMouseButtonReleasedPreEvent<'_>) -> Flow {
         if !mod_screen_up(host) {
             return Flow::Continue;
         }
@@ -702,7 +707,7 @@ impl Hooks for Mod {
         Flow::Cancel
     }
 
-    fn screen_mouse_scrolled_pre(&self, host: &dyn Host, event: &mut ScreenMouseScrolledPreEvent<'_>) -> Flow {
+    fn screen_mouse_scrolled_pre(&self, host: &dyn ClientHost, event: &mut ScreenMouseScrolledPreEvent<'_>) -> Flow {
         if !mod_screen_up(host) {
             return Flow::Continue;
         }
@@ -716,7 +721,7 @@ impl Hooks for Mod {
         Flow::Cancel
     }
 
-    fn screen_mouse_dragged_pre(&self, host: &dyn Host, _: &mut ScreenMouseDraggedPreEvent<'_>) -> Flow {
+    fn screen_mouse_dragged_pre(&self, host: &dyn ClientHost, _: &mut ScreenMouseDraggedPreEvent<'_>) -> Flow {
         if !mod_screen_up(host) {
             return Flow::Continue;
         }
@@ -730,7 +735,7 @@ impl Hooks for Mod {
         Flow::Cancel
     }
 
-    fn screen_key_pressed_pre(&self, host: &dyn Host, event: &mut ScreenKeyPressedPreEvent<'_>) -> Flow {
+    fn screen_key_pressed_pre(&self, host: &dyn ClientHost, event: &mut ScreenKeyPressedPreEvent<'_>) -> Flow {
         if !mod_screen_up(host) {
             return Flow::Continue;
         }
@@ -746,35 +751,24 @@ impl Hooks for Mod {
         }
     }
 
-    fn gui_layer_pre(&self, _host: &mut dyn Host, event: &mut GuiLayerPreEvent<'_>) -> Flow {
+    fn gui_layer_pre(&self, _host: &dyn ClientHost, event: &mut GuiLayerPreEvent<'_>) -> Flow {
         // The sidebar is left out for a player who turned the scoreboard off (`BingoClient::hides_layer`).
         if self.lock_client().hides_layer(event.layer) { Flow::Cancel } else { Flow::Continue }
     }
 
-    fn gui_layer_post(&self, host: &mut dyn Host, event: &mut GuiLayerPostEvent<'_>) {
+    fn gui_layer_post(&self, host: &dyn ClientHost, event: &mut GuiLayerPostEvent<'_>) {
         if event.layer == OVERLAY_LAYER {
+            let gui = event.draw.size();
             guarded("overlay draw", || {
-                self.lock_client().draw(&mut Adapter { host, batch: Some(&mut *event.batch) });
+                let mut view = ReadOnly::new(host, gui);
+                self.lock_client().draw(&mut view);
+                view.draw.flush(&mut *event.draw);
             });
         }
     }
 
-    /// The client config file: registered when the game starts, with the crate's defaults written when it is missing.
-    fn register_configs(&self, _host: &mut dyn Host, event: &mut RegisterConfigsEvent<'_>) {
-        let default = ClientConfig::default().to_json();
-        event.configs.push(NativeConfig::new(MOD_ID, NativeConfigKind::Client, &default).file(CONFIG_FILE));
-    }
-
-    fn config_loading(&self, _host: &mut dyn Host, event: &mut ConfigLoadingEvent<'_>) {
-        read_client_config(self, event.config);
-    }
-
-    fn config_reloading(&self, _host: &mut dyn Host, event: &mut ConfigReloadingEvent<'_>) {
-        read_client_config(self, event.config);
-    }
-
     /// The window leaves its connection: the server's state (cards, scores, messages) belongs to that server only.
-    fn client_disconnecting(&self, _host: &dyn Host, _: &mut ClientDisconnectingEvent) {
+    fn client_player_logging_out(&self, _host: &mut dyn ClientHost, _: &mut ClientPlayerLoggingOutEvent) {
         guarded("disconnect", || {
             self.lock_client().state.reset_all();
         });
@@ -782,7 +776,7 @@ impl Hooks for Mod {
     }
 
     /// The window logs in to a server: a new server starts from an empty state, as after a disconnect.
-    fn client_player_network_logging_in(&self, _host: &mut dyn Host, _: &mut ClientPlayerNetworkLoggingInEvent) {
+    fn client_player_logging_in(&self, _host: &mut dyn ClientHost, _: &mut ClientPlayerLoggingInEvent) {
         guarded("login", || {
             self.lock_client().state.reset_all();
         });
@@ -790,52 +784,53 @@ impl Hooks for Mod {
     }
 
     /// The server side: the session advances on the server's tick, and takes its players, inventories and packets.
-    fn server_tick(&self, host: &mut dyn Host, event: &mut ServerTickEvent<'_>) {
-        server::server_tick(host, event.phase);
+    fn server_tick(&self, host: &mut dyn ServerHost, event: &mut ServerTickEvent<'_>) {
+        server::server_tick(host, event.phase.clone());
     }
 
-    fn player_logged_in(&self, host: &mut dyn Host, event: &mut PlayerLoggedInEvent<'_>) {
+    fn player_logged_in(&self, host: &mut dyn ServerHost, event: &mut PlayerLoggedInEvent<'_>) {
         server::player_logged_in(host, event.player, event.name);
     }
 
     /// Plain chat votes in Postgame (`vote lobby`, `vote next`, `vote keep`); every other line is left alone.
-    fn player_chat(&self, event: &mut PlayerChatEvent<'_>) -> Flow {
-        server::player_chat(event.player, event.message)
+    fn server_chat(&self, _host: &mut dyn ServerHost, event: &mut ServerChatEvent<'_>) -> Flow {
+        server::player_chat(event.player, event.raw_text)
     }
 
-    fn player_logged_out(&self, host: &mut dyn Host, event: &mut PlayerLoggedOutEvent<'_>) {
+    fn player_logged_out(&self, host: &mut dyn ServerHost, event: &mut PlayerLoggedOutEvent<'_>) {
         server::player_logged_out(host, event.player);
     }
 
-    fn player_inventory_changed(&self, host: &mut dyn Host, event: &mut PlayerInventoryChangedEvent<'_>) {
+    fn player_inventory_changed(&self, host: &mut dyn ServerHost, event: &mut PlayerInventoryChangedEvent<'_>) {
         server::player_inventory_changed(host, event.player, event.stacks);
     }
 
-    fn custom_payload_from_client(&self, host: &mut dyn Host, event: &mut CustomPayloadFromClientEvent<'_>) {
-        server::custom_payload_from_client(host, event.player, event.channel, event.data);
-    }
-
-    fn register_commands(&self, _host: &mut dyn Host, event: &mut RegisterCommandsEvent<'_>) {
+    fn register_commands(&self, _host: &mut dyn ServerHost, event: &mut RegisterCommandsEvent<'_>) {
         server::register_commands(event.commands);
     }
 
-    fn perform_command(&self, host: &mut dyn Host, event: &mut PerformCommandEvent<'_>) -> Flow {
-        server::perform_command(host, event.player.uuid, event.command)
+    /// A typed command of the mod's: a player's, or the console's and the command blocks' and functions' (their answers
+    /// go to their source, as the server's feedback does).
+    // PORT-GAP: the server's own parser reads a raw line, so the typed command is joined back into one (`command_line`);
+    // runs of spaces in a greedy `text` argument collapse. Bare `join`, `ready` and `spectator` (the shortcuts) only
+    // reach here if server.rs registers them as commands; otherwise they are not heard.
+    fn run_mod_command(&self, host: &mut dyn ServerHost, event: &mut RunModCommandEvent<'_>) -> Flow {
+        let Some(line) = command_line(&event.command) else { return Flow::Continue };
+        match &event.source {
+            CommandSource::Player { player, .. } => server::perform_command(host, player.uuid(), &line),
+            _ => server::perform_console_command(host, &line),
+        }
     }
 
-    fn server_about_to_start(&self, _host: &mut dyn Host, _event: &mut ServerAboutToStartEvent) {
+    fn server_about_to_start(&self, _host: &mut dyn ServerHost, _event: &mut ServerAboutToStartEvent) {
         server::server_about_to_start();
     }
 
-    fn menu_clicked(&self, host: &mut dyn Host, event: &mut MenuClickedEvent) {
+    fn menu_clicked(&self, host: &mut dyn ServerHost, event: &mut MenuClickedEvent) {
         server::menu_clicked(host, event.uuid, event.window, event.slot, event.mode);
     }
 
-    fn menu_closed(&self, _host: &mut dyn Host, event: &mut MenuClosedEvent) {
+    fn menu_closed(&self, _host: &mut dyn ServerHost, event: &mut MenuClosedEvent) {
         server::menu_closed(event.uuid, event.window);
-    }
-
-    fn perform_console_command(&self, host: &mut dyn Host, event: &mut PerformConsoleCommandEvent<'_>) -> Flow {
-        server::perform_console_command(host, event.command)
     }
 }

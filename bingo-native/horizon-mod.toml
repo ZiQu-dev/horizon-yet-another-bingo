@@ -5,6 +5,7 @@ description = "A port of Yet Another Minecraft BINGO: race to complete a card of
 authors = ["ZiQu-dev"]
 api = "0.2"
 side = "both"
+capabilities = ["registries"]
 
 [native]
 game = "26.3"

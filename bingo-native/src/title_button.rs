@@ -6,7 +6,9 @@
 //! to open the lobby world, which the title's next frame then opens. The answer's hint stays a few seconds on the title.
 use super::{Mod, ReadOnly, log};
 use horizon_bingo::title_button::{self as button, Hint, WorldAnswer};
-use horizon_client::mod_api::{Flow, Host, NativeWorldResult, ScreenMouseButtonPressedPreEvent, ScreenRenderPostEvent};
+// PORT-GAP: `request_world` and `NativeWorldResult` are not on the new API's main yet (horizon-rust/horizon#17246);
+// this file stays behind `world-request`, which is off, and does not build until that lands.
+use mod_api::{ClientHost, Flow, NativeWorldResult, ScreenMouseButtonPressedPreEvent, ScreenRenderPostEvent};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -39,7 +41,7 @@ fn answer(result: NativeWorldResult) -> WorldAnswer {
 }
 
 /// The button over the title's main page: its frame, and the hint while it lasts.
-pub(super) fn render(this: &Mod, host: &dyn Host, event: &mut ScreenRenderPostEvent<'_>) {
+pub(super) fn render(this: &Mod, host: &dyn ClientHost, event: &mut ScreenRenderPostEvent<'_>) {
     if event.screen.id != "title" {
         return;
     }
@@ -58,9 +60,10 @@ pub(super) fn render(this: &Mod, host: &dyn Host, event: &mut ScreenRenderPostEv
     let lang = |key: &str| client.translate(key);
     let label = button::label_text(&lang);
     let hint = hint.map(|hint| button::hint_text(&hint, &lang));
-    let mut view = ReadOnly { host, batch: Some(&mut *event.batch) };
+    let mut view = ReadOnly::new(host, event.draw.size());
     let mouse = (event.screen.mouse[0], event.screen.mouse[1]);
     button::draw(&mut view, button::button_rect(width, height), mouse, &label, hint.as_deref());
+    view.draw.flush(&mut *event.draw);
 }
 
 /// A left press on the button: cancelled, and remembered for the next tick. None for any other press.
@@ -78,7 +81,7 @@ pub(super) fn press(event: &ScreenMouseButtonPressedPreEvent<'_>) -> Option<Flow
 }
 
 /// Once a client tick: asks Horizon for the lobby world when a press is waiting, and keeps the hint of its answer.
-pub(super) fn tick(host: &mut dyn Host) {
+pub(super) fn tick(host: &mut dyn ClientHost) {
     if !std::mem::take(&mut state().clicked) {
         return;
     }
