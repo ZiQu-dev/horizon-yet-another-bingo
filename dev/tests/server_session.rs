@@ -22,7 +22,7 @@ use horizon_bingo::text::Text;
 use horizon_bingo::timer::{CountdownPacket, TimerPacket};
 use horizon_bingo::update_card_tiles::CardTilesPacket;
 
-const TIER_LIST: &str = include_str!("../../bingo-native/horizon-bingo/data/items.tierlist.json");
+const TIER_LIST: &str = horizon_bingo::data::items_tierlist_json::JSON;
 
 const ALICE: u128 = 1;
 const BOB: u128 = 2;

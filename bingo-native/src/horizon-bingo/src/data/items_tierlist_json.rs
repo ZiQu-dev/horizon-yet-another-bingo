@@ -1,4 +1,4 @@
-{
+pub const JSON: &str = r####"{
     "replace": false,
     "values": [],
     "S": [
@@ -2861,4 +2861,4 @@
             "minecraft:sulfur_wall"
         ]
     ]
-}
+}"####;

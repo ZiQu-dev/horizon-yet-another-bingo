@@ -1,4 +1,4 @@
-{
+pub const JSON: &str = r####"{
     "replace": false,
     "values": [],
     "S": [
@@ -633,4 +633,4 @@
             "minecraft:pointed_dripstone"
         ]
     ]
-}
+}"####;

@@ -1,4 +1,4 @@
-{
+pub const JSON: &str = r####"{
     "values": [
         "#yet-another-minecraft-bingo:needs_silk_touch",
         "minecraft:adventure/adventuring_time",
@@ -215,4 +215,4 @@
         "minecraft:zombie_head"
     ],
     "replace": false
-}
+}"####;

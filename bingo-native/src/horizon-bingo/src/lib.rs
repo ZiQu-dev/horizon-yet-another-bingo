@@ -5,6 +5,7 @@
 //! the `Host` trait. Only `Host` touches Horizon, so everything else is testable without a window.
 
 pub mod channels;
+pub mod data;
 pub mod host;
 pub mod state;
 

@@ -1,4 +1,4 @@
-{
+pub const JSON: &str = r####"{
     "replace": false,
     "values": [],
     "S": [
@@ -176,4 +176,4 @@
             "yet-another-minecraft-bingo:challenge/stat_custom_ride_strider"
         ]
     ]
-}
+}"####;

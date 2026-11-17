@@ -19,7 +19,7 @@ use horizon_bingo::server::store;
 use horizon_bingo::server::types::Player;
 use horizon_bingo::update_card_tiles::CardTilesPacket;
 
-const TIER_LISTS_ADVANCEMENTS: &str = include_str!("../../bingo-native/horizon-bingo/data/advancements.tierlist.json");
+const TIER_LISTS_ADVANCEMENTS: &str = horizon_bingo::data::advancements_tierlist_json::JSON;
 
 const ALICE: u128 = 1;
 const BOB: u128 = 2;

@@ -1,4 +1,4 @@
-{
+pub const JSON: &str = r####"{
     "values": [
         "minecraft:air",
         "minecraft:allay_spawn_egg",
@@ -130,4 +130,4 @@
         "minecraft:zombified_piglin_spawn_egg"
     ],
     "replace": false
-}
+}"####;

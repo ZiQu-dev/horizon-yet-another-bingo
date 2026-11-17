@@ -1,4 +1,4 @@
-{
+pub const JSON: &str = r####"{
     "values": [
         "minecraft:small_amethyst_bud",
         "minecraft:medium_amethyst_bud",
@@ -74,4 +74,4 @@
         "yet-another-minecraft-bingo:simplified/one_of_dead_coral_fan"
     ],
     "replace": false
-}
+}"####;

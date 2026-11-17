@@ -21,17 +21,17 @@ const TIER_NAMES: [&str; 5] = ["S", "A", "B", "C", "D"];
 
 /// The mod's tier lists, in the order the original combines them. Copied from the original (see NOTICE.md).
 pub const TIER_LISTS: [(&str, &str); 4] = [
-    ("items", include_str!("../../data/items.tierlist.json")),
-    ("simplified", include_str!("../../data/simplified.tierlist.json")),
-    ("challenge", include_str!("../../data/challenge.tierlist.json")),
-    ("advancements", include_str!("../../data/advancements.tierlist.json")),
+    ("items", crate::data::items_tierlist_json::JSON),
+    ("simplified", crate::data::simplified_tierlist_json::JSON),
+    ("challenge", crate::data::challenge_tierlist_json::JSON),
+    ("advancements", crate::data::advancements_tierlist_json::JSON),
 ];
 
 /// The mod's own tags, by name. Copied from the original (see NOTICE.md).
 pub const MOD_TAGS: [(&str, &str); 3] = [
-    ("tedious", include_str!("../../data/tags/tedious.json")),
-    ("unobtainable", include_str!("../../data/tags/unobtainable.json")),
-    ("needs_silk_touch", include_str!("../../data/tags/needs_silk_touch.json")),
+    ("tedious", crate::data::tags_tedious_json::JSON),
+    ("unobtainable", crate::data::tags_unobtainable_json::JSON),
+    ("needs_silk_touch", crate::data::tags_needs_silk_touch_json::JSON),
 ];
 
 /// The default filter of the original: nothing tedious and nothing unobtainable.

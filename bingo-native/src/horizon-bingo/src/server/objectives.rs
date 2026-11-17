@@ -363,7 +363,7 @@ pub fn card_from_objectives(
 pub const KEY_PREFIX: &str = "objective:";
 /// The original's challenge objectives the port can score, as `data/objectives.json` gives them (generated from the
 /// original's `objectives/challenge/*.json`; NBT and component checks and the item counts are left out).
-const CATALOG_JSON: &str = include_str!("../../data/objectives.json");
+const CATALOG_JSON: &str = crate::data::objectives_json::JSON;
 
 /// The challenge objectives by id, read once.
 fn catalog() -> &'static HashMap<String, Objective> {

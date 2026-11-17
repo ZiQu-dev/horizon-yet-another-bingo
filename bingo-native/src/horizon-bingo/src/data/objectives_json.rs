@@ -1,4 +1,4 @@
-{
+pub const JSON: &str = r####"{
  "yet-another-minecraft-bingo:challenge/all_chicken_eggs": {
   "entries": [
    "minecraft:brown_egg",
@@ -410,4 +410,4 @@
   "statType": "minecraft:killed",
   "type": "stats"
  }
-}
+}"####;

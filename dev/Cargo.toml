@@ -3,9 +3,9 @@ name = "horizon-bingo-tests"
 version = "0.0.1"
 edition = "2021"
 publish = false
-description = "Integration tests of the horizon-bingo crate (the bundle in ../bingo-native/horizon-bingo)."
+description = "Integration tests of the horizon-bingo crate (the bundle in ../bingo-native/src/horizon-bingo)."
 
 [dependencies]
-horizon-bingo = { path = "../bingo-native/horizon-bingo" }
+horizon-bingo = { path = "../bingo-native/src/horizon-bingo" }
 png = "0.18"
 serde_json = "1"
