@@ -552,12 +552,12 @@ fn the_title_button_draws_the_originals_sprite_focused_under_the_pointer() {
     use horizon_bingo::title_button::{button_rect, draw, ButtonSprites};
     let sprites = ButtonSprites { normal: [0.0, 0.0, 80.0, 50.0], focused: [80.0, 0.0, 80.0, 50.0] };
     let rect = button_rect(320.0, 240.0); // [10, 170, 80, 50]
-    // Away from the button: the plain picture, into the button's rectangle; the label centred (6 px a letter,
-    // 6 letters: x = 10 + (80 - 36) / 2 = 32, y = 170 + (50 - 8) / 2 = 191).
+    // Away from the button: the plain picture, into the button's rectangle, and no text over it (the original's
+    // picture has the word).
     let mut away = Recorder::default();
     draw(&mut away, rect, (200.0, 20.0), "BINGO!", None, Some(sprites));
     assert_eq!(away.sprites, vec![([0.0, 0.0, 80.0, 50.0], rect)]);
-    assert_eq!((away.texts[0].0, away.texts[0].1), (32, 191));
+    assert!(away.texts.is_empty());
     assert!(away.vanilla.is_empty());
     // On the button: the focused picture.
     let mut over = Recorder::default();
@@ -568,6 +568,8 @@ fn the_title_button_draws_the_originals_sprite_focused_under_the_pointer() {
     draw(&mut plain, rect, (200.0, 20.0), "BINGO!", None, None);
     assert!(plain.sprites.is_empty());
     assert_eq!(plain.vanilla.len(), 1);
+    // The plain button needs its label (6 px a letter, 6 letters: x = 10 + (80 - 36) / 2 = 32, y = 170 + (50 - 8) / 2 = 191).
+    assert_eq!((plain.texts[0].0, plain.texts[0].1), (32, 191));
     // A hint sits above the button, its last line 4 px over it (y = 170 - 4 - 10 = 156).
     let mut hinted = Recorder::default();
     draw(&mut hinted, rect, (200.0, 20.0), "BINGO!", Some("short"), Some(sprites));

@@ -119,8 +119,8 @@ pub fn contains(rect: [f32; 4], (x, y): (f32, f32)) -> bool {
     x >= rx && x < rx + w && y >= ry && y < ry + h
 }
 
-/// The button's draw in the title's frame: the original's sprite (its focused picture under the pointer) when the mod's
-/// pictures are up, else the vanilla button sprite; its label centred, and the hint, when there is one, in red above it.
+/// The button's draw in the title's frame: the original's sprite (its focused picture under the pointer, no text: the picture has the word) when the mod's
+/// pictures are up, else the vanilla button sprite with its label centred, and the hint, when there is one, in red above it.
 pub fn draw(
     host: &mut dyn Host,
     rect: [f32; 4],
@@ -135,8 +135,11 @@ pub fn draw(
         Some(s) => host.draw_sprite(if over { s.focused } else { s.normal }, rect),
         None => host.draw_vanilla_nine_slice(if over { "widget/button_highlighted" } else { "widget/button" }, x, y, w, h, WHITE),
     }
-    let width = host.text_width(label);
-    host.draw_text(x as i32 + (w as i32 - width) / 2, y as i32 + (h as i32 - 8) / 2, label, WHITE, true);
+    // The original's picture carries the word itself; the label is only for the plain vanilla button.
+    if sprites.is_none() {
+        let width = host.text_width(label);
+        host.draw_text(x as i32 + (w as i32 - width) / 2, y as i32 + (h as i32 - 8) / 2, label, WHITE, true);
+    }
     if let Some(hint) = hint {
         let lines = wrap(hint, HINT_W, &|text: &str| host.text_width(text));
         let top = y as i32 - 4 - 10 * lines.len() as i32;
