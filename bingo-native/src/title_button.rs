@@ -1,13 +1,11 @@
-//! The title screen's BINGO! button, for a Horizon that has `host.request_world` (API 646). Compiled only with the
-//! `world-request` feature, so the released bundle keeps its behaviour. The rule, the wording and the drawing are
+//! The title screen's BINGO! button, through `host.request_world` (Horizon PR #17246). The mod declares
+//! `[native] world_control`. The rule, the wording and the drawing are
 //! `horizon_bingo::title_button`; this file asks Horizon and hands the hooks' events to them.
 //!
 //! A press on the button is cancelled (the title does not see it) and remembered; the next client tick asks Horizon
-//! to open the lobby world, which the title's next frame then opens. The answer's hint stays a few seconds on the title.
+//! to open the lobby world: the title's next frame asks the player, and opens it on Yes. The answer's hint stays a few seconds on the title.
 use super::{Mod, ReadOnly, log};
 use horizon_bingo::title_button::{self as button, Hint, WorldAnswer};
-// PORT-GAP: `request_world` and `NativeWorldResult` are not on the new API's main yet (horizon-rust/horizon#17246);
-// this file stays behind `world-request`, which is off, and does not build until that lands.
 use mod_api::{ClientHost, Flow, NativeWorldResult, ScreenMouseButtonPressedPreEvent, ScreenRenderPostEvent};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};

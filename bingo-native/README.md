@@ -57,7 +57,7 @@ See [NOTICE.md](NOTICE.md) for the licence position, which is not yet decided.
   and the rest work without them (`server.rs`, `new_map`).
 - **Titles and subtitles** become the action bar (over the hotbar) and chat, as the API has no title call.
 - **Player faces** on the card and the scoreboard: the new client API gives no skin pixels.
-- **The title-screen BINGO! button** needs Horizon PR horizon-rust/horizon#17246. It is compiled out (see its section).
+- **The title-screen BINGO! button** opens the lobby world: Horizon asks the player first (see its section).
 - **Permissions**: the API has no permission nodes, so `bingo.op` is read as operator level 2 (`server.rs`, `is_op`).
 - **`preventLobbyChaos`** is not implemented.
 - **Physical lobby world** is not implemented: the lobby is logical only.
@@ -66,7 +66,7 @@ See [NOTICE.md](NOTICE.md) for the licence position, which is not yet decided.
 
 ## Requirements
 
-- Horizon at commit `8989a510ff75beb69cd2962b6bb6e0d31f3cc962` (pinned in `horizon-mod.toml`, `[native]`). A native
+- Horizon at commit `413ef02fddfac06ece3d318e88f0764fbd7d268c` (pinned in `horizon-mod.toml`, `[native]`). A native
   build needs the SDK of that exact commit. Horizon has not published SDKs yet, so you build one locally (Install,
   step 4).
 - Linux: `cc`, `pkg-config`, ALSA and libudev development files (on Debian and Ubuntu:
@@ -127,7 +127,7 @@ checkout at the pinned commit. Horizon's own guide for this is `docs/modding/src
 in the Horizon repository. The steps:
 
 ```sh
-# a. In the Horizon checkout at 8989a510ff75beb69cd2962b6bb6e0d31f3cc962, with tracked changes committed:
+# a. In the Horizon checkout at 413ef02fddfac06ece3d318e88f0764fbd7d268c, with tracked changes committed:
 #    build the game and its companion programs (horizon-ctl, horizon-prepare, horizon-server), and make
 #    horizon-wasm-std.wasm and exporters/ beside it. The required files are listed in that guide's table.
 cargo run --locked -p cargo-horizon-mod -- wasm-std CHECKOUT/target/debug/horizon-wasm-std.wasm
@@ -244,7 +244,7 @@ The HUD toggle key keeps its own value as a file named `enable_hud` in the mod's
   until you bind them.
 - **Card position button does nothing.** Known; see "What it does not do".
 - **The launcher refuses the SDK, or the build stops on a Horizon mismatch.** The SDK must be the build of commit
-  `8989a510ff75beb69cd2962b6bb6e0d31f3cc962` for this computer, the client side and the launcher's Rust. Build it again
+  `413ef02fddfac06ece3d318e88f0764fbd7d268c` for this computer, the client side and the launcher's Rust. Build it again
   from that checkout (Install, step 4).
 - **Build fails on Linux with a missing library.** Install the packages named under Requirements.
 
@@ -259,20 +259,14 @@ Set them in the game's environment. None is needed to play.
 - `BINGO_H0_DUMP`: a folder to write the first three payloads of each server channel as hex, to `<channel>.<n>.hex`.
   The name `H0` is the internal name of the debug hook. Off unless set; it writes files, so use a scratch folder.
 
-## The title screen's BINGO! button (compiled out)
+## The title screen's BINGO! button
 
 The original mod adds a "BINGO!" button to the main menu, which opens the bingo lobby world. The code is in
-`src/title_button.rs` and `src/horizon-bingo/src/title_button.rs`, but it is compiled out: each use in `src/lib.rs` is
-behind `#[cfg(any())]`, so the built mod has no button. It needs `host.request_world(folder)`, which is **Horizon PR
-horizon-rust/horizon#17246** (API 646, branch `native-request-world`, fork ZiQu-dev/horizon). The released Horizon does
-not have it.
+`src/title_button.rs` and `src/horizon-bingo/src/title_button.rs`. A press asks Horizon through `host.request_world(folder)`
+(Horizon PR horizon-rust/horizon#17246, merged). Horizon then asks the player "open this world?" on the title screen and
+opens it only on Yes; the mod never opens a world by itself. The mod declares the permission in `horizon-mod.toml`:
+`[native] world_control = true`. Horizon opens an existing save only and creates nothing.
 
-To switch it on, with a Horizon that has that call:
-
-- Remove the `#[cfg(any())]` lines in `src/lib.rs` (the module and the three hooks: client tick, screen render, and
-  the press before the screen).
-- The mod then needs the permission to open a world, declared in its manifest. `horizon-mod.toml` does not declare it,
-  and the Horizon docs in the checked copy do not name the key. Check the docs of that Horizon before adding it.
 - The lobby world's folder is `LOBBY_FOLDER` in `src/horizon-bingo/src/title_button.rs` ("bingo"). Create a world with
   that folder name first: a missing one shows a red hint under the button for a few seconds.
 - The rule (the hints, the folder rule, the button's place, the hit test) is pure logic, tested in `dev/tests/title_button.rs`.
@@ -318,7 +312,7 @@ the old layout (`exp-skeleton/`), so read them as `dev/` and `bingo-native/`.
 - `Cargo.toml`, `Cargo.lock`: the crate. Its `horizon-mod-api` dependency comes from the SDK in `.horizon/sdk/`.
 - `src/lib.rs`: the wiring to Horizon's hooks, environment variables, asset and language loading.
 - `src/server.rs`: the server adapter: Horizon's server hooks, for the server logic in `src/horizon-bingo/src/server/`.
-- `src/title_button.rs`: the title screen's BINGO! button, compiled out (see its section above).
+- `src/title_button.rs`: the title screen's BINGO! button (see its section above).
 - `src/horizon-bingo/`: the logic crate: client and server modules, wire codecs, drawing and screens. Nothing there
   imports Horizon.
 - `assets/bingo/lang/*.json`: the original's language files (LGPL-3.0).

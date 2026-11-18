@@ -58,8 +58,8 @@ code, its packet formats and its server logic. Upstream project: https://gitlab.
   and the rest work without them (`bingo-native/src/server.rs`, `new_map`).
 - **Titles and subtitles** become the action bar (over the hotbar) and chat, as the API has no title call.
 - **Player faces** on the card and the scoreboard: the new client API gives no skin pixels.
-- **The title-screen BINGO! button** needs Horizon PR horizon-rust/horizon#17246. It is compiled out (see
-  [bingo-native/README.md](bingo-native/README.md#the-title-screens-bingo-button-compiled-out)).
+- **The title-screen BINGO! button** opens the lobby world through `host.request_world`: Horizon asks the player first
+  (see [bingo-native/README.md](bingo-native/README.md#the-title-screens-bingo-button)).
 - **Permissions**: the API has no permission nodes, so `bingo.op` is read as operator level 2 (`server.rs`, `is_op`).
 - **`preventLobbyChaos`** is not implemented.
 - **Physical lobby world** is not implemented: the lobby is logical only.
@@ -68,7 +68,7 @@ code, its packet formats and its server logic. Upstream project: https://gitlab.
 
 ## Requirements
 
-- Horizon at commit `8989a510ff75beb69cd2962b6bb6e0d31f3cc962` (pinned in `bingo-native/horizon-mod.toml`, `[native]`).
+- Horizon at commit `413ef02fddfac06ece3d318e88f0764fbd7d268c` (pinned in `bingo-native/horizon-mod.toml`, `[native]`).
   A native build needs the SDK of that exact commit. Horizon has not published SDKs yet, so you build one locally
   (Install, step 4).
 - Linux: `cc`, `pkg-config`, ALSA and libudev development files (on Debian and Ubuntu:
@@ -129,7 +129,7 @@ checkout at the pinned commit. Horizon's own guide for this is `docs/modding/src
 in the Horizon repository. The steps:
 
 ```sh
-# a. In the Horizon checkout at 8989a510ff75beb69cd2962b6bb6e0d31f3cc962, with tracked changes committed:
+# a. In the Horizon checkout at 413ef02fddfac06ece3d318e88f0764fbd7d268c, with tracked changes committed:
 #    build the game and its companion programs (horizon-ctl, horizon-prepare, horizon-server), and make
 #    horizon-wasm-std.wasm and exporters/ beside it. The required files are listed in that guide's table.
 cargo run --locked -p cargo-horizon-mod -- wasm-std CHECKOUT/target/debug/horizon-wasm-std.wasm
@@ -246,7 +246,7 @@ The HUD toggle key keeps its own value as a file named `enable_hud` in the mod's
   until you bind them.
 - **Card position button does nothing.** Known; see "What it does not do".
 - **The launcher refuses the SDK, or the build stops on a Horizon mismatch.** The SDK must be the build of commit
-  `8989a510ff75beb69cd2962b6bb6e0d31f3cc962` for this computer, the client side and the launcher's Rust. Build it again
+  `413ef02fddfac06ece3d318e88f0764fbd7d268c` for this computer, the client side and the launcher's Rust. Build it again
   from that checkout (Install, step 4).
 - **Build fails on Linux with a missing library.** Install the packages named under Requirements.
 
@@ -305,7 +305,7 @@ the old layout (`exp-skeleton/`), so read them as `dev/` and `bingo-native/`.
   - `Cargo.toml`, `Cargo.lock`: the crate. Its `horizon-mod-api` dependency comes from the SDK in `.horizon/sdk/`.
   - `src/lib.rs`: the wiring to Horizon's hooks, environment variables, asset and language loading.
   - `src/server.rs`: the server adapter: Horizon's server hooks, for the server logic in `src/horizon-bingo/src/server/`.
-  - `src/title_button.rs`: the title screen's BINGO! button, compiled out.
+  - `src/title_button.rs`: the title screen's BINGO! button.
   - `src/horizon-bingo/`: the logic crate: client and server modules, wire codecs, drawing and screens. Nothing there
     imports Horizon.
   - `assets/bingo/lang/*.json`: the original's language files (LGPL-3.0).

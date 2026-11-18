@@ -24,7 +24,6 @@ use std::{
 };
 
 mod server;
-#[cfg(any())] // world-request: off until horizon-rust/horizon#17246 lands
 mod title_button;
 
 /// How many text widths are kept before the cache starts again.
@@ -604,7 +603,6 @@ impl Hooks for Mod {
     }
 
     fn client_tick_post(&self, host: &mut dyn ClientHost, _: &mut ClientTickPostEvent) {
-        #[cfg(any())] // world-request: off until horizon-rust/horizon#17246 lands
         guarded("title button", || title_button::tick(host));
         guarded("client tick", || {
             let mut client = self.lock_client();
@@ -666,7 +664,6 @@ impl Hooks for Mod {
     }
 
     fn screen_render_post(&self, host: &dyn ClientHost, event: &mut ScreenRenderPostEvent<'_>) {
-        #[cfg(any())] // world-request: off until horizon-rust/horizon#17246 lands
         guarded("title button draw", || title_button::render(self, host, event));
         if mod_screen_up(host) {
             // The original's screens sit over vanilla's blurred menu background.
@@ -681,7 +678,6 @@ impl Hooks for Mod {
     }
 
     fn screen_mouse_button_pressed_pre(&self, host: &dyn ClientHost, event: &mut ScreenMouseButtonPressedPreEvent<'_>) -> Flow {
-        #[cfg(any())] // world-request: off until horizon-rust/horizon#17246 lands
         if let Some(flow) = title_button::press(event) {
             return flow;
         }
