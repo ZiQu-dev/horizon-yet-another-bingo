@@ -157,18 +157,18 @@ fn once_a_player_is_ready_the_countdown_runs_and_the_ready_player_sees_the_count
     assert_eq!(key_of(title(&alice)), "bingo.lobby.vote.players_ready");
     assert_eq!(english(title(&alice)), "1 of 2 ready!");
     assert_eq!(key_of(subtitle(&alice)), "bingo.lobby.vote.starting_time_remaining");
-    // Half of 600 s is 300 s, less 450 ms: 299.55 s, shown as 04:59.
-    assert_eq!(english(subtitle(&alice)), "Starting in 04:59");
+    // Half of 600 s is 300 s, less 450 ms: 299.55 s, shown as 4:59 (`%d:%02d`: the minutes are not padded).
+    assert_eq!(english(subtitle(&alice)), "Starting in 4:59");
 
     let bob = last_packet(&host, BOB);
     assert_eq!(english(title(&bob)), "type /bingo ready to speed up!", "the hint stays for a player not ready");
-    assert_eq!(english(subtitle(&bob)), "Starting in 04:59");
+    assert_eq!(english(subtitle(&bob)), "Starting in 4:59");
 }
 
 #[test]
 fn the_lobby_clock_and_the_game_duration_read_as_the_original_writes_them() {
     // formatHHMMSS: hours only from one hour on.
-    assert_eq!(texts::clock_text(299_550), "04:59");
+    assert_eq!(texts::clock_text(299_550), "4:59");
     assert_eq!(texts::clock_text(3_661_000), "1:01:01");
     // formatString: days and hours only when there are any, minutes and seconds always.
     assert_eq!(texts::duration_text(5_000), "00m 05s");

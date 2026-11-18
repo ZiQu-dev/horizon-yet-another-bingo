@@ -4,24 +4,26 @@
 use crate::server::card_gen::Rng;
 
 /// A preset team: `key` is the id with its `bingo_` prefix, `color` the vanilla `ChatFormatting` name, `name` the
-/// English display name (the original's `bingo.team.<x>` translation).
+/// English display name (the original's `bingo.team.<x>` translation), `symbol` the emoji the original puts before the
+/// team's name (its `symbol`, shown on the sidebar).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TeamPreset {
     pub key: &'static str,
     pub color: &'static str,
     pub name: &'static str,
+    pub symbol: &'static str,
 }
 
 /// The eight presets, in the original's order. A shuffle fills them from the first.
 pub const PRESETS: [TeamPreset; 8] = [
-    TeamPreset { key: "bingo_red", color: "RED", name: "Red" },
-    TeamPreset { key: "bingo_blue", color: "BLUE", name: "Blue" },
-    TeamPreset { key: "bingo_green", color: "GREEN", name: "Green" },
-    TeamPreset { key: "bingo_yellow", color: "YELLOW", name: "Yellow" },
-    TeamPreset { key: "bingo_aqua", color: "AQUA", name: "Aqua" },
-    TeamPreset { key: "bingo_pink", color: "LIGHT_PURPLE", name: "Pink" },
-    TeamPreset { key: "bingo_orange", color: "GOLD", name: "Orange" },
-    TeamPreset { key: "bingo_gray", color: "GRAY", name: "Gray" },
+    TeamPreset { key: "bingo_red", color: "RED", name: "Red", symbol: "\u{1F525}" },
+    TeamPreset { key: "bingo_blue", color: "BLUE", name: "Blue", symbol: "\u{1F30A}" },
+    TeamPreset { key: "bingo_green", color: "GREEN", name: "Green", symbol: "\u{1F342}" },
+    TeamPreset { key: "bingo_yellow", color: "YELLOW", name: "Yellow", symbol: "\u{1F41D}" },
+    TeamPreset { key: "bingo_aqua", color: "AQUA", name: "Aqua", symbol: "\u{1F344}" },
+    TeamPreset { key: "bingo_pink", color: "LIGHT_PURPLE", name: "Pink", symbol: "\u{1F33A}" },
+    TeamPreset { key: "bingo_orange", color: "GOLD", name: "Orange", symbol: "\u{1F344}" },
+    TeamPreset { key: "bingo_gray", color: "GRAY", name: "Gray", symbol: "\u{1FAA8}" },
 ];
 
 /// Finds a preset by its key, with or without the `bingo_` prefix, ignoring case.

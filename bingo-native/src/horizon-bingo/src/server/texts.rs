@@ -169,6 +169,11 @@ pub fn completed_card(team: &str) -> Line {
     Line::new("bingo.game.end.completed_card", "%s completed their card!", &[team])
 }
 
+/// `BINGO!`, the sidebar's reason when a team completed its card (`GameEndReason.Bingo`).
+pub fn bingo_reason() -> Line {
+    Line::new("bingo.game.end.reason_bingo", "BINGO!", &[])
+}
+
 /// `Out of time!`, the reason when the time limit ran out.
 pub fn out_of_time() -> Line {
     Line::new("bingo.game.end.reason_timer", "Out of time!", &[])
@@ -221,14 +226,15 @@ pub fn duration_text(millis: i64) -> String {
     out
 }
 
-/// The time as the lobby's countdown writes it (`formatHHMMSS`): `H:MM:SS` from an hour on, else `MM:SS`.
+/// The time as the lobby's countdown and the ranking write it (`formatHHMMSS`): `H:MM:SS` from an hour on, else `M:SS`.
+/// The minutes are not padded there, as the original's `"%d:%02d"` does not pad them.
 pub fn clock_text(millis: i64) -> String {
     let secs = millis.max(0) / 1000;
     let (hours, minutes, seconds) = (secs / 3_600, secs % 3_600 / 60, secs % 60);
     if hours > 0 {
         format!("{hours}:{minutes:02}:{seconds:02}")
     } else {
-        format!("{minutes:02}:{seconds:02}")
+        format!("{minutes}:{seconds:02}")
     }
 }
 

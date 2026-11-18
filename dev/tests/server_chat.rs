@@ -187,15 +187,15 @@ fn a_session_route_for_an_offline_sender_has_no_name_but_keeps_the_text() {
 }
 
 #[test]
-fn the_sidebar_is_the_lobby_rows_with_the_teams_and_their_players() {
+fn the_sidebar_is_the_lobby_rows_with_the_settings_and_the_waiting_line() {
     let mut session = session_with(Options::default(), 2);
     let mut host = FakeHost::default();
     table(&mut session, &mut host);
     assert_eq!(
-        session.sidebar_rows().expect("sidebar on"),
-        ["Mode: Standard", "Goal: 1 line", "Time limit: none", "", "Red: 1 player", "Blue: 1 player"]
+        horizon_bingo::server::sidebar::english_lines(&session.sidebar_rows(&[]).expect("sidebar on")),
+        ["Mode: Standard", "Features: \u{1F5E1}", "Goal: 1 line", "Time: 00m 00s", "", "Waiting to start..."]
     );
 
     let off = session_with(Options { sidebar: false, ..Options::default() }, 2);
-    assert_eq!(off.sidebar_rows(), None);
+    assert_eq!(off.sidebar_rows(&[]), None);
 }

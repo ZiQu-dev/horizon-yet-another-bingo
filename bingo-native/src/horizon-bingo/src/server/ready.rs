@@ -169,6 +169,18 @@ impl ReadyTimer {
         }
     }
 
+    /// The two lobby lines of the sidebar (`ReadyService.getGlobalMessage`): `N of M ready!` while the timer runs, and the
+    /// countdown (`Starting in ...`), or `Waiting to start...` while it does not.
+    pub fn sidebar_lines(&self, online: &[u128]) -> (Option<texts::Line>, texts::Line) {
+        let ready_up = self.running.then(|| texts::players_ready(self.ready_count(online), online.len()));
+        let countdown = if self.running {
+            texts::starting_in(&texts::clock_text(self.remaining_ms(online).max(0)))
+        } else {
+            texts::waiting_to_start()
+        };
+        (ready_up, countdown)
+    }
+
     /// The packet for one viewer with the lines the original's lobby shows (`ReadyService.getMessage`):
     ///
     /// - the title: a player who is ready sees `N of M ready!` while the timer runs and nothing otherwise; any other

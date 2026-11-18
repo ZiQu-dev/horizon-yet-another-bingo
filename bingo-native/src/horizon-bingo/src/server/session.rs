@@ -152,6 +152,9 @@ pub struct Session {
     forfeit: bool,
     /// Why the game ends when no team won, for the end's chat (`announce_end`). Set just before the end, taken by it.
     end_reason: Option<Line>,
+    /// The game's end as the sidebar shows it (`sidebar::End`): set when the game ends, cleared when it goes back to
+    /// Pregame.
+    sidebar_end: Option<super::sidebar::End>,
     /// A game restored from `game-state.json` waits for its players: the empty-server reset does not run until one
     /// of them has joined.
     await_rejoin: bool,
@@ -242,6 +245,7 @@ impl Session {
             history: Vec::new(),
             forfeit: false,
             end_reason: None,
+            sidebar_end: None,
             await_rejoin: false,
             captures: Captures::default(),
             objective_runtime: Vec::new(),
@@ -1623,6 +1627,17 @@ impl Session {
     /// The game ended: the end screen with the ranking of every team goes to each player, who wins if their team does.
     fn announce_end(&mut self, host: &mut dyn ServerHost, winner: Option<String>) {
         self.hide_boss_bars(host);
+        // The sidebar's end (`GameOverService.getTitle` and `getMessage`): a win is `BINGO!`, else why the game ended.
+        let reason = match winner {
+            Some(_) => texts::bingo_reason(),
+            None => self.end_reason.clone().unwrap_or_else(texts::out_of_time),
+        };
+        let teams = self.sidebar_teams(&host.players());
+        let first_win = self.rules.end_when == EndWhen::FirstWin;
+        self.sidebar_end = Some(super::sidebar::End {
+            reason,
+            message: super::sidebar::end_message(&teams, winner.as_deref(), first_win),
+        });
         self.record_game(host, winner.as_deref());
         Self::clear_saved_game(host);
         let ranking = self.ranking();
@@ -1685,6 +1700,7 @@ impl Session {
     /// the teams the start added.
     fn reset_round(&mut self, host: &mut dyn ServerHost) {
         self.hide_boss_bars(host);
+        self.sidebar_end = None;
         Self::clear_saved_game(host);
         for team in std::mem::take(&mut self.added_teams) {
             host.command(&format!("team remove {team}"));
@@ -2036,13 +2052,41 @@ impl Session {
         super::chat::route(name, self.teams.team_of(sender), &roster, message)
     }
 
-    /// The sidebar's lines (`sidebar.rs`), or `None` when the sidebar is off in the options.
-    pub fn sidebar_rows(&self) -> Option<Vec<String>> {
-        self.rules.sidebar.then(|| super::sidebar::rows(&self.sidebar_facts()))
+    /// The sidebar's lines (`sidebar.rs`), or `None` when the sidebar is off in the options. `online` is who is online:
+    /// the lobby's ready count and the name of a team's only player.
+    pub fn sidebar_rows(&self, online: &[Player]) -> Option<Vec<super::sidebar::Row>> {
+        self.rules.sidebar.then(|| super::sidebar::rows(&self.sidebar_facts(online)))
     }
 
-    fn sidebar_facts(&self) -> super::sidebar::Facts {
-        use super::sidebar::{Clock, Phase, Standing};
+    /// The teams that play, as the sidebar shows them, in preset order: names, colours, symbols, scores and finish times.
+    fn sidebar_teams(&self, online: &[Player]) -> Vec<super::sidebar::Standing> {
+        self.teams
+            .teams()
+            .into_iter()
+            .filter_map(|key| {
+                let preset = teams::preset(key)?;
+                let score = self.score(key);
+                let player = match self.teams.members(key).as_slice() {
+                    [only] => online.iter().find(|player| player.uuid == *only).map(|player| player.name.clone()),
+                    _ => None,
+                };
+                Some(super::sidebar::Standing {
+                    key: key.to_string(),
+                    name: preset.name.to_string(),
+                    color: preset.color.to_ascii_lowercase(),
+                    symbol: Some(preset.symbol.to_string()),
+                    player,
+                    items: score.items,
+                    lines: score.lines,
+                    cards: score.cards,
+                    finished: self.finished.get(key).map(|&ms| ms as i64),
+                })
+            })
+            .collect()
+    }
+
+    fn sidebar_facts(&self, online: &[Player]) -> super::sidebar::Facts {
+        use super::sidebar::{Clock, Features, Phase};
         let phase = match self.game.status() {
             GameStatus::Pregame => Phase::Lobby,
             GameStatus::Starting | GameStatus::Playing => Phase::Live,
@@ -2050,39 +2094,67 @@ impl Session {
         };
         let clock = match phase {
             Phase::Lobby => match self.game.time_limit_secs() {
-                Some(secs) => Clock::Limit(secs.max(0) as u32 / 60),
+                Some(secs) => Clock::Limit(i64::from(secs) * 1000),
                 None => Clock::NoLimit,
             },
-            Phase::Over => Clock::Elapsed(self.game.elapsed_ms()),
+            Phase::Over => Clock::NoLimit,
             Phase::Live => match self.game.remaining_ms() {
                 Some(ms) => Clock::Left(ms),
                 None => Clock::Elapsed(self.game.elapsed_ms()),
             },
         };
-        let teams = match phase {
-            Phase::Lobby => self
-                .teams
-                .teams()
-                .into_iter()
-                .map(|key| (team_name(key).to_string(), self.teams.members(key).len()))
-                .collect(),
-            _ => Vec::new(),
+        let teams = self.sidebar_teams(online);
+        let (ready_up, countdown) = match phase {
+            Phase::Lobby => {
+                let online_ids: Vec<u128> = online.iter().map(|player| player.uuid).collect();
+                let (ready_up, countdown) = self.ready.sidebar_lines(&online_ids);
+                (ready_up, Some(countdown))
+            }
+            _ => (None, None),
         };
-        let ranking = match phase {
-            Phase::Lobby => Vec::new(),
-            _ => self
-                .ranking()
-                .into_iter()
-                .map(|row| Standing { name: team_name(&row.key).to_string(), lines: row.score.lines, items: row.score.items })
-                .collect(),
+        let end = match phase {
+            Phase::Over => self.sidebar_end.clone(),
+            _ => None,
+        };
+        // The cards still to play after this one (`remainingCards`): a team's own wins are taken off when one team plays.
+        let more_cards = match self.rules.win_condition {
+            WinCondition::Cards(cards) => {
+                let won = match teams.as_slice() {
+                    [only] => self.completions.get(only.key.as_str()).map_or(0, |list| {
+                        list.iter().filter(|(_, is_winner)| *is_winner).count() as i32
+                    }),
+                    _ => 0,
+                };
+                let more = (cards as i32 - 1 - won).max(0);
+                (more > 0).then_some(more)
+            }
+            WinCondition::Infinite | WinCondition::ReplaceGoals => None,
         };
         super::sidebar::Facts {
             phase,
             mode: self.rules.mode,
+            hidden_items: self.rules.hidden_consume.hidden_items,
+            consume_items: self.rules.hidden_consume.consume_items,
+            replace_goals: self.rules.win_condition == WinCondition::ReplaceGoals,
+            features: Features {
+                elytra: self.rules.elytra,
+                night_vision: self.rules.night_vision,
+                keep_inventory: self.rules.keep_inventory,
+                pvp: self.rules.pvp,
+            },
             goal: self.rules.goal,
+            infinite: self.rules.win_condition == WinCondition::Infinite,
+            more_cards,
+            multi_card: match self.rules.win_condition {
+                WinCondition::Cards(cards) => cards > 1,
+                WinCondition::Infinite => true,
+                WinCondition::ReplaceGoals => false,
+            },
             clock,
             teams,
-            ranking,
+            ready_up,
+            countdown,
+            end,
         }
     }
 

@@ -695,7 +695,8 @@ fn run_team_chat(host: &mut dyn mod_api::ServerHost) {
 
 /// Shows the sidebar as the session says it should be (`sidebar::Shown` sends only the changes).
 fn update_sidebar(host: &mut dyn mod_api::ServerHost) {
-    let rows = with_session(|s| s.sidebar_rows());
+    let players = ServerAdapter { host: &mut *host }.players();
+    let rows = with_session(|s| s.sidebar_rows(&players));
     let mut shown = SIDEBAR.lock().unwrap_or_else(PoisonError::into_inner);
     shown.update(&mut ServerAdapter { host: &mut *host }, rows);
 }
