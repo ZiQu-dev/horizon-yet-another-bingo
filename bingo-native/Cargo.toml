@@ -11,6 +11,3 @@ png = "0.18"
 serde_json = "1"
 log = "0.4"
 
-[features]
-# The title screen's BINGO! button (needs horizon-rust/horizon#17246). Off by default.
-world-request = []
