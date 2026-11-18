@@ -5,7 +5,8 @@
 use horizon_bingo::server::host::ServerHost;
 use horizon_bingo::server::options::{Goal, Mode};
 use horizon_bingo::server::sidebar::{
-    component_json, english, end_message, rows, Clock, End, Facts, Features, Part, Phase, Row, Shown, Standing, MAX_ROWS,
+    component_json, english, end_message, rows, rows_for, rows_for_viewer, shows, Clock, End, Facts, Features, Part, Phase,
+    Row, Shown, Standing, Viewer, MAX_ROWS,
 };
 use horizon_bingo::server::texts;
 use horizon_bingo::server::types::Player;
@@ -378,4 +379,133 @@ fn a_sidebar_with_more_rows_than_the_room_sends_only_the_room() {
     shown.update(&mut host, Some(rows));
     assert!(host.commands.iter().any(|line| line.contains("bingo_row14")));
     assert!(!host.commands.iter().any(|line| line.contains("bingo_row15")));
+}
+
+/// A player on `team` (`None`: on no team) with the original's defaults: the scoreboard on, no auto hide.
+fn viewer(team: Option<&str>) -> Viewer {
+    Viewer {
+        team: team.map(str::to_string),
+        scoreboard: true,
+        auto_hide: false,
+        card_hud: false,
+        holds_map_or_not_survival: false,
+    }
+}
+
+fn text_of_rows(rows: &[Row]) -> Vec<String> {
+    rows.iter().map(|row| english(&row.text)).collect()
+}
+
+fn scores_of_rows(rows: &[Row]) -> Vec<Option<String>> {
+    rows.iter().map(|row| row.score.as_ref().map(|score| english(std::slice::from_ref(score)))).collect()
+}
+
+/// The JSON of a row's score, for its colour.
+fn score_json(row: &Row) -> String {
+    component_json(&row.score.clone().into_iter().collect::<Vec<Part>>())
+}
+
+#[test]
+fn a_member_of_a_team_sees_the_team_line_after_the_blank_when_several_teams_play() {
+    let facts = Facts {
+        teams: vec![
+            team("bingo_red", "Red", "red", "\u{1F525}", 0, 0),
+            team("bingo_blue", "Blue", "blue", "\u{1F30A}", 0, 0),
+        ],
+        ..pregame()
+    };
+    // `scoreboard_pregame.json`: the settings, the time, a blank, `%team%` (`Team: %s`), then `%ready_up%`.
+    assert_eq!(
+        text_of_rows(&rows_for(&facts, Some("bingo_red"))),
+        ["Mode: Standard", "Features: \u{1F5E1}", "Goal: 1 line", "Time: 00m 00s", "", "Team: \u{1F525} Red", "Waiting to start..."]
+    );
+    assert_eq!(
+        text_of_rows(&rows_for(&facts, None)),
+        ["Mode: Standard", "Features: \u{1F5E1}", "Goal: 1 line", "Time: 00m 00s", "", "Waiting to start..."],
+        "a player on no team has no team line"
+    );
+}
+
+#[test]
+fn a_game_with_one_team_has_no_team_line() {
+    let facts = Facts { teams: vec![team("bingo_red", "Red", "red", "\u{1F525}", 0, 0)], ..pregame() };
+    assert_eq!(
+        text_of_rows(&rows_for(&facts, Some("bingo_red"))),
+        ["Mode: Standard", "Features: \u{1F5E1}", "Goal: 1 line", "Time: 00m 00s", "", "Waiting to start..."]
+    );
+}
+
+#[test]
+fn a_member_sees_their_own_row_marked_and_white_and_the_other_teams_gray() {
+    // Blue has two lines, Red one: Blue ranks first. Red's member sees Red's row marked, in Red's colour.
+    let facts = live(vec![
+        team("bingo_red", "Red", "red", "\u{1F525}", 3, 1),
+        team("bingo_blue", "Blue", "blue", "\u{1F30A}", 0, 2),
+    ]);
+    let red_view = rows_for(&facts, Some("bingo_red"));
+    assert_eq!(
+        text_of_rows(&red_view)[5..],
+        ["1. \u{1F30A} Blue".to_string(), "\u{27A4} 2. \u{1F525} Red".to_string()],
+        "the marker is before the viewer's own place"
+    );
+    assert_eq!(scores_of_rows(&red_view)[5..], [Some("2 lines".to_string()), Some("1 line".to_string())]);
+
+    let marker = format!(r#"{{"text":"{}","color":"red"}}"#, "\u{27A4} ");
+    let own = component_json(&red_view[6].text);
+    assert!(own.contains(&marker), "the marker takes the team's colour: {own}");
+    assert!(own.ends_with(r#""color":"white"}"#), "the viewer's own row is white: {own}");
+    assert!(score_json(&red_view[6]).contains(r#""color":"white""#), "and so is its score");
+
+    let other = component_json(&red_view[5].text);
+    assert!(other.ends_with(r#""color":"gray"}"#), "another team's row is gray: {other}");
+    assert!(score_json(&red_view[5]).contains(r#""color":"gray""#), "and so is its score");
+
+    let blue_view = rows_for(&facts, Some("bingo_blue"));
+    assert_eq!(
+        text_of_rows(&blue_view)[5..],
+        ["\u{27A4} 1. \u{1F30A} Blue".to_string(), "2. \u{1F525} Red".to_string()]
+    );
+}
+
+#[test]
+fn a_player_on_no_team_sees_the_shared_ranking_in_white_with_no_marker() {
+    let facts = live(vec![
+        team("bingo_red", "Red", "red", "\u{1F525}", 3, 1),
+        team("bingo_blue", "Blue", "blue", "\u{1F30A}", 0, 2),
+    ]);
+    let view = rows_for(&facts, None);
+    assert_eq!(view, rows(&facts), "the shared sidebar is the view of a player on no team");
+    assert!(!text_of_rows(&view).iter().any(|line| line.contains('\u{27A4}')), "no marker for a player on no team");
+    assert!(view[5..].iter().all(|row| component_json(&row.text).ends_with(r#""color":"white"}"#)));
+}
+
+#[test]
+fn the_sidebar_of_a_player_on_no_team_is_hidden_outside_the_lobby_world() {
+    // `!state.isLobbyMode && !isOnTeam`: a player on no team gets no sidebar in a game, whatever their settings.
+    assert!(!shows(&viewer(None), false));
+    assert!(shows(&viewer(None), true), "in the lobby world they see it");
+    assert!(shows(&viewer(Some("bingo_red")), false), "a team's member sees it");
+}
+
+#[test]
+fn a_player_who_turned_the_scoreboard_off_gets_no_sidebar() {
+    let off = Viewer { scoreboard: false, ..viewer(Some("bingo_red")) };
+    assert!(!shows(&off, false));
+    let facts = live(vec![team("bingo_red", "Red", "red", "\u{1F525}", 0, 0)]);
+    assert_eq!(rows_for_viewer(&facts, &off, false), None);
+    assert!(rows_for_viewer(&facts, &viewer(Some("bingo_red")), false).is_some());
+}
+
+#[test]
+fn the_auto_hide_shows_the_sidebar_only_with_a_map_a_non_survival_mode_or_the_card_hud() {
+    let auto = |holds: bool, card_hud: bool| Viewer {
+        auto_hide: true,
+        holds_map_or_not_survival: holds,
+        card_hud,
+        ..viewer(Some("bingo_red"))
+    };
+    assert!(!shows(&auto(false, false), false), "survival with nothing in hand: hidden");
+    assert!(shows(&auto(true, false), false), "holding a map, or not in survival: shown");
+    assert!(shows(&auto(false, true), false), "the card HUD never auto hides: shown");
+    assert!(shows(&Viewer { auto_hide: false, ..auto(false, false) }, false), "auto hide off: shown");
 }

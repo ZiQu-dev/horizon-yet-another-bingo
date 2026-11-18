@@ -1,11 +1,13 @@
-//! The sidebar of the original's `ScoreboardController`, shown as one sidebar for everyone on the server. The original
-//! builds one per team, from the templates `scoreboard.json`, `scoreboard_pregame.json` and `scoreboard_postgame.json`;
-//! Horizon's host has no per-player sidebar, so this sends the spectators' version to all (see `PORT-GAP` in `rows`).
+//! The sidebar of the original's `ScoreboardController`. The original builds one per team, from the templates
+//! `scoreboard.json`, `scoreboard_pregame.json` and `scoreboard_postgame.json`, and sends each team's sidebar to its
+//! members only. Horizon's mod API has no per-player sidebar, so the server still shows one sidebar to everyone, and
+//! [`Shown`] sends it (see `PORT-GAP` in [`rows_for`]).
 //!
-//! Pure: [`rows`] makes the lines from the game's facts, as components the client translates (the original's keys, with
-//! its English as the fallback), and [`Shown`] turns each change of the lines into console commands (`scoreboard ...`),
-//! sending only what changed. Every row is a fake score holder: its display name is the line, its score (the number on
-//! the right) is the ranking's score text, and the objective's number format hides the rest.
+//! Pure: [`rows_for`] makes the lines of one team's view from the game's facts, and [`rows_for_viewer`] adds the
+//! per-player visibility ([`shows`]); both make components the client translates (the original's keys, with its English
+//! as the fallback). [`Shown`] turns each change of the lines into console commands (`scoreboard ...`), sending only what
+//! changed. Every row is a fake score holder: its display name is the line, its score (the number on the right) is the
+//! ranking's score text, and the objective's number format hides the rest.
 
 use std::cmp::Reverse;
 
@@ -230,24 +232,71 @@ const ICON_NIGHT_VISION: &str = "\u{1F441}";
 const ICON_KEEP_INVENTORY: &str = "\u{1F392}";
 const ICON_PVP: &str = "\u{1F5E1}";
 
-/// The lines of the sidebar, top first, at most [`MAX_ROWS`]. The title is the objective's own, so it is not here.
-///
-/// PORT-GAP: the original sends each team its own sidebar. Its differences for a team's member are the `➤` before the
-/// member's team in the ranking, and the `Team: <name>` line before the game, which are not shown: this is the
-/// spectators' version for everyone. With one team the team's own lines are shown, as the team's members see them.
+/// What the original reads of one player to decide their sidebar: `ScoreboardService.shouldDisplayScoreboard`, and the
+/// player filter of `ScoreboardController` (a player gets the sidebar of their own team, or of no team).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Viewer {
+    /// The key of the player's team (`bingo_red`); `None` for a player on no team (`teamService.getPlayerTeam`).
+    pub team: Option<String>,
+    /// `PlayerSettings.scoreboard`.
+    pub scoreboard: bool,
+    /// `PlayerSettings.scoreboardAutoHide`.
+    pub auto_hide: bool,
+    /// `CardViewService.supportsCardHud`: the player's client runs the card HUD, so the auto-hide never hides it.
+    pub card_hud: bool,
+    /// The player is not in survival, or holds a map item in either hand: the auto-hide's test for a player without the HUD.
+    pub holds_map_or_not_survival: bool,
+}
+
+/// Whether the original shows the sidebar to a player. A player on no team sees it only in the lobby world
+/// (`state.isLobbyMode`); the port has no lobby world, so callers pass `false`, the default of `BingoState.isLobbyMode`.
+pub fn shows(viewer: &Viewer, lobby_mode: bool) -> bool {
+    if !lobby_mode && viewer.team.is_none() {
+        return false;
+    }
+    if !viewer.scoreboard {
+        return false;
+    }
+    if !viewer.auto_hide || viewer.card_hud {
+        return true;
+    }
+    viewer.holds_map_or_not_survival
+}
+
+/// The sidebar of one player: their team's lines (see [`rows_for`]), or `None` when the sidebar is not shown to them.
+pub fn rows_for_viewer(facts: &Facts, viewer: &Viewer, lobby_mode: bool) -> Option<Vec<Row>> {
+    shows(viewer, lobby_mode).then(|| rows_for(facts, viewer.team.as_deref()))
+}
+
+/// The lines of the sidebar of a player on no team, top first, at most [`MAX_ROWS`]. The title is the objective's own, so
+/// it is not here. This is what the shared sidebar shows everyone, until a per-player one is possible (see `PORT-GAP` in
+/// [`rows_for`]).
 pub fn rows(facts: &Facts) -> Vec<Row> {
+    rows_for(facts, None)
+}
+
+/// The lines of the sidebar of a player on `team` (`None`: on no team), top first, at most [`MAX_ROWS`].
+///
+/// For a member of `team`, the `Team: <name>` line comes before the game (when several teams play), and in the ranking
+/// their own row has the `➤` marker in their team's colour, white, while the other teams' rows are gray. A player on no
+/// team sees the ranking in white, with no marker.
+///
+/// PORT-GAP: the original sends each team its own sidebar, which only that team's players are sent. Horizon's mod API has
+/// no per-player sidebar (the engine's `native_sidebar` is not exposed to mods), so the shared sidebar (`rows`) is the
+/// view of a player on no team, shown to everyone: the members of a team see no `➤` and no `Team:` line.
+pub fn rows_for(facts: &Facts, team: Option<&str>) -> Vec<Row> {
     let rows = match facts.phase {
         Phase::Lobby => {
             let mut rows = header(facts);
             rows.push(Row::blank());
-            // PORT-GAP: the original's team line (`Team: <name>`) is for each team's own sidebar; it is left out here.
+            rows.extend(team_line(facts, team));
             rows.extend(facts.ready_up.iter().chain(facts.countdown.iter()).map(|line| Row::of(vec![Part::of_line(line)])));
             rows
         }
         Phase::Live => {
             let mut rows = header(facts);
             rows.push(Row::blank());
-            rows.extend(scores(facts));
+            rows.extend(scores(facts, team));
             rows
         }
         Phase::Over => {
@@ -257,7 +306,7 @@ pub fn rows(facts: &Facts) -> Vec<Row> {
                 rows.extend(end.message.iter().map(|message| Row::of(vec![message.part()])));
             }
             rows.push(Row::blank());
-            rows.extend(scores(facts));
+            rows.extend(scores(facts, team));
             rows
         }
     };
@@ -393,9 +442,19 @@ fn clock_part(clock: Clock) -> Part {
     }
 }
 
+/// The `Team: <name>` line (`%team%`, `getTeamName`): the viewer's team, when more than one team plays. None otherwise.
+fn team_line(facts: &Facts, team: Option<&str>) -> Option<Row> {
+    if facts.teams.len() <= 1 {
+        return None;
+    }
+    let standing = facts.teams.iter().find(|standing| Some(standing.key.as_str()) == team)?;
+    Some(Row::of(vec![Part::translate("bingo.scoreboard.team", "Team: %s", vec![standing.name_part()])]))
+}
+
 /// The team lines of a game with one team (the team's own view: `Items scored`, `Lines scored` and `Cards scored`, in
 /// the team's colour), or the ranking of several teams, or nothing; then the blank line before the bottom of the list.
-fn scores(facts: &Facts) -> Vec<Row> {
+/// The team lines are the same for a viewer on that team and for one on no team: with one team, the leader is that team.
+fn scores(facts: &Facts, team: Option<&str>) -> Vec<Row> {
     match facts.teams.as_slice() {
         [] => vec![Row::blank()],
         [team] => {
@@ -413,9 +472,21 @@ fn scores(facts: &Facts) -> Vec<Row> {
         teams => ranked(teams)
             .into_iter()
             .take(RANKING_ROWS)
-            .map(|(index, team)| Row {
-                text: vec![Part::text(format!("{}. ", index + 1)), team.name_part()],
-                score: Some(score_part(team, facts.goal)),
+            .map(|(index, standing)| {
+                // `getTeamScores`: the viewer's own row is white with the marker in the team's colour, the other teams'
+                // rows are gray, and a player on no team sees every row white.
+                let own = team == Some(standing.key.as_str());
+                let formatting = if own || team.is_none() { "white" } else { "gray" };
+                let mut parts = Vec::new();
+                if own {
+                    parts.push(Part::Text { text: "\u{27A4} ".to_string(), color: Some(standing.color.clone()), bold: false });
+                }
+                parts.push(Part::text(format!("{}. ", index + 1)));
+                parts.push(standing.name_part());
+                Row {
+                    text: vec![Part::Group { color: Some(formatting.to_string()), parts }],
+                    score: Some(score_part(standing, facts.goal).colored(formatting)),
+                }
             })
             .collect(),
     }
