@@ -1,55 +1,23 @@
 //! The lobby's tutorial book (the original's `InfoBookService`, `InfoBookController` and `InfoBookCommand`): a written book
 //! with three pages (the welcome, the player settings and the hints), given to each player in the lobby and by `bingo book`.
 //! Pure: a page is a [`Part`] tree that reads as the English a player sees ([`Part::plain`]) and as the text components of
-//! the book ([`Part::snbt`]). The session gives the item through `ServerHost::give_item`.
+//! the book ([`Part::snbt`]). The session gives the item through `ServerHost::give_item`, and refreshes a held one through
+//! `ServerHost::replace_held_tagged` (the book's custom-data tag, [`HELD_TAG`], is what finds it).
 //!
 //! The English is the original's `en_us` text, under the original's keys, so a client's translation applies.
 //!
 //! The card HUD is known from the client's settings (see `Session::has_card_hud`): the hints name its keybind, and the
-//! settings page lists the auto hide only without it. Each toggle runs `bingo prefs` (`prefs::click_command`). Not ported:
-//! the book is refreshed when a setting changes (`Session::prefs`): the held copies are cleared and one written for the new
-//! settings is given. Limits: a refresh needs the held count (`ServerHost::command_result`); a host that cannot read it
-//! answers `None`, and then a held book keeps the values it was given with; a refreshed book is written with the
-//! keep tag of the current rule (`lobby_tutorial_book`), not the tag of the book it replaces.
+//! settings page lists the auto hide only without it. Each toggle runs `bingo prefs` (`prefs::click_command`). The book a
+//! player holds is refreshed when a setting changes (`Session::prefs`) and when they ask for one (`bingo book`): the held
+//! copy's contents are replaced in place, and one book is kept, as the original's `updateBookItem` does.
 use super::prefs::{self, Setting};
 use crate::update_settings::PlayerSettings;
 
 /// The item the book is.
 pub const ITEM: &str = "minecraft:written_book";
-/// Any tutorial book a player holds: a written book whose custom data has the book's tag (`custom_data~`, the partial
-/// match, so the book's other tags and its pages do not matter). The original's `NBT_BINGO_INFO_BOOK` lookup.
-const HELD_PREDICATE: &str = "minecraft:written_book[minecraft:custom_data~{bingo_info_book:1b}]";
+/// The custom-data tag every tutorial book carries (the original's `NBT_BINGO_INFO_BOOK`): a held stack with it is a book.
+pub const HELD_TAG: &str = "bingo_info_book";
 
-/// The command that counts the tutorial books a player holds (`clear` with a max count of 0 only counts; vanilla's
-/// result is the number). Read through `ServerHost::command_result`.
-pub fn count_command(player: &str) -> String {
-    format!("clear {player} {HELD_PREDICATE} 0")
-}
-
-/// The count a `count_command` answers, read from the command's feedback lines (plain text, as Horizon's
-/// `run_command_with_output` gives them). Vanilla's `clear` with a max count of 0 says `Found N matching item(s) on
-/// player P` or `Found N matching item(s) on M players`; when nothing matches it fails with `No items were found on
-/// player P` (or `... on M players`), which is a count of 0. Anything else, such as a refused command or a server
-/// whose feedback is in another language, is `None`, and the caller falls back as it does without a count.
-pub fn count_from_feedback(success: bool, feedback: &[String]) -> Option<i32> {
-    for line in feedback {
-        if let Some(rest) = line.strip_prefix("Found ") {
-            if let Some((count, target)) = rest.split_once(" matching item(s) on ") {
-                if target.starts_with("player ") || target.ends_with(" players") {
-                    return count.parse().ok();
-                }
-            }
-        } else if !success && line.starts_with("No items were found on ") {
-            return Some(0);
-        }
-    }
-    None
-}
-
-/// The command that removes every tutorial book a player holds, so a refreshed book leaves exactly one.
-pub fn clear_command(player: &str) -> String {
-    format!("clear {player} {HELD_PREDICATE}")
-}
 /// The version the book's text names (`v...`): the original mod's version whose English this follows.
 pub const VERSION: &str = "2.15.1";
 /// The book's title (`bingo.full_name`).
@@ -67,7 +35,7 @@ const OFF_MARK: &str = "\u{2610}";
 const INFO_MARK: &str = "\u{1F6C8}";
 /// The book's custom data: the tags of the original (`NBT_BINGO_INFO_BOOK`, `NBT_BINGO_IGNORE`, `NBT_BINGO_VANISH`,
 /// `NBT_BINGO_KEEP`). `keep` is set for the lobby's book, which stays with its player when they die.
-const TAG_INFO_BOOK: &str = "bingo_info_book";
+const TAG_INFO_BOOK: &str = HELD_TAG;
 const TAG_IGNORE: &str = "bingo_ignore";
 const TAG_VANISH: &str = "bingo_vanish";
 const TAG_KEEP: &str = "bingo_keep";
@@ -233,18 +201,32 @@ pub fn pages(view: &PageView) -> Vec<Part> {
 /// The components of the book item, in the `give` command's syntax (`minecraft:written_book[<components>]`): the written
 /// book content (title, author and the pages) and the custom data tags.
 pub fn components(author: &str, pages: &[Part], keep: bool) -> String {
+    format!("minecraft:written_book_content={},minecraft:custom_data={}", content(author, pages), tags(keep))
+}
+
+/// The whole book as an item in SNBT, as `ServerHost::item_from_snbt` reads it: the same content and tags as
+/// [`components`]. A held book is replaced with this one.
+pub fn item_snbt(author: &str, pages: &[Part], keep: bool) -> String {
+    format!(
+        "{{id:\"{ITEM}\",count:1,components:{{\"minecraft:written_book_content\":{},\"minecraft:custom_data\":{}}}}}",
+        content(author, pages),
+        tags(keep)
+    )
+}
+
+/// The written book content: the title, the author and the pages.
+fn content(author: &str, pages: &[Part]) -> String {
     let pages: Vec<String> = pages.iter().map(Part::snbt).collect();
+    format!("{{title:{},author:{},pages:[{}]}}", snbt_string(TITLE), snbt_string(author), pages.join(","))
+}
+
+/// The custom data of the book: its tags, `keep` for the lobby's book.
+fn tags(keep: bool) -> String {
     let mut tags = vec![format!("{TAG_INFO_BOOK}:1b"), format!("{TAG_IGNORE}:1b"), format!("{TAG_VANISH}:1b")];
     if keep {
         tags.push(format!("{TAG_KEEP}:1b"));
     }
-    format!(
-        "minecraft:written_book_content={{title:{},author:{},pages:[{}]}},minecraft:custom_data={{{}}}",
-        snbt_string(TITLE),
-        snbt_string(author),
-        pages.join(","),
-        tags.join(",")
-    )
+    format!("{{{}}}", tags.join(","))
 }
 
 /// The welcome page (`bingo.intro.*`): the title and version, the configure text for an operator, the wiki link and

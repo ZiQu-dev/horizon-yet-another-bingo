@@ -17,7 +17,7 @@ use horizon_bingo::server::texts::Line;
 use horizon_bingo::server::types::Player;
 use mod_api::{
     ConfigFileError, ConfigPath, Flow, Identifier, ItemKey, ItemStack, MenuReplace, PayloadBytes,
-    PayloadId, ServerTickPhase, StatType, Text,
+    PayloadId, ServerTickPhase, StatType, Tag, Text,
 };
 use std::{
     collections::{BTreeSet, HashMap},
@@ -472,6 +472,57 @@ impl ServerHost for ServerAdapter<'_> {
         self.command(&format!("give {name} {item}[{components}]"));
         true
     }
+
+    fn held_tagged(&self, player: u128, tag: &str) -> Option<usize> {
+        // Read from the inventory itself (the API has no command feedback to count with).
+        let slots = self.host.player(player)?.inventory_slots(&*self.host)?;
+        Some(slots.iter().filter(|(_, stack)| carries_tag(stack, tag)).count())
+    }
+
+    fn replace_held_tagged(&mut self, player: u128, tag: &str, snbt: &str) -> bool {
+        let Some(handle) = self.host.player(player) else {
+            return false;
+        };
+        let Some(slots) = handle.inventory_slots(&*self.host) else {
+            return false;
+        };
+        let held: Vec<u32> = slots
+            .iter()
+            .filter(|(_, stack)| carries_tag(stack, tag))
+            .map(|(slot, _)| *slot)
+            .collect();
+        let Some((&first, others)) = held.split_first() else {
+            return false;
+        };
+        let Some(stack) = self.host.item_from_snbt(snbt) else {
+            log("bingo: a tutorial book's SNBT was not read");
+            return false;
+        };
+        // The first held stack takes the new book; the other copies are emptied, so one is left.
+        let mut written = handle.set_inventory_slot(&mut *self.host, first, Some(stack)).is_ok();
+        for slot in others {
+            written &= handle.set_inventory_slot(&mut *self.host, *slot, None).is_ok();
+        }
+        written
+    }
+
+    fn item_name_key(&self, item: &str) -> String {
+        // A block's item names the block (`block.minecraft.copper_torch`), as vanilla's BlockItem does.
+        let is_block = self.host.block_key(item).is_some();
+        let kind = if is_block { "block" } else { "item" };
+        format!("{kind}.{}", item.replacen(':', ".", 1))
+    }
+}
+
+/// Whether a stack carries custom data with the key `tag` (the mod's own item tags, such as the tutorial book's).
+fn carries_tag(stack: &ItemStack, tag: &str) -> bool {
+    let Some(components) = stack.components() else {
+        return false;
+    };
+    components.as_nbt().iter().any(|(key, value)| {
+        key.to_string_lossy() == "minecraft:custom_data"
+            && matches!(value, Tag::Compound(data) if data.keys().any(|key| key.to_string_lossy() == tag))
+    })
 }
 
 /// The statistic kind of a vanilla statistic name (`minecraft:mined`), or `None` for a name the API has no kind for.

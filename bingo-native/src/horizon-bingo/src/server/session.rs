@@ -903,6 +903,8 @@ impl Session {
                     self.settings.insert(player, PlayerSettings::default());
                     host.write_file(SETTINGS_FILE, &store::settings_to_json(&self.settings));
                 }
+                // The held book names the card HUD's keybind and the auto hide setting, so it is refreshed with this.
+                self.refresh_book(host, player);
                 send(host, player, wire::update_settings(&self.settings[&player]));
             }
             return;
@@ -1202,18 +1204,18 @@ impl Session {
         prefs::changed_text(setting, on)
     }
 
-    /// Replaces the tutorial book a player holds with one written for their settings now. Only when the held count is
-    /// above zero: the clear runs first and the new book is given after it (both queued, so in that order), which leaves
-    /// one book. Without a count the held book is left as it was (see `infobook`'s limits).
-    fn refresh_book(&self, host: &mut dyn ServerHost, uuid: u128) {
+    /// Replaces the contents of the tutorial book a player holds with one written for their settings now, in place, so
+    /// the player keeps one book (as the original's `updateBookItem`). False when the player holds none, is not online,
+    /// or the host cannot write it; the held book is then left as it was.
+    fn refresh_book(&self, host: &mut dyn ServerHost, uuid: u128) -> bool {
         let Some(player) = host.players().into_iter().find(|p| p.uuid == uuid) else {
-            return;
+            return false;
         };
-        if !held_books(host, &player.name).is_some_and(|count| count > 0) {
-            return;
+        if !host.held_tagged(uuid, infobook::HELD_TAG).is_some_and(|count| count > 0) {
+            return false;
         }
-        host.command(&infobook::clear_command(&player.name));
-        self.give_book(host, &player, self.rules.lobby_tutorial_book);
+        let snbt = infobook::item_snbt(&player.name, &self.book_pages(host, &player), self.rules.lobby_tutorial_book);
+        host.replace_held_tagged(uuid, infobook::HELD_TAG, &snbt)
     }
 
     /// Hides the boss bars shown to one player, and forgets them.
@@ -1237,20 +1239,26 @@ impl Session {
         let Some(player) = host.players().into_iter().find(|p| p.uuid == uuid) else {
             return "You are not on the server.".to_string();
         };
-        if self.give_book(host, &player, false) {
+        // A player who holds the book has it updated, not a second one (the original's `giveBookItem`).
+        if self.refresh_book(host, uuid) || self.give_book(host, &player, false) {
             "You got the bingo book.".to_string()
         } else {
             "The bingo book could not be given.".to_string()
         }
     }
 
-    /// Gives one player the tutorial book, its pages written for their settings and operator rights. False when the host
-    /// could not give it.
-    fn give_book(&self, host: &mut dyn ServerHost, player: &Player, keep: bool) -> bool {
+    /// The pages of a player's tutorial book, written for their settings and operator rights.
+    fn book_pages(&self, host: &dyn ServerHost, player: &Player) -> Vec<infobook::Part> {
         let settings = self.settings.get(&player.uuid).cloned().unwrap_or_default();
         let operator = host.is_operator(player.uuid);
         let hud = self.has_card_hud(player.uuid);
-        let pages = infobook::pages(&infobook::PageView { settings: &settings, operator, hud });
+        infobook::pages(&infobook::PageView { settings: &settings, operator, hud })
+    }
+
+    /// Gives one player the tutorial book, its pages written for their settings and operator rights. False when the host
+    /// could not give it.
+    fn give_book(&self, host: &mut dyn ServerHost, player: &Player, keep: bool) -> bool {
+        let pages = self.book_pages(host, player);
         let components = infobook::components(&player.name, &pages, keep);
         host.give_item(player.uuid, infobook::ITEM, &components)
     }
@@ -1272,9 +1280,9 @@ impl Session {
             if waiting {
                 continue;
             }
-            // A player who already holds the book (from before a restart, when `books_given` was empty) is not given a
-            // second one. Without a count (`held_books` is `None`) the book is given as before.
-            if held_books(host, &player.name).is_some_and(|count| count > 0) {
+            // A player who already holds the book (from before a restart, when `books_given` was empty) keeps it, updated,
+            // and is not given a second one.
+            if self.refresh_book(host, player.uuid) {
                 self.books_given.insert(player.uuid);
                 continue;
             }
@@ -2534,12 +2542,6 @@ impl Session {
 }
 
 /// A card as `card_value` writes it: its squares, each an item and a tier.
-/// How many tutorial books a player holds, from the host's count (`ServerHost::command_result`); `None` when the host
-/// cannot read it.
-fn held_books(host: &mut dyn ServerHost, player: &str) -> Option<i32> {
-    host.command_result(&infobook::count_command(player))
-}
-
 fn card_value(card: &Card) -> Value {
     Value::Array(card.squares.iter().map(|square| json!({ "item": square.item, "tier": square.tier.name() })).collect())
 }

@@ -91,4 +91,20 @@ pub trait ServerHost {
     fn give_item(&mut self, _player: u128, _item: &str, _components: &str) -> bool {
         false
     }
+    /// How many of a player's stacks carry the custom-data tag `tag` (the tutorial book's `infobook::HELD_TAG`), read from
+    /// their inventory. `None` when the host cannot read it. The default is `None`.
+    fn held_tagged(&self, _player: u128, _tag: &str) -> Option<usize> {
+        None
+    }
+    /// Replaces the stacks a player holds that carry the custom-data tag `tag` with one stack given as SNBT
+    /// (`item_from_snbt`): the first of them takes the new stack and the others are emptied, so one stack is left. Nothing
+    /// is held, or the host cannot write it, gives false and changes nothing. The default is false.
+    fn replace_held_tagged(&mut self, _player: u128, _tag: &str, _snbt: &str) -> bool {
+        false
+    }
+    /// The translation key of an item's name, as the client shows it: vanilla's `item.<ns>.<path>`, or
+    /// `block.<ns>.<path>` for an item that is a block. The default is the item key.
+    fn item_name_key(&self, item: &str) -> String {
+        format!("item.{}", item.replacen(':', ".", 1))
+    }
 }
