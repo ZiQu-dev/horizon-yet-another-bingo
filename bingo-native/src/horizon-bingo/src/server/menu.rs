@@ -29,7 +29,8 @@ pub const CLOSE_SLOT: usize = 35;
 /// The spawn distances the Features page offers, in chunks.
 pub const SPAWN_DISTANCES: [u32; 4] = [10, 25, 50, 100];
 /// The reply of a successful `start`, as the session gives it.
-pub const GAME_STARTED: &str = "Game started.";
+/// The reply to a start, the English of `texts::start_success` (`bingo.command.start.success`).
+pub const GAME_STARTED: &str = "Starting the game...";
 /// The reply to a click on an operator's button by someone else. Same text as `perform_command` gives.
 pub const NOT_OPERATOR: &str = "You must be an operator to use this command.";
 /// The reply to a click on a setting once the round has started.

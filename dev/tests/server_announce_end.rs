@@ -72,12 +72,12 @@ fn started(host: &mut FakeHost, session: &mut Session, setup: &[&str]) {
     for p in host.online.clone() {
         session.on_join(host, &p);
     }
-    assert!(run(session, host, Some(ALICE), "join red").starts_with("You joined"));
-    assert!(run(session, host, Some(BOB), "join blue").starts_with("You joined"));
+    assert!(run(session, host, Some(ALICE), "join red").starts_with("Moved player"));
+    assert!(run(session, host, Some(BOB), "join blue").starts_with("Moved player"));
     for line in setup {
         run(session, host, None, line);
     }
-    assert_eq!(run(session, host, None, "start ignore_warnings"), "Game started.");
+    assert_eq!(run(session, host, None, "start ignore_warnings"), "Starting the game...");
     // The start's packets stay in `sent`: a test reads the card the round dealt from them.
     host.tells.clear();
     host.broadcasts.clear();
@@ -112,7 +112,7 @@ fn ending_by_command_says_the_game_was_stopped_and_ranks_the_teams() {
     let mut session = Session::new(options(7));
     started(&mut host, &mut session, &["endwhen all_win"]);
 
-    assert_eq!(run(&mut session, &mut host, None, "end"), "Game ended.");
+    assert_eq!(run(&mut session, &mut host, None, "end"), "Stopped the game!");
     let lines = tells_of(&host, ALICE);
     assert_eq!(lines.len(), 6, "rule, reason, duration, two ranking rows, rule: {lines:?}");
     assert_eq!(lines[0], rule());

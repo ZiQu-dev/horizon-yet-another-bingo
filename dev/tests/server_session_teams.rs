@@ -118,7 +118,7 @@ fn lobby(host: &mut FakeHost, session: &mut Session, online: &[(u128, &str)], te
     }
     for &(uuid, team) in teams {
         let answer = run(session, host, Some(uuid), &format!("join {team}"));
-        assert!(answer.starts_with("You joined"), "joining {team}: {answer}");
+        assert!(answer.starts_with("Moved player"), "joining {team}: {answer}");
     }
     host.take();
     host.take_commands();
@@ -186,7 +186,7 @@ fn two_teams_share_one_card_and_each_sees_the_others_finds_as_taken_by_them() {
     let mut session = Session::new(options(7, 0, None));
     lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "blue")]);
 
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
     assert_eq!(
         host.take_commands(),
         [
@@ -320,7 +320,7 @@ fn a_player_on_no_team_blocks_the_start_until_ignore_warnings_makes_them_a_spect
     assert!(host.take_commands().is_empty(), "a refused start changes nothing");
     assert!(host.take().is_empty());
 
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start ignore_warnings"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start ignore_warnings"), "Starting the game...");
     let commands = host.take_commands();
     assert_eq!(commands.iter().filter(|c| c.starts_with("team ")).count(), 6, "Carol is not added to any team");
     assert!(commands.contains(&"gamemode spectator Carol".to_string()), "Carol watches in spectator mode");
@@ -353,9 +353,9 @@ fn shuffleteams_deals_the_players_round_robin_and_leaves_spectators_out() {
 
     assert_eq!(run(&mut session, &mut host, None, "shuffleteams 0"), "shuffleteams needs a whole number of at least 1, got '0'");
     assert_eq!(run(&mut session, &mut host, None, "shuffleteams 9"), "Team count must be between 1 and 8, not 9.");
-    assert_eq!(run(&mut session, &mut host, None, "shuffleteams 2"), "Shuffled 2 players into 2 teams");
+    assert_eq!(run(&mut session, &mut host, None, "shuffleteams 2"), "Teams have been shuffled!");
 
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
     let commands = host.take_commands();
     assert_eq!(commands.iter().filter(|c| c.starts_with("team ")).count(), 6);
     assert_eq!(commands.iter().filter(|c| c.starts_with("team add")).count(), 2);
@@ -376,7 +376,7 @@ fn shuffleteams_clears_the_ready_flag_only_of_players_whose_team_changed() {
     host.take();
 
     // One team: everyone goes to red. Alice stays on red, so she keeps her ready flag; Bob moves, so his goes.
-    assert_eq!(run(&mut session, &mut host, None, "shuffleteams 1"), "Shuffled 2 players into 1 teams");
+    assert_eq!(run(&mut session, &mut host, None, "shuffleteams 1"), "Teams have been shuffled!");
     let sent = host.take();
     assert!(ready_of(&only(&sent, ALICE, "ready_timer_update_v2")).is_ready);
     assert!(!ready_of(&only(&sent, BOB, "ready_timer_update_v2")).is_ready);
@@ -420,9 +420,9 @@ fn the_ready_command_toggles_the_callers_flag_and_refuses_the_console() {
     assert_eq!(run(&mut session, &mut host, None, "ready"), "Only a player can ready up.");
     assert!(host.take().is_empty());
 
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "ready"), "You are ready.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "ready"), "Alice is ready!");
     assert!(ready_of(&only(&host.take(), ALICE, "ready_timer_update_v2")).is_ready);
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "ready"), "You are not ready.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "ready"), "Alice is no longer ready!");
     assert!(!ready_of(&only(&host.take(), ALICE, "ready_timer_update_v2")).is_ready);
 }
 
@@ -542,7 +542,7 @@ fn commands_outside_their_state_fail_and_change_nothing() {
 
     // The time limit can still change during play.
     assert!(run(&mut session, &mut host, Some(ALICE), "timelimit 5").starts_with("Time limit set"));
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "end"), "Game ended.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "end"), "Stopped the game!");
     host.take();
     assert_eq!(run(&mut session, &mut host, Some(ALICE), "timelimit 5"), "The time limit can be changed only in Pregame or Playing.");
     assert_eq!(run(&mut session, &mut host, Some(ALICE), "end"), "The game is not Playing.");

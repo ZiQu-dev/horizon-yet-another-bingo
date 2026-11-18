@@ -113,7 +113,7 @@ fn lobby(host: &mut FakeHost, session: &mut Session, online: &[(u128, &str)], te
     }
     for &(uuid, team) in teams {
         let answer = run(session, host, Some(uuid), &format!("join {team}"));
-        assert!(answer.starts_with("You joined"), "joining {team}: {answer}");
+        assert!(answer.starts_with("Moved player"), "joining {team}: {answer}");
     }
     host.take();
     host.take_commands();
@@ -248,7 +248,7 @@ fn full_game_from_start_to_game_over() {
     let mut session = Session::new(options(7, 3, None));
     lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "red")]);
 
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
     assert_eq!(
         host.take_commands(),
         [
@@ -339,7 +339,7 @@ fn full_game_from_start_to_game_over() {
 
     let expected_lines: Vec<String> = row
         .iter()
-        .map(|name| format!("Alice found {}", name.strip_prefix("minecraft:").unwrap_or(name)))
+        .map(|name| format!("Alice got [{}]", name.strip_prefix("minecraft:").unwrap_or(name)))
         .chain(std::iter::once("Red won the game!".to_string()))
         .collect();
     assert_eq!(broadcasts, expected_lines);
@@ -566,7 +566,7 @@ fn reset_clears_the_card_and_the_next_card_uses_the_next_seed() {
     host.take();
     host.take_broadcasts();
 
-    assert_eq!(run(&mut session, &mut host, None, "reset"), "Game reset.");
+    assert_eq!(run(&mut session, &mut host, None, "reset"), "Resetting the game...");
     let reset = host.take();
     assert_eq!(count(&reset, ALICE, "game_reset"), 1);
     assert_eq!(count(&reset, ALICE, "card_reset"), 1);
@@ -579,7 +579,7 @@ fn reset_clears_the_card_and_the_next_card_uses_the_next_seed() {
     assert!(host.take().is_empty());
 
     // The team stays, so the next start uses the card of seed 101.
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
     let second = card_names(&mut host, ALICE);
     assert_eq!(second, names_of_generated(&generate_card(101, &pool, DEFAULT_DISTRIBUTION)));
     assert_ne!(second, first);
@@ -657,16 +657,16 @@ fn commands_answer_with_text_and_report_errors_without_changing_the_game() {
     assert!(host.take().is_empty());
 
     let refused = run(&mut session, &mut host, None, "end");
-    assert!(!refused.is_empty() && refused != "Game ended.", "ending in Pregame is an error: {refused}");
+    assert!(!refused.is_empty() && refused != "Stopped the game!", "ending in Pregame is an error: {refused}");
     assert!(run(&mut session, &mut host, None, "status").contains("Pregame"));
     assert!(host.take().is_empty(), "ending a game that is not playing changes nothing");
 
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
     assert!(run(&mut session, &mut host, None, "status").contains("Starting"));
     assert_eq!(count(&host.take(), ALICE, "countdown"), 1);
 
     let again = run(&mut session, &mut host, None, "start");
-    assert!(!again.is_empty() && again != "Game started.", "a second start is an error: {again}");
+    assert!(!again.is_empty() && again != "Starting the game...", "a second start is an error: {again}");
     assert!(run(&mut session, &mut host, None, "status").contains("Starting"));
     assert!(host.take().is_empty(), "the failed start sent nothing");
 
@@ -676,7 +676,7 @@ fn commands_answer_with_text_and_report_errors_without_changing_the_game() {
     }
     assert!(run(&mut session, &mut host, None, "").contains("start"), "an empty line gives the usage");
 
-    assert_eq!(run(&mut session, &mut host, None, "reset"), "Game reset.");
+    assert_eq!(run(&mut session, &mut host, None, "reset"), "Resetting the game...");
     assert!(run(&mut session, &mut host, None, "status").contains("Pregame"));
 }
 
@@ -688,7 +688,7 @@ fn ending_by_command_sends_the_end_screen_without_a_winner() {
     run(&mut session, &mut host, Some(ALICE), "start");
     host.take();
 
-    assert_eq!(run(&mut session, &mut host, None, "end"), "Game ended.");
+    assert_eq!(run(&mut session, &mut host, None, "end"), "Stopped the game!");
     let sent = host.take();
     let over = decode(&only(&sent, ALICE, "game_over_v2"), GameOverPacket::read_v2).unwrap();
     assert_eq!(over.winner, None);
@@ -793,7 +793,7 @@ fn a_player_leaving_cancels_the_countdown_and_the_ready_flags_and_the_return_res
     // which is 100 ticks), so it ends on tick 161, not before.
     host.online = vec![player(ALICE, "Alice"), player(BOB, "Bob")];
     session.on_join(&mut host, &player(BOB, "Bob"));
-    assert!(run(&mut session, &mut host, Some(BOB), "join red").starts_with("You joined"));
+    assert!(run(&mut session, &mut host, Some(BOB), "join red").starts_with("Moved player"));
     session.on_packet(&mut host, ALICE, "set_ready", &READY_V1);
     host.take();
     for _ in 61..=160 {
@@ -813,7 +813,7 @@ fn an_operator_can_start_a_lone_player_without_any_ready_countdown() {
     session.on_join(&mut host, &player(ALICE, "Alice"));
     host.take();
 
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
     assert!(run(&mut session, &mut host, None, "status").contains("Playing"));
     assert!(host.take_commands().contains(&"team add bingo_red".to_string()));
 }

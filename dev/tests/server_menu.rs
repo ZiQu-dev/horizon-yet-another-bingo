@@ -335,7 +335,7 @@ fn warnings_page_shows_the_refusal_and_starts_anyway_for_an_operator() {
 
 #[test]
 fn a_refused_start_is_a_start_line_with_another_reply() {
-    assert!(!menu::start_refused("start", "Game started."));
+    assert!(!menu::start_refused("start", "Starting the game..."));
     assert!(menu::start_refused("start", "Nobody to play."));
     assert!(menu::start_refused(
         "start ignore_warnings",
@@ -343,7 +343,7 @@ fn a_refused_start_is_a_start_line_with_another_reply() {
     ));
     assert!(!menu::start_refused("goal lines 1", "Goal: 1 line(s)."));
     // The success text is the one the session gives for a start.
-    assert_eq!(menu::GAME_STARTED, "Game started.");
+    assert_eq!(menu::GAME_STARTED, "Starting the game...");
 }
 
 #[test]

@@ -94,8 +94,8 @@ fn lobby(host: &mut FakeHost, session: &mut Session) {
     for p in host.online.clone() {
         session.on_join(host, &p);
     }
-    assert!(session.command(host, Some(ALICE), "join red").starts_with("You joined"));
-    assert!(session.command(host, Some(BOB), "join blue").starts_with("You joined"));
+    assert!(session.command(host, Some(ALICE), "join red").starts_with("Moved player"));
+    assert!(session.command(host, Some(BOB), "join blue").starts_with("Moved player"));
     host.sent.clear();
     host.commands.clear();
 }
@@ -105,7 +105,7 @@ fn start(rules: Options) -> (FakeHost, Session) {
     let mut host = FakeHost::default();
     let mut session = Session::new(options(SEED, rules));
     lobby(&mut host, &mut session);
-    assert_eq!(session.command(&mut host, None, "start"), "Game started.");
+    assert_eq!(session.command(&mut host, None, "start"), "Starting the game...");
     (host, session)
 }
 
@@ -243,7 +243,7 @@ fn postgame_shows_every_square_to_each_team() {
     assert!(last_tiles(&host, BOB).tiles.iter().any(|(_, tile)| tile.is_hidden), "blue has hidden squares in play");
     host.sent.clear();
 
-    assert_eq!(session.command(&mut host, None, "end"), "Game ended.");
+    assert_eq!(session.command(&mut host, None, "end"), "Stopped the game!");
 
     for viewer in [ALICE, BOB] {
         let packet = last_tiles(&host, viewer);
@@ -305,7 +305,7 @@ fn consume_items_leaves_inventory_mode_and_inventory_mode_turns_it_off() {
     // With consume off and inventory mode on, a find takes nothing from the inventory.
     session.command(&mut host, None, "mode consume_items on");
     session.command(&mut host, None, "mode inventory");
-    assert_eq!(session.command(&mut host, None, "start"), "Game started.");
+    assert_eq!(session.command(&mut host, None, "start"), "Starting the game...");
     let names = tiles_of(&only(&host, ALICE, "update_card_tiles"));
     let item = names.tiles[0].1.id.clone().expect("every square shows its item when nothing is hidden");
     host.commands.clear();
@@ -327,7 +327,7 @@ fn the_card_flags_are_saved_and_a_new_session_reads_them() {
     let mut second = FakeHost { files: first.files.clone(), ..FakeHost::default() };
     let mut restarted = Session::new(options(SEED, Options::default()));
     lobby(&mut second, &mut restarted);
-    assert_eq!(restarted.command(&mut second, None, "start"), "Game started.");
+    assert_eq!(restarted.command(&mut second, None, "start"), "Starting the game...");
     let packet = tiles_of(&only(&second, ALICE, "update_card_tiles"));
     assert!(packet.tiles.iter().all(|(_, tile)| tile.is_hidden), "hidden items was read back");
 

@@ -195,7 +195,7 @@ fn lobby(host: &mut FakeHost, session: &mut Session, online: &[(u128, &str)], te
     }
     for &(uuid, team) in teams {
         let answer = run(session, host, Some(uuid), &format!("join {team}"));
-        assert!(answer.starts_with("You joined"), "joining {team}: {answer}");
+        assert!(answer.starts_with("Moved player"), "joining {team}: {answer}");
     }
     host.take_commands();
 }
@@ -432,7 +432,7 @@ fn a_map_id_is_kept_across_rounds_and_saved_so_a_restarted_server_reuses_it() {
     steps(&mut session, &mut host, 1);
     run(&mut session, &mut host, Some(ALICE), "end");
     steps(&mut session, &mut host, 2);
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "reset"), "Game reset.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "reset"), "Resetting the game...");
     steps(&mut session, &mut host, 2);
     host.take_gives();
     assert_eq!(host.made, vec![RED, BLUE], "no map is made for the second round");

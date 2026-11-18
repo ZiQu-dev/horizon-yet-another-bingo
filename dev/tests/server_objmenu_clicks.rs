@@ -81,10 +81,10 @@ fn two_teams(host: &mut FakeHost, session: &mut Session) {
     join_all(host, session, &[(ALICE, "Alice"), (BOB, "Bob")]);
     assert!(session
         .command(host, Some(ALICE), "join red")
-        .starts_with("You joined"));
+        .starts_with("Moved player"));
     assert!(session
         .command(host, Some(BOB), "join blue")
-        .starts_with("You joined"));
+        .starts_with("Moved player"));
 }
 
 /// The shown items of a page for the session's rules, as the chest holds them.
@@ -155,7 +155,7 @@ fn reroll_card_button_draws_a_new_seed_for_an_operator_before_the_start() {
     assert_eq!(seed_of(&session), REROLL_SEED);
 
     // Once the round has started the button is refused and the seed stays.
-    assert_eq!(session.command(&mut host, None, "start"), "Game started.");
+    assert_eq!(session.command(&mut host, None, "start"), "Starting the game...");
     let (outcome, _) = click(&mut session, &mut host, &Page::Root, 10, true);
     assert_eq!(outcome, Outcome::Tell(ROUND_STARTED.to_string()));
     assert_eq!(seed_of(&session), REROLL_SEED);
@@ -170,7 +170,7 @@ fn a_card_rerolled_from_the_menu_is_the_card_of_the_new_seed() {
         click(&mut rerolled, &mut host, &Page::Root, 10, true).1,
         "Card re-rolled."
     );
-    assert_eq!(rerolled.command(&mut host, None, "start"), "Game started.");
+    assert_eq!(rerolled.command(&mut host, None, "start"), "Starting the game...");
 
     // A session started on the rerolled seed directly deals the same card, and the unrolled one another.
     let mut direct = Session::new(SessionOptions {
@@ -185,7 +185,7 @@ fn a_card_rerolled_from_the_menu_is_the_card_of_the_new_seed() {
     two_teams(&mut fresh_host, &mut direct);
     assert_eq!(
         direct.command(&mut fresh_host, None, "start"),
-        "Game started."
+        "Starting the game..."
     );
 
     let mut plain = session();
@@ -193,7 +193,7 @@ fn a_card_rerolled_from_the_menu_is_the_card_of_the_new_seed() {
     two_teams(&mut plain_host, &mut plain);
     assert_eq!(
         plain.command(&mut plain_host, None, "start"),
-        "Game started."
+        "Starting the game..."
     );
 
     let card = snapshot(&rerolled)["card"].clone();
@@ -327,7 +327,7 @@ fn auto_shuffle_at_the_start_deals_the_players_into_the_counted_teams() {
     }
     assert_eq!(session.rules().team_count, 5);
 
-    assert_eq!(session.command(&mut host, None, "start"), "Game started.");
+    assert_eq!(session.command(&mut host, None, "start"), "Starting the game...");
     let status = session.command(&mut host, None, "status");
     let team_lines = status
         .lines()
@@ -387,7 +387,7 @@ fn starting_kit_button_clears_the_kit_for_an_operator_and_is_refused_once_starte
 
     // With a kit again and the round started, the click is refused and the kit stays.
     session.command(&mut host, Some(ALICE), "kit add diamond 2");
-    assert_eq!(session.command(&mut host, None, "start"), "Game started.");
+    assert_eq!(session.command(&mut host, None, "start"), "Starting the game...");
     let (outcome, _) = click(&mut session, &mut host, &Page::Features, 4, true);
     assert_eq!(outcome, Outcome::Tell(ROUND_STARTED.to_string()));
     assert!(!session.rules().kit.is_empty());

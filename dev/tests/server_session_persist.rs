@@ -171,7 +171,7 @@ fn lobby(host: &mut FakeHost, session: &mut Session, online: &[(u128, &str)], te
     }
     for &(uuid, team) in teams {
         let answer = run(session, host, Some(uuid), &format!("join {team}"));
-        assert!(answer.starts_with("You joined"), "joining {team}: {answer}");
+        assert!(answer.starts_with("Moved player"), "joining {team}: {answer}");
     }
     host.take();
     host.take_commands();
@@ -244,7 +244,7 @@ fn red_win(id: u128, duration_ms: i64, alice_items: i32) -> HistoryEntry {
 fn started_round(host: &mut FakeHost, session: &mut Session, items: u32) -> Vec<String> {
     lobby(host, session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "blue")]);
     run(session, host, Some(ALICE), &format!("goal items {items}"));
-    assert_eq!(run(session, host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(session, host, Some(ALICE), "start"), "Starting the game...");
     let names = card_names(host, ALICE);
     host.take_commands();
     names
@@ -303,8 +303,8 @@ fn a_win_appends_one_history_line_and_a_forfeit_appends_the_next() {
     // Both players vote for the lobby, the next round is started and ended by the console: a forfeit, no winner.
     assert_eq!(run(&mut session, &mut host, Some(ALICE), "vote lobby"), "Vote recorded (1 of 2 votes).");
     assert_eq!(run(&mut session, &mut host, Some(BOB), "vote lobby"), "The vote is over: back to the lobby.");
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
-    assert_eq!(run(&mut session, &mut host, None, "end"), "Game ended.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
+    assert_eq!(run(&mut session, &mut host, None, "end"), "Stopped the game!");
 
     assert_eq!(host.files["history.jsonl"].lines().count(), 2);
     let entries = history(&host);
@@ -429,7 +429,7 @@ fn red_pair_round(host: &mut FakeHost, session: &mut Session) -> Vec<String> {
     lobby(host, session, &[(ALICE, "Alice"), (BOB, "Bob"), (CAROL, "Carol")], &[(ALICE, "red"), (BOB, "red")]);
     assert!(run(session, host, Some(ALICE), "goal items 3").contains("Goal: 3 item(s)"));
     // Carol is not on a team: `ignore_warnings` makes her a spectator, so she is not in the roster.
-    assert_eq!(run(session, host, Some(ALICE), "start ignore_warnings"), "Game started.");
+    assert_eq!(run(session, host, Some(ALICE), "start ignore_warnings"), "Starting the game...");
     let names = card_names(host, ALICE);
     host.take_commands();
     names
@@ -485,7 +485,7 @@ fn the_end_screen_carries_the_win_streak_best_time_and_items_of_each_viewer() {
     // Second round: 100 ticks (5000 ms), Alice wins again with 2 items.
     assert_eq!(run(&mut session, &mut host, Some(ALICE), "vote lobby"), "Vote recorded (1 of 2 votes).");
     assert_eq!(run(&mut session, &mut host, Some(BOB), "vote lobby"), "The vote is over: back to the lobby.");
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
     let names = card_names(&mut host, ALICE);
     host.take_commands();
     host.take();

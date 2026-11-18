@@ -79,7 +79,7 @@ fn lobby(host: &mut FakeHost, session: &mut Session, online: &[(u128, &str)], te
     }
     for &(uuid, team) in teams {
         let answer = run(session, host, Some(uuid), &format!("join {team}"));
-        assert!(answer.starts_with("You joined"), "joining {team}: {answer}");
+        assert!(answer.starts_with("Moved player"), "joining {team}: {answer}");
     }
     host.sent.clear();
     host.take_commands();
@@ -97,7 +97,7 @@ fn team_players_get_one_infinite_effect_when_the_option_is_on_and_no_more_after_
     let mut session = Session::new(options(0));
     lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "blue")]);
     assert!(run(&mut session, &mut host, Some(ALICE), "nightvision on").contains("Night vision: on"));
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
     host.take_commands();
 
     ticks(&mut session, &mut host, 1);
@@ -115,7 +115,7 @@ fn with_the_option_off_team_players_get_nothing_and_a_spectator_gets_the_effect_
     let mut host = FakeHost::default();
     let mut session = Session::new(options(0));
     lobby(&mut host, &mut session, &[(ALICE, "Alice"), (CAROL, "Carol")], &[(ALICE, "red")]);
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start ignore_warnings"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start ignore_warnings"), "Starting the game...");
     host.take_commands();
 
     ticks(&mut session, &mut host, 1);

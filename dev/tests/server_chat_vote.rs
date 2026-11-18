@@ -52,8 +52,8 @@ fn lobby(host: &mut FakeHost, session: &mut Session) {
     for p in host.online.clone() {
         session.on_join(host, &p);
     }
-    assert!(run(session, host, Some(ALICE), "join red").starts_with("You joined"));
-    assert!(run(session, host, Some(BOB), "join blue").starts_with("You joined"));
+    assert!(run(session, host, Some(ALICE), "join red").starts_with("Moved player"));
+    assert!(run(session, host, Some(BOB), "join blue").starts_with("Moved player"));
 }
 
 fn status(session: &mut Session, host: &mut FakeHost) -> String {
@@ -81,8 +81,8 @@ fn a_chat_vote_is_the_same_vote_as_the_command() {
     let mut host = FakeHost::default();
     let mut session = Session::new(options(7));
     lobby(&mut host, &mut session);
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
-    assert_eq!(run(&mut session, &mut host, None, "end"), "Game ended.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
+    assert_eq!(run(&mut session, &mut host, None, "end"), "Stopped the game!");
     assert!(session.is_postgame());
 
     // Alice's chat line, as the server runs it after the tick: she votes for the lobby, Bob has not voted yet.

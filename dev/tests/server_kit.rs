@@ -94,8 +94,8 @@ fn lobby(host: &mut Host, session: &mut Session) {
     for p in host.online.clone() {
         session.on_join(host, &p);
     }
-    assert!(run(session, host, Some(ALICE), "join red").starts_with("You joined"));
-    assert!(run(session, host, Some(BOB), "join blue").starts_with("You joined"));
+    assert!(run(session, host, Some(ALICE), "join red").starts_with("Moved player"));
+    assert!(run(session, host, Some(BOB), "join blue").starts_with("Moved player"));
     host.commands.clear();
     host.sent.clear();
 }
@@ -275,7 +275,7 @@ fn team_players_get_the_kit_when_play_begins_and_a_spectator_does_not() {
     assert_eq!(run(&mut session, &mut host, Some(ALICE), "kit add diamond"), "Kit: 1 minecraft:diamond set.");
     assert!(host.files.get("options.json").unwrap().contains("minecraft:diamond"));
 
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start ignore_warnings"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start ignore_warnings"), "Starting the game...");
     let gives: Vec<String> = host.commands.iter().filter(|c| c.starts_with("give ")).cloned().collect();
     assert_eq!(
         gives,
@@ -295,7 +295,7 @@ fn a_kit_change_after_the_start_is_refused_and_the_kit_is_unchanged() {
     let mut session = Session::new(options(7));
     lobby(&mut host, &mut session);
     run(&mut session, &mut host, Some(ALICE), "kit add bread 16");
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
     assert_eq!(
         run(&mut session, &mut host, Some(ALICE), "kit add stone 1"),
         "The kit can be changed only before the game starts."

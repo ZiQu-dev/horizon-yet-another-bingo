@@ -79,8 +79,8 @@ fn two_teams(host: &mut FakeHost, session: &mut Session) {
     for p in host.online.clone() {
         session.on_join(host, &p);
     }
-    assert!(run(session, host, Some(ALICE), "join red").starts_with("You joined"));
-    assert!(run(session, host, Some(BOB), "join blue").starts_with("You joined"));
+    assert!(run(session, host, Some(ALICE), "join red").starts_with("Moved player"));
+    assert!(run(session, host, Some(BOB), "join blue").starts_with("Moved player"));
     host.titles.clear();
     host.tells.clear();
     host.broadcasts.clear();
@@ -110,7 +110,7 @@ fn a_start_titles_every_player_and_banners_the_players_on_a_team() {
     two_teams(&mut host, &mut session);
     // Carol is online with no team: `ignore_warnings` makes her a spectator, who gets the title but no banner.
     host.online.push(player(CAROL, "Carol"));
-    assert_eq!(run(&mut session, &mut host, None, "start ignore_warnings"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, None, "start ignore_warnings"), "Starting the game...");
 
     let mut titled: Vec<u128> = host.titles.iter().map(|(player, _, _)| *player).collect();
     titled.sort_unstable();
@@ -149,7 +149,7 @@ fn lockout_with_a_lines_goal_refuses_the_start_and_says_why() {
     assert!(host.titles.is_empty() && host.tells.is_empty(), "nothing is announced for a refused start");
 
     // `ignore_warnings` starts the same round, and the title goes to both players.
-    assert_eq!(run(&mut session, &mut host, None, "start ignore_warnings"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, None, "start ignore_warnings"), "Starting the game...");
     assert_eq!(host.titles.len(), 2);
 }
 
@@ -160,7 +160,7 @@ fn doing_nothing_on_a_stalemate_lets_lockout_with_a_lines_goal_start() {
     two_teams(&mut host, &mut session);
     run(&mut session, &mut host, None, "mode lockout");
     run(&mut session, &mut host, None, "stalemate do_nothing");
-    assert_eq!(run(&mut session, &mut host, None, "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, None, "start"), "Starting the game...");
 }
 
 #[test]
@@ -171,10 +171,10 @@ fn lockout_with_one_team_starts_without_a_warning() {
     for p in host.online.clone() {
         session.on_join(&mut host, &p);
     }
-    assert!(run(&mut session, &mut host, Some(ALICE), "join red").starts_with("You joined"));
-    assert!(run(&mut session, &mut host, Some(BOB), "join red").starts_with("You joined"));
+    assert!(run(&mut session, &mut host, Some(ALICE), "join red").starts_with("Moved player"));
+    assert!(run(&mut session, &mut host, Some(BOB), "join red").starts_with("Moved player"));
     run(&mut session, &mut host, None, "mode lockout");
-    assert_eq!(run(&mut session, &mut host, None, "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, None, "start"), "Starting the game...");
 }
 
 /// Alice readies up and the lobby ticks for 250 seconds (5000 ticks): half of the 600 s timer is still left for one
@@ -230,6 +230,6 @@ fn a_goal_the_card_already_meets_refuses_the_start_even_with_ignore_warnings() {
 
     // One item more than the card holds before play: the start goes ahead.
     run(&mut session, &mut host, None, "goal items 3");
-    assert_eq!(run(&mut session, &mut host, None, "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, None, "start"), "Starting the game...");
     assert_eq!(host.titles.len(), 2);
 }

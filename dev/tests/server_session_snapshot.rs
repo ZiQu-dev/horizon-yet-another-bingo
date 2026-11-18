@@ -141,7 +141,7 @@ fn lobby(host: &mut FakeHost, session: &mut Session, online: &[(u128, &str)], te
     }
     for &(uuid, team) in teams {
         let answer = run(session, host, Some(uuid), &format!("join {team}"));
-        assert!(answer.starts_with("You joined"), "joining {team}: {answer}");
+        assert!(answer.starts_with("Moved player"), "joining {team}: {answer}");
     }
     host.take();
     host.take_commands();
@@ -196,7 +196,7 @@ fn lockout_round(host: &mut FakeHost, session: &mut Session) -> Vec<String> {
     assert!(run(session, host, Some(ALICE), "goal items 6").contains("Goal: 6 item(s)"));
     assert!(run(session, host, Some(ALICE), "mode lockout").contains("Mode: lockout"));
     assert_eq!(run(session, host, Some(ALICE), "timelimit 10"), "Time limit set to 10 minutes");
-    assert_eq!(run(session, host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(session, host, Some(ALICE), "start"), "Starting the game...");
     let names = card_names(host, ALICE);
     host.take_commands();
     host.take_broadcasts();
@@ -307,7 +307,7 @@ fn a_restart_mid_game_keeps_teams_card_and_progress_and_the_game_can_end() {
     let mut session = Session::new(options(7, 0, None));
     lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "blue")]);
     assert!(run(&mut session, &mut host, Some(ALICE), "goal items 3").contains("Goal: 3 item(s)"));
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
     let names = card_names(&mut host, ALICE);
     host.take_commands();
     host.take();
@@ -402,7 +402,7 @@ fn the_elapsed_time_of_a_restored_game_is_the_saved_one_not_the_wall_clock() {
     let mut session = Session::new(options(7, 0, None));
     lobby(&mut host, &mut session, &[(ALICE, "Alice")], &[(ALICE, "red")]);
     assert_eq!(run(&mut session, &mut host, Some(ALICE), "timelimit 10"), "Time limit set to 10 minutes");
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
     for _ in 0..130 {
         session.tick(&mut host);
     }
@@ -435,7 +435,7 @@ fn every_phase_round_trips_through_the_snapshot() {
     assert_eq!(serde_json::from_str::<Value>(&pregame).unwrap()["phase"], "Pregame");
 
     // Starting: 25 ticks into a 3 s countdown, so 25 countdown ticks.
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
     for _ in 0..25 {
         session.tick(&mut host);
     }
@@ -449,13 +449,13 @@ fn every_phase_round_trips_through_the_snapshot() {
     let mut host = FakeHost::default();
     let mut session = Session::new(options(7, 0, None));
     lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "blue")]);
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
     for _ in 0..10 {
         session.tick(&mut host);
     }
     let playing = session.snapshot_json();
     assert_eq!(serde_json::from_str::<Value>(&playing).unwrap()["phase"], "Playing");
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "end"), "Game ended.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "end"), "Stopped the game!");
     assert_eq!(run(&mut session, &mut host, Some(ALICE), "vote keep"), "Vote recorded (1 of 2 votes).");
     let postgame = session.snapshot_json();
     let postgame_value: Value = serde_json::from_str(&postgame).unwrap();
@@ -523,7 +523,7 @@ fn a_damaged_or_non_playing_saved_game_leaves_the_lobby() {
     let mut source_host = FakeHost::default();
     let mut source = Session::new(options(7, 3, None));
     lobby(&mut source_host, &mut source, &[(ALICE, "Alice")], &[(ALICE, "red")]);
-    assert_eq!(run(&mut source, &mut source_host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut source, &mut source_host, Some(ALICE), "start"), "Starting the game...");
     let starting = source.snapshot_json();
     assert_eq!(serde_json::from_str::<Value>(&starting).unwrap()["phase"], "Starting");
 
@@ -542,11 +542,11 @@ fn an_ended_or_reset_game_leaves_no_restorable_state() {
     let mut host = FakeHost::default();
     let mut session = Session::new(options(7, 0, None));
     lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "blue")]);
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
     assert!(saved(&host).is_some());
 
     // `/bingo end` ends the game: the file is emptied, and a restart finds no game.
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "end"), "Game ended.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "end"), "Stopped the game!");
     assert_eq!(host.files.get(STATE_FILE).map(String::as_str), Some(""));
     assert!(saved(&host).is_none());
     let mut after = host.restarted();
@@ -555,7 +555,7 @@ fn an_ended_or_reset_game_leaves_no_restorable_state() {
     assert!(Session::new(options(7, 0, None)).restore_from_json("").is_err());
 
     // A reset of the lobby after the end keeps the file empty too.
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "reset"), "Game reset.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "reset"), "Resetting the game...");
     assert_eq!(host.files.get(STATE_FILE).map(String::as_str), Some(""));
 }
 
@@ -565,7 +565,7 @@ fn a_game_that_runs_out_of_time_empties_the_saved_game_at_tick_1200() {
     let mut session = Session::new(options(7, 0, None));
     lobby(&mut host, &mut session, &[(ALICE, "Alice")], &[(ALICE, "red")]);
     assert_eq!(run(&mut session, &mut host, Some(ALICE), "timelimit 1"), "Time limit set to 1 minutes");
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
     // One minute is 1200 ticks. The game is still running, and still saved, one tick before the end. The saved
     // elapsed time is the one from the start, since nothing was scored or changed during play.
     for _ in 0..1199 {
@@ -583,7 +583,7 @@ fn the_saved_game_is_written_when_play_begins_and_at_each_change_during_play() {
     let mut host = FakeHost::default();
     let mut session = Session::new(options(7, 3, None));
     lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "blue")]);
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
     // The countdown is not saved: 59 ticks in, nothing is written.
     for _ in 0..59 {
         session.tick(&mut host);
@@ -605,7 +605,7 @@ fn the_saved_game_is_written_when_play_begins_and_at_each_change_during_play() {
     host.online.push(player(CAROL, "Carol"));
     session.on_join(&mut host, &player(CAROL, "Carol"));
     assert_eq!(saved(&host).unwrap()["spectators"], json!([uuid(CAROL)]));
-    assert_eq!(run(&mut session, &mut host, Some(CAROL), "join red"), "You joined Red.");
+    assert_eq!(run(&mut session, &mut host, Some(CAROL), "join red"), "Moved player Carol onto team Red!");
     let members = saved(&host).unwrap()["members"].clone();
     assert!(members.as_array().unwrap().contains(&json!({ "uuid": uuid(CAROL), "team": "bingo_red" })), "{members}");
 
@@ -619,11 +619,11 @@ fn a_resumed_game_is_saved_again_and_keeps_its_elapsed_time() {
     let mut host = FakeHost::default();
     let mut session = Session::new(options(7, 0, None));
     lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "blue")]);
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
     for _ in 0..25 {
         session.tick(&mut host);
     }
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "end"), "Game ended.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "end"), "Stopped the game!");
     assert_eq!(host.files.get(STATE_FILE).map(String::as_str), Some(""));
 
     assert_eq!(run(&mut session, &mut host, Some(ALICE), "resume"), "The game continues.");

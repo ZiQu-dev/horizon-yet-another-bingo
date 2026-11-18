@@ -99,7 +99,7 @@ fn lobby(host: &mut FakeHost, session: &mut Session, online: &[(u128, &str)], te
     }
     for &(uuid, team) in teams {
         let answer = run(session, host, Some(uuid), &format!("join {team}"));
-        assert!(answer.starts_with("You joined"), "joining {team}: {answer}");
+        assert!(answer.starts_with("Moved player"), "joining {team}: {answer}");
     }
     host.sent.clear();
     host.commands.clear();
@@ -140,7 +140,7 @@ fn start_two_teams(goal: &str) -> (FakeHost, Session, Vec<String>) {
     let mut session = Session::new(options());
     lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "blue")]);
     assert!(run(&mut session, &mut host, Some(ALICE), &format!("goal {goal}")).starts_with("Goal:"));
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
     let names = card_names(&mut host, ALICE);
     host.told.clear();
     host.broadcasts.clear();

@@ -65,8 +65,8 @@ fn table(session: &mut Session, host: &mut FakeHost) {
     for p in host.online.clone() {
         session.on_join(host, &p);
     }
-    assert!(run(session, host, Some(ALICE), "join Red").starts_with("You joined"));
-    assert!(run(session, host, Some(BOB), "join Blue").starts_with("You joined"));
+    assert!(run(session, host, Some(ALICE), "join Red").starts_with("Moved player"));
+    assert!(run(session, host, Some(BOB), "join Blue").starts_with("Moved player"));
     assert!(run(session, host, Some(CAROL), "spectator").starts_with("You are"), "spectating");
     host.commands.clear();
 }
@@ -145,7 +145,7 @@ fn team_chat_is_on_only_while_a_game_starts_or_plays() {
     table(&mut session, &mut host);
     assert!(!session.team_chat_on(), "Pregame");
 
-    assert!(run(&mut session, &mut host, None, "start ignore_warnings").starts_with("Game started"));
+    assert!(run(&mut session, &mut host, None, "start ignore_warnings").starts_with("Starting the game"));
     assert!(session.team_chat_on(), "Starting, the countdown");
 }
 

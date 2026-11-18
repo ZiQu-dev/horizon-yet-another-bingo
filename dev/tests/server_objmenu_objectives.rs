@@ -147,10 +147,10 @@ mod session_side {
         }
         assert!(session
             .command(&mut host, Some(ALICE), "join red")
-            .starts_with("You joined"));
+            .starts_with("Moved player"));
         assert!(session
             .command(&mut host, Some(BOB), "join blue")
-            .starts_with("You joined"));
+            .starts_with("Moved player"));
         (host, session)
     }
 
@@ -184,7 +184,7 @@ mod session_side {
     #[test]
     fn objectives_cannot_change_once_the_round_has_started() {
         let (mut host, mut session) = lobby();
-        assert_eq!(session.command(&mut host, None, "start"), "Game started.");
+        assert_eq!(session.command(&mut host, None, "start"), "Starting the game...");
         assert_eq!(
             session.command(&mut host, Some(ALICE), "objectives on"),
             "The setting can be changed only before the game starts."

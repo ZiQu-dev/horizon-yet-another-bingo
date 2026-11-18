@@ -83,10 +83,10 @@ fn lobby() -> (FakeHost, Session) {
     }
     assert!(session
         .command(&mut host, Some(ALICE), "join red")
-        .starts_with("You joined"));
+        .starts_with("Moved player"));
     assert!(session
         .command(&mut host, Some(BOB), "join blue")
-        .starts_with("You joined"));
+        .starts_with("Moved player"));
     (host, session)
 }
 
@@ -139,7 +139,7 @@ fn each_preset_on_the_items_page_gives_the_card_its_tier_counts() {
             "{name} is stored on the round"
         );
 
-        assert_eq!(session.command(&mut host, None, "start"), "Game started.");
+        assert_eq!(session.command(&mut host, None, "start"), "Starting the game...");
         assert_eq!(
             tier_mix(&session),
             counts,
@@ -168,7 +168,7 @@ fn a_difficulty_changed_from_the_items_page_is_the_one_the_next_card_uses() {
         session.command(&mut host, Some(ALICE), "reroll"),
         "Card re-rolled."
     );
-    assert_eq!(session.command(&mut host, None, "start"), "Game started.");
+    assert_eq!(session.command(&mut host, None, "start"), "Starting the game...");
     assert_eq!(tier_mix(&session), [0, 1, 5, 10, 9]);
 }
 
@@ -179,7 +179,7 @@ fn a_difficulty_click_after_the_start_is_refused_and_the_card_keeps_its_tiers() 
         click_items(&mut host, &mut session, 14),
         Outcome::Run(_)
     ));
-    assert_eq!(session.command(&mut host, None, "start"), "Game started.");
+    assert_eq!(session.command(&mut host, None, "start"), "Starting the game...");
     assert_eq!(tier_mix(&session), [0, 1, 5, 10, 9]);
 
     // The menu refuses the click once the round has started, so no command runs and the rules keep the hard preset.

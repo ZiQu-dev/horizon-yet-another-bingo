@@ -75,8 +75,8 @@ fn run(session: &mut Session, host: &mut FakeHost, player: Option<u128>, line: &
 /// Two players on Red and Blue, the usual small game.
 fn two_teams(host: &mut FakeHost, session: &mut Session) {
     players(host, session, &[(ALICE, "Alice"), (BOB, "Bob")]);
-    assert!(run(session, host, Some(ALICE), "join red").starts_with("You joined"));
-    assert!(run(session, host, Some(BOB), "join blue").starts_with("You joined"));
+    assert!(run(session, host, Some(ALICE), "join red").starts_with("Moved player"));
+    assert!(run(session, host, Some(BOB), "join blue").starts_with("Moved player"));
 }
 
 fn snapshot(session: &Session) -> Value {
@@ -110,7 +110,7 @@ fn the_default_card_is_easy_and_the_options_text_does_not_name_it() {
     two_teams(&mut host, &mut s);
     let text = run(&mut s, &mut host, Some(ALICE), "options");
     assert!(!text.contains("Difficulty"), "{text}");
-    assert_eq!(run(&mut s, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut s, &mut host, Some(ALICE), "start"), "Starting the game...");
     assert_eq!(tier_counts(&s), [0, 0, 0, 9, 16]);
 }
 
@@ -235,7 +235,7 @@ fn the_auto_shuffle_deals_every_player_into_the_chosen_teams_at_the_start() {
     players(&mut host, &mut s, &[(ALICE, "Alice"), (BOB, "Bob"), (CAROL, "Carol"), (DAVE, "Dave")]);
     run(&mut s, &mut host, Some(ALICE), "teams 2");
     run(&mut s, &mut host, Some(ALICE), "autoshuffle on");
-    assert_eq!(run(&mut s, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut s, &mut host, Some(ALICE), "start"), "Starting the game...");
 
     let adds: Vec<&String> = host.commands.iter().filter(|c| c.starts_with("team add ")).collect();
     assert_eq!(adds, [&"team add bingo_red".to_string(), &"team add bingo_blue".to_string()]);

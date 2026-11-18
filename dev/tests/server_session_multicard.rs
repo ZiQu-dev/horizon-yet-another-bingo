@@ -115,8 +115,8 @@ fn start(seed: u64, setup: &[&str]) -> (Session, FakeHost) {
     for p in host.online.clone() {
         session.on_join(&mut host, &p);
     }
-    assert!(run(&mut session, &mut host, Some(ALICE), "join red").starts_with("You joined"));
-    assert!(run(&mut session, &mut host, Some(BOB), "join blue").starts_with("You joined"));
+    assert!(run(&mut session, &mut host, Some(ALICE), "join red").starts_with("Moved player"));
+    assert!(run(&mut session, &mut host, Some(BOB), "join blue").starts_with("Moved player"));
     for line in setup {
         let answer = run(&mut session, &mut host, None, line);
         assert!(
@@ -125,7 +125,7 @@ fn start(seed: u64, setup: &[&str]) -> (Session, FakeHost) {
         );
     }
     // Lockout with the lines goal and two teams is refused unless warnings are ignored (`CommandStartLockoutWithLinesGoal`).
-    assert_eq!(run(&mut session, &mut host, None, "start ignore_warnings"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, None, "start ignore_warnings"), "Starting the game...");
     host.take_broadcasts();
     (session, host)
 }

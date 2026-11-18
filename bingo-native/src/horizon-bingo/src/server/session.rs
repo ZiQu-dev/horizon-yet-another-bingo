@@ -158,6 +158,8 @@ pub struct Session {
     /// A game restored from `game-state.json` waits for its players: the empty-server reset does not run until one
     /// of them has joined.
     await_rejoin: bool,
+    /// The translatable reply of the last command, when its reply has a translation key (see [`Session::take_reply`]).
+    reply: Option<Line>,
     /// Items each player found this round, for the history and `stats` (see `stats::Captures`).
     captures: Captures,
     /// Each card's objective state (`objectives::Runtime`), indexed like `cards`. Read by a card with objective squares.
@@ -247,6 +249,7 @@ impl Session {
             end_reason: None,
             sidebar_end: None,
             await_rejoin: false,
+            reply: None,
             captures: Captures::default(),
             objective_runtime: Vec::new(),
             held: HashMap::new(),
@@ -1104,14 +1107,28 @@ impl Session {
         }
     }
 
+    /// The command's reply as a translatable line, when its reply has one (the English is what [`Session::command`]
+    /// returned). Taken once; the next command clears it.
+    pub fn take_reply(&mut self) -> Option<Line> {
+        self.reply.take()
+    }
+
+    /// The English reply of a command, which is also kept as a translatable line for [`Session::take_reply`].
+    fn say(&mut self, line: Line) -> String {
+        let text = line.render();
+        self.reply = Some(line);
+        text
+    }
+
     /// Runs a command already parsed (by [`commands::parse`] or [`commands::chat_shortcut`]), as [`Session::command`]
     /// does after parsing. It does not load the saved files: a server tick does that before any call here.
     pub fn run(&mut self, host: &mut dyn ServerHost, player: Option<u128>, command: Command) -> String {
+        self.reply = None;
         match command {
             Command::Help => format!("Usage: bingo {}", commands::usage()),
             Command::Status => self.status_text(),
             Command::Start { ignore_warnings } => match self.start_game(host, ignore_warnings) {
-                Ok(()) => "Game started.".to_string(),
+                Ok(()) => self.say(texts::start_success()),
                 Err(error) => error,
             },
             Command::End => match self.game.end(None) {
@@ -1119,14 +1136,14 @@ impl Session {
                     self.forfeit = true;
                     self.end_reason = Some(texts::stopped_reason());
                     self.dispatch(host, events);
-                    "Game ended.".to_string()
+                    self.say(texts::end_success())
                 }
                 Err(_) => "The game is not Playing.".to_string(),
             },
             Command::Reset => {
                 let events = self.game.reset();
                 self.dispatch(host, events);
-                "Game reset.".to_string()
+                self.say(texts::reset_success())
             }
             Command::ShuffleTeams(count) => self.shuffle_teams(host, count),
             Command::Join(team) => self.join_team(host, player, &team),
@@ -2193,7 +2210,6 @@ impl Session {
             return "Teams can be changed only before the game starts.".to_string();
         }
         let online: Vec<u128> = host.players().iter().map(|player| player.uuid).collect();
-        let placed = online.iter().filter(|&&player| !self.teams.is_spectator(player)).count();
         let mut teams = self.teams.clone();
         if let Err(error) = teams.shuffle(&online, count, &mut self.rng) {
             return error;
@@ -2205,7 +2221,7 @@ impl Session {
         }
         self.teams = teams;
         self.send_ready_updates(host);
-        format!("Shuffled {placed} players into {} teams", self.teams.teams().len())
+        self.say(texts::shuffle_success())
     }
 
     /// `/bingo join <team>`: the player joins the team, leaving their old one or the spectators.
@@ -2227,7 +2243,8 @@ impl Session {
             self.ready.set_ready(player, false);
             self.send_ready_updates(host);
         }
-        format!("You joined {}.", team_name(team))
+        let name = player_name(&*host, player);
+        self.say(texts::joined_team(&name, team_name(team)))
     }
 
     /// `/bingo spectator`: the player leaves their team and watches.
@@ -2259,11 +2276,8 @@ impl Session {
         let ready = !self.ready.is_ready(player);
         self.ready.set_ready(player, ready);
         self.send_ready_updates(host);
-        if ready {
-            "You are ready.".to_string()
-        } else {
-            "You are not ready.".to_string()
-        }
+        let name = player_name(&*host, player);
+        self.say(if ready { texts::ready_true(&name) } else { texts::ready_false(&name) })
     }
 
     /// `/bingo ready cancel`: stops the ready timer and keeps it from starting again until someone is ready.
@@ -2273,7 +2287,7 @@ impl Session {
         }
         self.ready.cancel();
         self.send_ready_updates(host);
-        "Ready timer cancelled.".to_string()
+        self.say(texts::ready_cancelled())
     }
 
     /// `/bingo timelimit <minutes|off>`, in Pregame or Playing.
@@ -2398,7 +2412,8 @@ impl Session {
         }
         self.send_round(host, player);
         self.save_playing(host);
-        format!("You joined {}.", team_name(&key))
+        let name = player_name(&*host, player);
+        self.say(texts::joined_team(&name, team_name(&key)))
     }
 
     /// `/bingo reroll`: a new seed for the card the game will start with, drawn from the shuffle generator. Only before the

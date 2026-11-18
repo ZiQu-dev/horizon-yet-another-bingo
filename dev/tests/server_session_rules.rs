@@ -100,7 +100,7 @@ fn lobby(host: &mut FakeHost, session: &mut Session, online: &[(u128, &str)], te
     }
     for &(uuid, team) in teams {
         let answer = run(session, host, Some(uuid), &format!("join {team}"));
-        assert!(answer.starts_with("You joined"), "joining {team}: {answer}");
+        assert!(answer.starts_with("Moved player"), "joining {team}: {answer}");
     }
     host.take();
     host.take_commands();
@@ -158,7 +158,7 @@ fn goal_items_three_is_not_won_with_two_squares_and_is_won_with_three() {
     let mut session = Session::new(options(7, 0, None));
     lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "blue")]);
     assert!(run(&mut session, &mut host, Some(ALICE), "goal items 3").starts_with("Goal: 3 item(s)"));
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
     let names = card_names(&mut host, ALICE);
     host.take();
     host.take_commands();
@@ -243,7 +243,7 @@ fn endwhen_never_announces_the_goal_but_does_not_end_until_end() {
     assert_eq!(more.len(), 2, "two more finds, no second goal line: {more:?}");
     assert!(status(&mut session, &mut host).contains("Playing"));
 
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "end"), "Game ended.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "end"), "Stopped the game!");
     host.take();
     assert_eq!(host.take_broadcasts(), ["The game has ended."]);
     assert!(status(&mut session, &mut host).contains("Postgame"));
@@ -382,7 +382,7 @@ fn toggles_set_before_start_reach_the_server_commands_and_the_players_at_countdo
     assert!(run(&mut session, &mut host, Some(ALICE), "elytra on").contains("Elytra: on"));
     assert!(run(&mut session, &mut host, Some(ALICE), "nightvision on").contains("Night vision: on"));
 
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
     // The game rules go out at the start, the player's gear when play begins after the 3 s countdown (60 ticks).
     for _ in 0..59 {
         session.tick(&mut host);
@@ -534,7 +534,7 @@ fn a_player_who_joins_a_running_game_watches_until_they_join_a_playing_team() {
     assert!(run(&mut session, &mut host, Some(CAROL), "join green").contains("is not playing"));
     assert!(host.take_commands().is_empty());
 
-    assert_eq!(run(&mut session, &mut host, Some(CAROL), "join red"), "You joined Red.");
+    assert_eq!(run(&mut session, &mut host, Some(CAROL), "join red"), "Moved player Carol onto team Red!");
     assert_eq!(
         host.take_commands(),
         ["team join bingo_red Carol", "gamemode survival Carol", "tp Carol Alice"]

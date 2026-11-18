@@ -109,6 +109,41 @@ pub fn leading_score(score: crate::score_update::TeamScore, lines_goal: bool) ->
     }
 }
 
+/// The replies to a command the original answers with a translation key (`CommandStartSuccess` and the rest).
+pub fn start_success() -> Line {
+    Line::new("bingo.command.start.success", "Starting the game...", &[])
+}
+
+pub fn end_success() -> Line {
+    Line::new("bingo.command.end.success", "Stopped the game!", &[])
+}
+
+pub fn reset_success() -> Line {
+    Line::new("bingo.command.reset.success", "Resetting the game...", &[])
+}
+
+pub fn shuffle_success() -> Line {
+    Line::new("bingo.command.shuffleteams.success", "Teams have been shuffled!", &[])
+}
+
+pub fn ready_cancelled() -> Line {
+    Line::new("bingo.command.ready.cancelled", "Cancelled the ready-up timer!", &[])
+}
+
+/// `%s is ready!` and `%s is no longer ready!`, for the player who toggled their ready flag (`CommandReadyTrue`/`False`).
+pub fn ready_true(player: &str) -> Line {
+    Line::new("bingo.command.ready.true", "%s is ready!", &[player])
+}
+
+pub fn ready_false(player: &str) -> Line {
+    Line::new("bingo.command.ready.false", "%s is no longer ready!", &[player])
+}
+
+/// `Moved player %s onto team %s!`, for a player who joined a team (`CommandJoinSuccess`).
+pub fn joined_team(player: &str, team: &str) -> Line {
+    Line::new("bingo.command.join.success", "Moved player %s onto team %s!", &[player, team])
+}
+
 /// `%s reached the goal!`, for a team that reached the goal before the game ends.
 pub fn team_reached_goal(team: &str) -> Line {
     Line::new("bingo.native.team_reached_goal", "%s reached the goal!", &[team])

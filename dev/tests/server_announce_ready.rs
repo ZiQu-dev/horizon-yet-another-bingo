@@ -62,8 +62,8 @@ fn lobby(host: &mut FakeHost, session: &mut Session) {
     for p in host.online.clone() {
         session.on_join(host, &p);
     }
-    assert!(session.command(host, Some(ALICE), "join red").starts_with("You joined"));
-    assert!(session.command(host, Some(BOB), "join blue").starts_with("You joined"));
+    assert!(session.command(host, Some(ALICE), "join red").starts_with("Moved player"));
+    assert!(session.command(host, Some(BOB), "join blue").starts_with("Moved player"));
     host.sent.clear();
 }
 
@@ -125,7 +125,7 @@ fn a_player_who_is_not_ready_is_told_how_to_ready_up_and_the_timer_waits() {
     let mut host = FakeHost::default();
     let mut session = Session::new(options(7));
     lobby(&mut host, &mut session);
-    assert_eq!(session.command(&mut host, Some(ALICE), "ready"), "You are ready.");
+    assert_eq!(session.command(&mut host, Some(ALICE), "ready"), "Alice is ready!");
 
     let bob = last_packet(&host, BOB);
     assert!(!bob.is_running && !bob.is_ready);

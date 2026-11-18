@@ -291,7 +291,7 @@ fn turning_the_bossbar_off_during_play_hides_it_for_that_player_only() {
     run(&mut session, &mut host, Some(BOB), "join blue");
     run(&mut session, &mut host, Some(ALICE), "prefs bossbar on");
     run(&mut session, &mut host, None, "timelimit 1");
-    assert!(run(&mut session, &mut host, Some(ALICE), "start").starts_with("Game started"));
+    assert!(run(&mut session, &mut host, Some(ALICE), "start").starts_with("Starting the game"));
     host.bars.clear();
 
     for _ in 0..10 {

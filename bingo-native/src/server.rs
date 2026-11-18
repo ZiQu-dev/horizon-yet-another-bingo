@@ -900,11 +900,18 @@ pub fn perform_command(host: &mut dyn mod_api::ServerHost, uuid: u128, command: 
         return Flow::Cancel;
     }
     let reply = guarded("bingo command", || {
-        with_session(|s| s.command(&mut ServerAdapter { host: &mut *host }, Some(uuid), &line))
+        with_session(|s| {
+            let text = s.command(&mut ServerAdapter { host: &mut *host }, Some(uuid), &line);
+            (text, s.take_reply())
+        })
     });
-    // An empty reply says nothing (a setting turned off that has no message, `prefs::changed_text`).
-    if let Some(reply) = reply.filter(|reply| !reply.is_empty()) {
-        tell_player(host, uuid, Text::literal(reply));
+    // An empty reply says nothing (a setting turned off that has no message, `prefs::changed_text`). A reply with a
+    // translation key is sent as one, so the player's language applies; the English is the fallback.
+    if let Some((reply, translatable)) = reply.filter(|(reply, _)| !reply.is_empty()) {
+        match translatable {
+            Some(line) => tell_player(host, uuid, translated(&line)),
+            None => tell_player(host, uuid, Text::literal(reply)),
+        }
     }
     if let Some(note) = names_note(&*host, &line) {
         tell_player(host, uuid, Text::literal(note));

@@ -144,13 +144,13 @@ fn start(host: &mut FakeHost, rules: Options) -> Session {
     for p in host.online.clone() {
         session.on_join(host, &p);
     }
-    assert!(session.command(host, Some(ALICE), "join red").starts_with("You joined"));
-    assert!(session.command(host, Some(BOB), "join blue").starts_with("You joined"));
+    assert!(session.command(host, Some(ALICE), "join red").starts_with("Moved player"));
+    assert!(session.command(host, Some(BOB), "join blue").starts_with("Moved player"));
     host.sent.clear();
     host.commands.clear();
     // `ignore_warnings`: the lockout rounds here have two teams and the lines goal, which the original's start refuses
     // without it (`CommandStartLockoutWithLinesGoal`). Every player is on a team, so nothing else changes.
-    assert_eq!(session.command(host, None, "start ignore_warnings"), "Game started.");
+    assert_eq!(session.command(host, None, "start ignore_warnings"), "Starting the game...");
     for uuid in [ALICE, BOB] {
         session.on_inventory(host, uuid, &HashMap::new());
     }
@@ -331,8 +331,8 @@ fn a_plain_item_round_saves_no_objective_keys() {
     for p in host.online.clone() {
         session.on_join(&mut host, &p);
     }
-    assert!(session.command(&mut host, Some(ALICE), "join red").starts_with("You joined"));
-    assert_eq!(session.command(&mut host, None, "start"), "Game started.");
+    assert!(session.command(&mut host, Some(ALICE), "join red").starts_with("Moved player"));
+    assert_eq!(session.command(&mut host, None, "start"), "Starting the game...");
     assert!(!session.snapshot_json().contains("objectiveRuntime"));
 }
 
@@ -362,8 +362,8 @@ fn a_round_with_the_option_on_draws_squares_that_are_not_items() {
     for p in host.online.clone() {
         session.on_join(&mut host, &p);
     }
-    assert!(session.command(&mut host, Some(ALICE), "join red").starts_with("You joined"));
-    assert_eq!(session.command(&mut host, None, "start"), "Game started.");
+    assert!(session.command(&mut host, Some(ALICE), "join red").starts_with("Moved player"));
+    assert_eq!(session.command(&mut host, None, "start"), "Starting the game...");
     let packet = last_tiles(&host, ALICE);
     let non_items = packet
         .tiles
