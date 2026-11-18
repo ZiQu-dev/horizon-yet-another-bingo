@@ -46,6 +46,8 @@ const CONFIG_FILE: &str = "bingo/client.json";
 /// The default key bindings, as vanilla names. The keys are registered in Controls under these defaults.
 const OPEN_CARD_KEY: &str = "key.keyboard.y";
 const UNBOUND_KEY: &str = "key.keyboard.unknown";
+/// The Options > Controls heading the mod's keys are listed under (the original's `key.category.yet-another-minecraft-bingo.bingo`).
+const KEY_CATEGORY: &str = "key.category.yet-another-minecraft-bingo.bingo";
 /// The client config is read again every this many ticks, so an edit of the file is taken as it was on disk.
 const CONFIG_POLL_TICKS: u64 = 20;
 /// The last config text read or written, to tell an edit of the file from the mod's own write.
@@ -572,14 +574,26 @@ fn command_line(invocation: &CommandInvocation) -> Option<String> {
     Some(words.join(" "))
 }
 
+/// The key the player bound a mod key to in Options > Controls, or its default when none is bound.
+fn mod_key(host: &dyn ClientHost, name: &str, default: &str) -> String {
+    host.mod_key(MOD_ID, name).map(|(key, _)| key).unwrap_or_else(|| default.into())
+}
+
+/// Hands the client the keys of the card (on Y by default), the HUD toggle and the settings screen (both unbound by default).
+fn read_keys(host: &dyn ClientHost, client: &mut BingoClient) {
+    client.set_open_key(&mod_key(host, "open_card", OPEN_CARD_KEY));
+    client.set_toggle_key(&mod_key(host, "toggle_hud", UNBOUND_KEY));
+    client.set_settings_key(&mod_key(host, "settings", UNBOUND_KEY));
+}
+
 #[mod_api::horizon_mod]
 impl Hooks for Mod {
     /// The raw channels the crate uses, declared once: the server hears what the clients send on them.
     fn register(&self, r: &mut dyn Registrar, _cx: &RegistrationContext) {
-        // PORT-GAP: the labels are the ids (no translation key), as the new registration takes them.
-        r.register_key_mapping(KeyRegistration::new("open_card", OPEN_CARD_KEY));
-        r.register_key_mapping(KeyRegistration::new("toggle_hud", UNBOUND_KEY));
-        r.register_key_mapping(KeyRegistration::new("settings", UNBOUND_KEY));
+        // The labels and the category are the original's translation keys (`bingo.keybind.*`, `key.category.*`).
+        r.register_key_mapping(KeyRegistration::new("open_card", OPEN_CARD_KEY).label("bingo.keybind.open_card").category(KEY_CATEGORY));
+        r.register_key_mapping(KeyRegistration::new("toggle_hud", UNBOUND_KEY).label("bingo.keybind.toggle_hud").category(KEY_CATEGORY));
+        r.register_key_mapping(KeyRegistration::new("settings", UNBOUND_KEY).label("bingo.keybind.settings").category(KEY_CATEGORY));
         let mut payloads = r.payload_handlers();
         let mut channels = payloads.registrar("1");
         for channel in horizon_bingo::channels::CHANNELS.iter() {
@@ -601,16 +615,7 @@ impl Hooks for Mod {
                     Err(e) => log(&format!("assets NOT loaded from {dir}: {e}")),
                 }
                 client.set_assets(assets);
-                // The keys are registered in the player's controls (the card key on Y); the crate reads what each is bound to.
-                let key = host.mod_key(MOD_ID, "open_card").map(|(key, _)| key).unwrap_or_else(|| OPEN_CARD_KEY.into());
-                client.set_open_key(&key);
-                log(&format!("card key: {key}"));
-                // The HUD toggle: unbound by default, bound in the player's controls like the card key.
-                let toggle = host.mod_key(MOD_ID, "toggle_hud").map(|(key, _)| key).unwrap_or_else(|| UNBOUND_KEY.into());
-                client.set_toggle_key(&toggle);
-                // The settings screen's key, unbound by default like the HUD toggle.
-                let settings = host.mod_key(MOD_ID, "settings").map(|(key, _)| key).unwrap_or_else(|| UNBOUND_KEY.into());
-                client.set_settings_key(&settings);
+                log(&format!("card key: {}", mod_key(&*host, "open_card", OPEN_CARD_KEY)));
                 // The client config: the file the player has, or the crate's defaults written in its place.
                 let text = match read_client_config(&*host) {
                     Some(text) => text,
@@ -633,6 +638,8 @@ impl Hooks for Mod {
                     }
                 }
             }
+            // The keys are read each tick, so a key bound in Options > Controls applies without a relaunch.
+            read_keys(&*host, &mut client);
             client.on_tick(&mut Adapter { host });
             // The crate keeps its screen and firework events until the host takes them; this mod has no use for them yet.
             let _ = client.take_ui_events();

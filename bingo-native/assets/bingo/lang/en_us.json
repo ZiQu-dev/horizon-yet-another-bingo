@@ -209,6 +209,7 @@
   "bingo.intro.welcome": "Welcome to %s!",
   "bingo.intro.welcome_link": "Yet Another Bingo",
   "bingo.keybind.open_card": "View Bingo Card",
+  "bingo.keybind.settings": "Bingo Settings",
   "bingo.keybind.toggle_hud": "Toggle Bingo HUD Rendering",
   "bingo.list.advancements": "Advancements",
   "bingo.list.challenge": "Challenge",
