@@ -360,11 +360,11 @@ fn a_restart_mid_game_keeps_teams_card_and_progress_and_the_game_can_end() {
 }
 
 #[test]
-fn a_restored_game_waits_for_its_players_before_the_empty_server_reset() {
+fn a_game_in_progress_keeps_its_saved_state_when_everyone_leaves() {
     let mut host = FakeHost::default();
     let mut session = Session::new(options(7, 0, None));
     lobby(&mut host, &mut session, &[(ALICE, "Alice")], &[(ALICE, "red")]);
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Game started.");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
     host.take();
     for _ in 0..10 {
         session.tick(&mut host);
@@ -385,15 +385,15 @@ fn a_restored_game_waits_for_its_players_before_the_empty_server_reset() {
     }
     assert!(run(&mut session, &mut after, None, "status").starts_with("Status: Playing."));
 
-    // Alice leaves: after 99 empty ticks the game still runs; the hundredth sends it back to the lobby.
+    // Alice leaves: the round keeps running with nobody online, and its saved state is kept (not emptied), so a stop
+    // with nobody online loses nothing.
     after.online.clear();
-    for _ in 0..99 {
+    for _ in 0..200 {
         session.tick(&mut after);
     }
     assert!(run(&mut session, &mut after, None, "status").starts_with("Status: Playing."));
-    session.tick(&mut after);
-    assert!(run(&mut session, &mut after, None, "status").starts_with("Status: Pregame."));
-    assert_eq!(after.files.get(STATE_FILE).map(String::as_str), Some(""));
+    let saved = after.files.get(STATE_FILE).cloned().unwrap_or_default();
+    assert!(saved.contains("\"phase\": \"Playing\""), "the game in progress stays saved: {saved}");
 }
 
 #[test]

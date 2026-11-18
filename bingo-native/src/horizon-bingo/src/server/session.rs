@@ -960,9 +960,10 @@ impl Session {
         self.ensure_loaded(host);
         self.ticks += 1;
         if self.game.status() != GameStatus::Pregame {
-            // `resetWhenEveryoneDisconnects`: a game nobody is in goes back to the lobby after a few seconds. A restored
-            // game waits for its players first.
-            if host.players().is_empty() && !self.await_rejoin {
+            // `resetWhenEveryoneDisconnects` (the original's `ResetOnLeaveController`): an ended game that nobody is in goes
+            // back to the lobby after a few seconds. A game in progress is not reset: it stays as `game-state.json` has it
+            // until its players come back, so a server stop with nobody online keeps the round.
+            if self.game.status() == GameStatus::Postgame && host.players().is_empty() && !self.await_rejoin {
                 self.empty_ticks += 1;
                 if self.empty_ticks >= 100 {
                     self.empty_ticks = 0;

@@ -542,7 +542,9 @@ fn a_player_who_joins_a_running_game_watches_until_they_join_a_playing_team() {
 }
 
 #[test]
-fn a_game_with_nobody_online_goes_back_to_pregame_after_one_hundred_ticks() {
+fn a_game_in_progress_with_nobody_online_keeps_playing() {
+    // The original's `ResetOnLeaveController` resets only an ended game (POSTGAME) that nobody is in. A game in progress
+    // waits for its players, so the round and its saved state survive an empty server.
     let mut host = FakeHost::default();
     let mut session = Session::new(options(7, 0, None));
     lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "blue")]);
@@ -552,13 +554,31 @@ fn a_game_with_nobody_online_goes_back_to_pregame_after_one_hundred_ticks() {
     assert!(status(&mut session, &mut host).contains("Playing"));
 
     host.online.clear();
+    for _ in 0..200 {
+        session.tick(&mut host);
+    }
+    assert!(status(&mut session, &mut host).contains("Playing"), "an empty server does not reset a game in progress");
+}
+
+#[test]
+fn an_ended_game_with_nobody_online_goes_back_to_pregame_after_one_hundred_ticks() {
+    let mut host = FakeHost::default();
+    let mut session = Session::new(options(7, 0, None));
+    lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "blue")]);
+    run(&mut session, &mut host, Some(ALICE), "start");
+    run(&mut session, &mut host, Some(ALICE), "end");
+    host.take();
+    host.take_commands();
+    assert!(status(&mut session, &mut host).contains("Postgame"));
+
+    host.online.clear();
     for _ in 0..99 {
         session.tick(&mut host);
     }
-    assert!(status(&mut session, &mut host).contains("Playing"), "99 empty ticks are not yet a reset");
+    assert!(status(&mut session, &mut host).contains("Postgame"), "99 empty ticks are not yet a reset");
 
     session.tick(&mut host);
-    assert!(status(&mut session, &mut host).contains("Pregame"), "the 100th empty tick resets the game");
+    assert!(status(&mut session, &mut host).contains("Pregame"), "the 100th empty tick resets the ended game");
 }
 
 #[test]
