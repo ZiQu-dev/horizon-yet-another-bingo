@@ -65,12 +65,10 @@ code, its packet formats and its server logic. Upstream project: https://gitlab.
 - **Physical lobby world** is not implemented: the lobby is logical only.
 - **Per-player sidebar**: Horizon has no per-player sidebar, so every player gets the spectators' version. The
   differences are the `PORT-GAP` comments in `bingo-native/src/horizon-bingo/src/server/sidebar.rs`.
-- **Known engine race at startup**: on Horizon commit `c07bfa76e7`, a mod that ships many assets can panic with
-  "world resources joined before entry" when a world starts. Relaunch the game.
 
 ## Requirements
 
-- Horizon at commit `c07bfa76e71e8db9e84a7e61832a8fb898718e81` (pinned in `bingo-native/horizon-mod.toml`, `[native]`).
+- Horizon at commit `8989a510ff75beb69cd2962b6bb6e0d31f3cc962` (pinned in `bingo-native/horizon-mod.toml`, `[native]`).
   A native build needs the SDK of that exact commit. Horizon has not published SDKs yet, so you build one locally
   (Install, step 4).
 - Linux: `cc`, `pkg-config`, ALSA and libudev development files (on Debian and Ubuntu:
@@ -131,7 +129,7 @@ checkout at the pinned commit. Horizon's own guide for this is `docs/modding/src
 in the Horizon repository. The steps:
 
 ```sh
-# a. In the Horizon checkout at c07bfa76e71e8db9e84a7e61832a8fb898718e81, with tracked changes committed:
+# a. In the Horizon checkout at 8989a510ff75beb69cd2962b6bb6e0d31f3cc962, with tracked changes committed:
 #    build the game and its companion programs (horizon-ctl, horizon-prepare, horizon-server), and make
 #    horizon-wasm-std.wasm and exporters/ beside it. The required files are listed in that guide's table.
 cargo run --locked -p cargo-horizon-mod -- wasm-std CHECKOUT/target/debug/horizon-wasm-std.wasm
@@ -248,7 +246,7 @@ The HUD toggle key keeps its own value as a file named `enable_hud` in the mod's
   until you bind them.
 - **Card position button does nothing.** Known; see "What it does not do".
 - **The launcher refuses the SDK, or the build stops on a Horizon mismatch.** The SDK must be the build of commit
-  `c07bfa76e71e8db9e84a7e61832a8fb898718e81` for this computer, the client side and the launcher's Rust. Build it again
+  `8989a510ff75beb69cd2962b6bb6e0d31f3cc962` for this computer, the client side and the launcher's Rust. Build it again
   from that checkout (Install, step 4).
 - **Build fails on Linux with a missing library.** Install the packages named under Requirements.
 
