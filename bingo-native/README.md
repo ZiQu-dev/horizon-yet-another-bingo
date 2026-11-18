@@ -267,8 +267,11 @@ The original mod adds a "BINGO!" button to the main menu, which opens the bingo 
 opens it only on Yes; the mod never opens a world by itself. The mod declares the permission in `horizon-mod.toml`:
 `[native] world_control = true`. Horizon opens an existing save only and creates nothing.
 
-- The lobby world's folder is `LOBBY_FOLDER` in `src/horizon-bingo/src/title_button.rs` ("bingo"). Create a world with
-  that folder name first: a missing one shows a red hint under the button for a few seconds.
+- The lobby world's folder is `LOBBY_FOLDER` in `src/horizon-bingo/src/title_button.rs` ("bingo"). When `saves/bingo` is
+  missing the button makes it from the original's own lobby world (`src/horizon-bingo/src/lobby_world.rs`): the saved
+  world "Bingo Lobby" in the original jar, which `tools/prepare_assets.py` unpacks to `<assets>/lobby_world/`. A save
+  that is there is never touched. Without that folder (assets prepared by an older script) the button shows a red hint
+  under it: create a world with that folder name first.
 - The rule (the hints, the folder rule, the button's place, the hit test) is pure logic, tested in `dev/tests/title_button.rs`.
 
 ## Server

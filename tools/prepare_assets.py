@@ -10,6 +10,9 @@ item ids as numbers).
 import argparse, json, pathlib, sys, zipfile
 
 SPRITES = "assets/minecraft/textures/gui/sprites/bingo/"
+# The original's lobby: a saved world ("Bingo Lobby/...") inside the jar. The BINGO! button makes saves/bingo from it.
+LOBBY_ZIP = "yet-another-minecraft-bingo/lobby_world.zip"
+LOBBY_ROOT = "Bingo Lobby/"
 COLORS = "assets/yet-another-minecraft-bingo/gui/card_colors.json"
 LANG = "assets/yet-another-minecraft-bingo/lang/en_us.json"
 LANG_DIR = "assets/yet-another-minecraft-bingo/lang/"
@@ -71,6 +74,27 @@ def collect_item_tags(z: zipfile.ZipFile, names: set, data_dir: pathlib.Path, ou
                     dest.write_bytes(f.read_bytes())
                     written += 1
     return written
+
+
+def extract_lobby(z, names, out):
+    """The lobby world of the jar, unpacked to `out/lobby_world/` (its `Bingo Lobby/` folder's contents). 0 when the jar has none."""
+    import io
+    if LOBBY_ZIP not in names:
+        return 0
+    count = 0
+    root = out / "lobby_world"
+    with zipfile.ZipFile(io.BytesIO(z.read(LOBBY_ZIP))) as lobby:
+        for n in lobby.namelist():
+            if n.endswith("/") or not n.startswith(LOBBY_ROOT):
+                continue
+            rel = pathlib.PurePosixPath(n[len(LOBBY_ROOT):])
+            if rel.is_absolute() or ".." in rel.parts:
+                continue
+            dest = root.joinpath(*rel.parts)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(lobby.read(n))
+            count += 1
+    return count
 
 
 def main() -> int:
@@ -157,6 +181,7 @@ def main() -> int:
             if n.startswith(LANG_DIR) and n.endswith(".json"):
                 (out / "lang" / n[len(LANG_DIR):]).write_bytes(z.read(n))
                 langs += 1
+        print(f"{extract_lobby(z, names, out)} lobby world files")
         if NS_DIR + "sounds.json" in names:
             (out / "sounds.json").write_bytes(z.read(NS_DIR + "sounds.json"))
         if a.hmod:

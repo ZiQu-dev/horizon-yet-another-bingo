@@ -71,12 +71,17 @@ fn mouse_of(host: &dyn ClientHost) -> (i32, i32) {
 
 /// Where the mod's assets are: BINGO_ASSETS, else the mod's data folder in the game folder (`horizon-mod-data/bingo/
 /// assets`), which `tools/prepare_assets.py` fills from the player's copy of the mod.
+/// The folder `tools/prepare_assets.py` writes: `BINGO_ASSETS`, else the mod's data folder of the instance.
+fn assets_dir(host: &dyn ClientHost) -> std::path::PathBuf {
+    match std::env::var("BINGO_ASSETS") {
+        Ok(dir) => std::path::PathBuf::from(dir),
+        Err(_) => host.instance_dir().join("horizon-mod-data").join(MOD_ID).join("assets"),
+    }
+}
+
 fn load_assets(host: &dyn ClientHost) -> (Result<Assets, String>, String) {
     let game = host.instance_dir();
-    let dir = match std::env::var("BINGO_ASSETS") {
-        Ok(dir) => std::path::PathBuf::from(dir),
-        Err(_) => game.join("horizon-mod-data").join(MOD_ID).join("assets"),
-    };
+    let dir = assets_dir(host);
     let mut assets = Assets::load(&dir);
     if let Ok(a) = assets.as_mut() {
         // options.txt sits in the game folder.

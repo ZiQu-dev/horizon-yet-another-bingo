@@ -63,6 +63,7 @@ pub mod server;
 pub mod fireworks;
 pub mod config;
 pub mod settings_screen;
+pub mod lobby_world;
 pub mod title_button;
 
 pub mod hud_keys;

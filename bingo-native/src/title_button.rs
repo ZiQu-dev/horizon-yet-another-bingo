@@ -5,6 +5,7 @@
 //! A press on the button is cancelled (the title does not see it) and remembered; the next client tick asks Horizon
 //! to open the lobby world: the title's next frame asks the player, and opens it on Yes. The answer's hint stays a few seconds on the title.
 use super::{Mod, ReadOnly, log};
+use horizon_bingo::lobby_world;
 use horizon_bingo::title_button::{self as button, Hint, WorldAnswer};
 use mod_api::{ClientHost, Flow, NativeWorldResult, ScreenMouseButtonPressedPreEvent, ScreenRenderPostEvent};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -85,6 +86,13 @@ pub(super) fn tick(host: &mut dyn ClientHost) {
         return;
     }
     let folder = button::LOBBY_FOLDER;
+    // No lobby save yet: make it from the original's lobby world, then ask Horizon to open it.
+    let saves = host.instance_dir().join("saves");
+    match lobby_world::install(&super::assets_dir(host).join("lobby_world"), &saves, folder) {
+        Ok(lobby_world::Install::Created) => log(&format!("title button: made saves/{folder} from the lobby world")),
+        Ok(_) => {}
+        Err(e) => log(&format!("title button: the lobby world was not made: {e}")),
+    }
     let answer = answer(host.request_world(folder));
     log(&format!("title button: request_world({folder}) answered {answer:?}"));
     if let Some(hint) = button::hint_for(answer, folder) {
