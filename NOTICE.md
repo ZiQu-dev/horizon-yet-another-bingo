@@ -17,7 +17,7 @@
 
 ## What this package is
 
-`bingo_native` is the client half of the upstream mod, written in Rust for Horizon's native mod API. It re-implements
+`bingo` (the mod's id) is the client half of the upstream mod, written in Rust for Horizon's native mod API. It re-implements
 the client's behaviour and the packet formats from the upstream source. It is not a copy of the upstream code, and the
 upstream textures, languages and sounds are not in it. Its unit tests compare packet bytes with output from the
 upstream's own code, run in a test harness. It is treated as a derivative work and licensed accordingly (see "Licence of this port").
@@ -58,12 +58,13 @@ above). This is the package author's licensing choice, not legal advice.
 
 ## Data from the original
 
-`bingo-native/src/horizon-bingo/data/items.tierlist.json` is the original mod's item tier list, copied unchanged from
+`bingo-native/src/horizon-bingo/src/data/items_tierlist_json.rs` holds the original mod's item tier list as its JSON text (a
+Rust raw string), copied unchanged from
 `common/src/main/resources/data/yet-another-minecraft-bingo/yet-another-minecraft-bingo/tierlists/` (LGPL-3.0).
 
-The card pool also uses these files, copied unchanged from the same folders of the original (LGPL-3.0):
-`bingo-native/src/horizon-bingo/data/{simplified,challenge,advancements}.tierlist.json` (tier lists) and
-`bingo-native/src/horizon-bingo/data/tags/{tedious,unobtainable,needs_silk_touch}.json` (tags of the mod). The vanilla item
+The card pool also uses these files, copied unchanged from the same folders of the original (LGPL-3.0), each as its JSON
+text in a Rust module of the same folder: `bingo-native/src/horizon-bingo/src/data/{simplified,challenge,advancements}_tierlist_json.rs`
+(tier lists) and `bingo-native/src/horizon-bingo/src/data/tags_{tedious,unobtainable,needs_silk_touch}_json.rs` (tags of the mod). The vanilla item
 tags (`#minecraft:...`, `#c:...`) are not in this package: `tools/prepare_assets.py` writes them into the assets folder
 from the player's own jar or prepared data.
 
