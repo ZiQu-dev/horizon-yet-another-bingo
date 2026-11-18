@@ -17,10 +17,21 @@ pub const HINT_CREATE: &str = "No world named \"{folder}\" yet: create one, then
 pub const HINT_DENIED_KEY: &str = "bingo.title.hint.not_permitted";
 pub const HINT_DENIED: &str = "This build of BINGO! may not open worlds from the title screen.";
 
-/// The button's size in GUI pixels, and where it sits: to the right of the title's first button (Singleplayer, 200 wide,
-/// at x = centre - 100, y = height / 4 + 48), so it does not cover any of the title's own buttons.
-pub const BUTTON_W: f32 = 98.0;
-pub const BUTTON_H: f32 = 20.0;
+/// The button's size in GUI pixels: the original's 80 x 50 sprite, bottom left (`x = 10`, `y = height - 70`).
+pub const BUTTON_W: f32 = 80.0;
+pub const BUTTON_H: f32 = 50.0;
+/// How wide the hint's lines may be: the button is narrow, the hint is not wrapped to it.
+pub const HINT_W: i32 = 180;
+/// The original's button sprites in the mod's atlas (`sprites/bingo/button.png`, `button_focused.png`).
+pub const SPRITE: &str = "bingo/button";
+pub const SPRITE_FOCUSED: &str = "bingo/button_focused";
+
+/// Where the button's two pictures lie in the mod's uploaded atlas, `[x, y, w, h]` each.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ButtonSprites {
+    pub normal: [f32; 4],
+    pub focused: [f32; 4],
+}
 
 /// The answers of `host.request_world`, as the adapter maps `NativeWorldResult` (plus one for an answer added later).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,8 +109,8 @@ pub fn lobby_folder_ok(folder: &str) -> bool {
 }
 
 /// The button's rectangle `[x, y, w, h]` on a title screen of `width` by `height` GUI pixels.
-pub fn button_rect(width: f32, height: f32) -> [f32; 4] {
-    [width / 2.0 + 104.0, height / 4.0 + 48.0, BUTTON_W, BUTTON_H]
+pub fn button_rect(_width: f32, height: f32) -> [f32; 4] {
+    [10.0, height - 70.0, BUTTON_W, BUTTON_H]
 }
 
 /// Whether the pointer at (`x`, `y`) is on the rectangle (its edges included on the left and top, as vanilla's widgets).
@@ -108,18 +119,29 @@ pub fn contains(rect: [f32; 4], (x, y): (f32, f32)) -> bool {
     x >= rx && x < rx + w && y >= ry && y < ry + h
 }
 
-/// The button's draw in the title's frame: the vanilla button sprite (highlighted under the pointer), its label
-/// centred, and the hint, when there is one, in red under it, wrapped to the button's width.
-pub fn draw(host: &mut dyn Host, rect: [f32; 4], mouse: (f32, f32), label: &str, hint: Option<&str>) {
+/// The button's draw in the title's frame: the original's sprite (its focused picture under the pointer) when the mod's
+/// pictures are up, else the vanilla button sprite; its label centred, and the hint, when there is one, in red above it.
+pub fn draw(
+    host: &mut dyn Host,
+    rect: [f32; 4],
+    mouse: (f32, f32),
+    label: &str,
+    hint: Option<&str>,
+    sprites: Option<ButtonSprites>,
+) {
     let [x, y, w, h] = rect;
-    let sprite = if contains(rect, mouse) { "widget/button_highlighted" } else { "widget/button" };
-    host.draw_vanilla_nine_slice(sprite, x, y, w, h, WHITE);
+    let over = contains(rect, mouse);
+    match sprites {
+        Some(s) => host.draw_sprite(if over { s.focused } else { s.normal }, rect),
+        None => host.draw_vanilla_nine_slice(if over { "widget/button_highlighted" } else { "widget/button" }, x, y, w, h, WHITE),
+    }
     let width = host.text_width(label);
     host.draw_text(x as i32 + (w as i32 - width) / 2, y as i32 + (h as i32 - 8) / 2, label, WHITE, true);
     if let Some(hint) = hint {
-        let lines = wrap(hint, w as i32, &|text: &str| host.text_width(text));
+        let lines = wrap(hint, HINT_W, &|text: &str| host.text_width(text));
+        let top = y as i32 - 4 - 10 * lines.len() as i32;
         for (i, line) in lines.iter().enumerate() {
-            host.draw_text(x as i32, y as i32 + h as i32 + 4 + 10 * i as i32, line, RED, true);
+            host.draw_text(x as i32, top + 10 * i as i32, line, RED, true);
         }
     }
 }

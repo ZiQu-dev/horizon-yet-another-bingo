@@ -52,12 +52,11 @@ fn a_folder_must_be_one_plain_segment() {
 }
 
 #[test]
-fn the_button_sits_right_of_the_first_title_button() {
-    // A 854 x 480 window: the title's column is 200 wide, centred (x 327 to 527), its first button at y 168.
-    let rect = button_rect(854.0, 480.0);
-    assert_eq!(rect, [531.0, 168.0, BUTTON_W, BUTTON_H]);
-    // The column's right edge is 527, the button starts at 531: they do not overlap.
-    assert!(rect[0] > 854.0 / 2.0 + 100.0);
+fn the_button_sits_bottom_left_as_the_originals_does() {
+    // The original adds it at x = 10, y = screen height - 70, 80 x 50, whatever the window's width.
+    assert_eq!(button_rect(854.0, 480.0), [10.0, 410.0, BUTTON_W, BUTTON_H]);
+    assert_eq!(button_rect(320.0, 240.0), [10.0, 170.0, 80.0, 50.0]);
+    assert_eq!((BUTTON_W, BUTTON_H), (80.0, 50.0));
 }
 
 #[test]

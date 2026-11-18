@@ -60,7 +60,8 @@ pub(super) fn render(this: &Mod, host: &dyn ClientHost, event: &mut ScreenRender
     let hint = hint.map(|hint| button::hint_text(&hint, &lang));
     let mut view = ReadOnly::new(host, event.draw.size());
     let mouse = (event.screen.mouse[0], event.screen.mouse[1]);
-    button::draw(&mut view, button::button_rect(width, height), mouse, &label, hint.as_deref());
+    let sprites = client.title_button_sprites();
+    button::draw(&mut view, button::button_rect(width, height), mouse, &label, hint.as_deref(), sprites);
     view.draw.flush(&mut *event.draw);
 }
 

@@ -250,6 +250,18 @@ impl BingoClient {
     }
 
     /// The sprites to draw from: the mod's own, plus the card pictures when there are any.
+    /// Where the original's title button pictures lie in the uploaded atlas, once the mod's pictures are up.
+    pub fn title_button_sprites(&self) -> Option<crate::title_button::ButtonSprites> {
+        if !self.atlas_uploaded {
+            return None;
+        }
+        let atlas = self.atlas()?;
+        Some(crate::title_button::ButtonSprites {
+            normal: atlas.rect(crate::title_button::SPRITE)?,
+            focused: atlas.rect(crate::title_button::SPRITE_FOCUSED)?,
+        })
+    }
+
     fn atlas(&self) -> Option<&Atlas> {
         self.dynamic_atlas.as_ref().or(self.assets.as_ref().map(|a| &a.atlas))
     }

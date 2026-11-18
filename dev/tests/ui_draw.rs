@@ -546,3 +546,30 @@ fn run_faded_stops_once_no_alpha_byte_would_change_and_not_before() {
     run_faded(&[fill], &[(0, 1)], 0.9981, &atlas(), &mut host);
     assert!(host.fade_begins.is_empty() && host.fade_ends.is_empty());
 }
+
+#[test]
+fn the_title_button_draws_the_originals_sprite_focused_under_the_pointer() {
+    use horizon_bingo::title_button::{button_rect, draw, ButtonSprites};
+    let sprites = ButtonSprites { normal: [0.0, 0.0, 80.0, 50.0], focused: [80.0, 0.0, 80.0, 50.0] };
+    let rect = button_rect(320.0, 240.0); // [10, 170, 80, 50]
+    // Away from the button: the plain picture, into the button's rectangle; the label centred (6 px a letter,
+    // 6 letters: x = 10 + (80 - 36) / 2 = 32, y = 170 + (50 - 8) / 2 = 191).
+    let mut away = Recorder::default();
+    draw(&mut away, rect, (200.0, 20.0), "BINGO!", None, Some(sprites));
+    assert_eq!(away.sprites, vec![([0.0, 0.0, 80.0, 50.0], rect)]);
+    assert_eq!((away.texts[0].0, away.texts[0].1), (32, 191));
+    assert!(away.vanilla.is_empty());
+    // On the button: the focused picture.
+    let mut over = Recorder::default();
+    draw(&mut over, rect, (50.0, 190.0), "BINGO!", None, Some(sprites));
+    assert_eq!(over.sprites, vec![([80.0, 0.0, 80.0, 50.0], rect)]);
+    // Without the mod's pictures: vanilla's button sprite instead, and no picture.
+    let mut plain = Recorder::default();
+    draw(&mut plain, rect, (200.0, 20.0), "BINGO!", None, None);
+    assert!(plain.sprites.is_empty());
+    assert_eq!(plain.vanilla.len(), 1);
+    // A hint sits above the button, its last line 4 px over it (y = 170 - 4 - 10 = 156).
+    let mut hinted = Recorder::default();
+    draw(&mut hinted, rect, (200.0, 20.0), "BINGO!", Some("short"), Some(sprites));
+    assert_eq!(hinted.texts.last().map(|t| (t.1, t.3)), Some((156, 0xffff_5555)));
+}
