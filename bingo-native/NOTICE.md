@@ -13,21 +13,23 @@
   author name, `fennifith`; the upstream Maven group is `me.jfenn`. These are facts from the repository, not a
   statement of who holds copyright. **The maintainer must confirm the holders with upstream before publication.**
 - **Upstream credits** (from its `README.md`): the card HUD and "Bingo!" button textures are by marceles; the
-  translations are by the upstream's translators, through Crowdin. None of these files is in this package.
+  translations are by the upstream's translators, through Crowdin.
+- **Language files:** `assets/bingo/lang/*.json` are the upstream's language files, copied from the original mod. The
+  port adds English lines for the keys it uses that the original lacks (`bingo.title.*`, `bingo.native.*`) to `en_us.json`.
 
 ## What this package is
 
 `bingo_native` is the client half of the upstream mod, written in Rust for Horizon's native mod API. It re-implements
 the client's behaviour and the packet formats from the upstream source. It is not a copy of the upstream code, and the
-upstream textures, languages and sounds are not in it. Its unit tests compare packet bytes with output from the
+upstream textures and sounds are not in it. Its language files are (see Original work). Its unit tests compare packet bytes with output from the
 upstream's own code, run in a test harness. It is treated as a derivative work and licensed accordingly (see "Licence of this port").
 
 ## What is not in the mod build
 
-- The mod's bundle holds Rust (`.rs`) and TOML (`.toml`) files only. It contains no upstream code in another form, no
-  images, no languages and no sounds.
+- The mod's bundle holds Rust (`.rs`) and TOML (`.toml`) files, and the language files under `assets/bingo/lang/`. It contains no upstream code in another form, no
+  images and no sounds.
 - The assets are generated on the player's own machine by `tools/prepare_assets.py`, from the player's own copy of the
-  upstream jar: card sprites, `card_colors.json`, the upstream languages, the item name list, and the content mod
+  upstream jar: card sprites, `card_colors.json`, the item name list, and the content mod
   `bingo_assets.hmod` with the sounds. Those generated files stay on that machine. Do not redistribute them.
 - Horizon's prepared vanilla resources (Minecraft's own files) also come from the player's install, not from this
   package.

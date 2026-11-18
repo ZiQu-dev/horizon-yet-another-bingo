@@ -11,7 +11,7 @@ It is a port of the upstream client code and its packet formats. Upstream projec
   sends and sends the player's choices back.
 - Without a server running the original mod, it shows nothing game-related.
 - It works only in Horizon, built by the Horizon launcher. It is not a Fabric mod and does not load the jar.
-- The mod ships no upstream assets. You generate them from your own copy of the original mod (see Install).
+- The mod ships the original's language files (`assets/bingo/lang/`). Its other upstream assets you generate from your own copy of the original mod (see Install).
 
 ### What it does (from the source; not played in a live game for this package)
 
@@ -266,4 +266,4 @@ run from the bundle). Do not run `cargo` inside the bundle: it writes a `Cargo.l
 ## Licence
 
 Copyright (C) 2026 Mateusz Korniak (ZiQu-dev). Written with the help of an AI assistant (Claude, Anthropic).
-LGPL-3.0-or-later, as a port of the upstream mod (see `LICENSE`, `COPYING` and `NOTICE.md`). No upstream assets are included.
+LGPL-3.0-or-later, as a port of the upstream mod (see `LICENSE`, `COPYING` and `NOTICE.md`). No upstream assets are included, except the language files in `assets/bingo/lang/`.
