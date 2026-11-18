@@ -507,7 +507,8 @@ impl Session {
         self.send_tiles_after_find(host, &team);
         self.send_score_to_all(host, &team);
         for item in items {
-            self.announce_find(host, &format!("{finder} found {}", short_name(&item)));
+            let line = texts::item_captured(&finder, short_name(&item), host.item_name_key(&item));
+            self.announce_find(host, &line);
         }
         self.announce_lines(host, &team, &standing);
         self.check_goals(host);
@@ -517,14 +518,14 @@ impl Session {
 
     /// A chat line about a find, for the players who keep `itemMessages` on (the default). It is one broadcast when
     /// everyone does.
-    fn announce_find(&self, host: &mut dyn ServerHost, line: &str) {
+    fn announce_find(&self, host: &mut dyn ServerHost, line: &texts::Line) {
         let wants = |uuid: u128| self.settings.get(&uuid).map_or(true, |settings| settings.item_messages);
         let players = host.players();
         if players.iter().all(|player| wants(player.uuid)) {
-            host.broadcast(line);
+            host.broadcast_line(line);
         } else {
             for player in players.iter().filter(|player| wants(player.uuid)) {
-                host.tell(player.uuid, line);
+                host.tell_line(player.uuid, line);
             }
         }
     }
@@ -1925,7 +1926,7 @@ impl Session {
         let name = player_name(&*host, who);
         for square in &claimed {
             let label = objectives::describe(&squares[*square].objective);
-            self.announce_find(host, &format!("{name} found {label}"));
+            self.announce_find(host, &texts::objective_captured(&name, &label));
         }
         self.send_tiles_after_find(host, team);
         self.send_score_to_all(host, team);

@@ -11,17 +11,34 @@ pub struct Line {
     pub key: &'static str,
     pub template: &'static str,
     pub args: Vec<String>,
+    /// Per argument, the translation key a client shows in its place (an item's name), when the argument is one. The
+    /// argument itself is the English of that key.
+    pub arg_keys: Vec<Option<String>>,
 }
 
 impl Line {
     pub fn new(key: &'static str, template: &'static str, args: &[&str]) -> Self {
-        Self { key, template, args: args.iter().map(|arg| arg.to_string()).collect() }
+        Self {
+            key,
+            template,
+            args: args.iter().map(|arg| arg.to_string()).collect(),
+            arg_keys: vec![None; args.len()],
+        }
     }
 
-    /// The English line: each `%s` takes the next argument (left as `%s` when there is none), `%%` is `%`.
+    /// Marks argument `index` as the translation `key` (its English is the argument).
+    pub fn with_arg_key(mut self, index: usize, key: String) -> Self {
+        if let Some(slot) = self.arg_keys.get_mut(index) {
+            *slot = Some(key);
+        }
+        self
+    }
+
+    /// The English line: each `%s` takes the next argument (left as `%s` when there is none), `%%` is `%`. An argument
+    /// that is a translation key (an item's name) is in brackets, as the original's item names are.
     pub fn render(&self) -> String {
         let mut out = String::new();
-        let mut args = self.args.iter();
+        let mut args = self.args.iter().enumerate();
         let mut chars = self.template.chars().peekable();
         while let Some(c) = chars.next() {
             if c != '%' {
@@ -36,7 +53,12 @@ impl Line {
                 Some('s') => {
                     chars.next();
                     match args.next() {
-                        Some(arg) => out.push_str(arg),
+                        Some((index, arg)) if self.arg_keys.get(index).is_some_and(Option::is_some) => {
+                            out.push('[');
+                            out.push_str(arg);
+                            out.push(']');
+                        }
+                        Some((_, arg)) => out.push_str(arg),
                         None => out.push_str("%s"),
                     }
                 }
@@ -45,6 +67,18 @@ impl Line {
         }
         out
     }
+}
+
+/// `%s got %s`: a player's find (`GameMessageService.createItemScoredMessage`, the original's `captured_item`). The item is
+/// its name in brackets, which a client shows in its own language: `item_key` is that name's translation key, and `item`
+/// the item's English path, such as `copper_torch`.
+pub fn item_captured(finder: &str, item: &str, item_key: String) -> Line {
+    Line::new("bingo.game.message.captured_item", "%s got %s", &[finder, item]).with_arg_key(1, item_key)
+}
+
+/// `%s got %s`, for an objective square a player completed: the objective's English text, in brackets, is not an item.
+pub fn objective_captured(finder: &str, label: &str) -> Line {
+    Line::new("bingo.game.message.captured_item", "%s got %s", &[finder, label])
 }
 
 /// `%s has scored %s!`, for a team that scored lines (`GameMessageService`). `lines` is the count, as [`count_text`] writes it.

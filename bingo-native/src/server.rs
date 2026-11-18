@@ -589,7 +589,14 @@ fn translated(line: &Line) -> Text {
     let args: Vec<Text> = line
         .args
         .iter()
-        .map(|arg| Text::literal(arg.as_str()))
+        .zip(line.arg_keys.iter())
+        .map(|(arg, key)| match key {
+            // An item's name: the client's translation of its key, in brackets as the original shows it.
+            Some(key) => Text::literal("[")
+                .append(Text::translate(key.as_str(), Vec::new()))
+                .append(Text::literal("]")),
+            None => Text::literal(arg.as_str()),
+        })
         .collect();
     Text::translate(line.key, args)
 }

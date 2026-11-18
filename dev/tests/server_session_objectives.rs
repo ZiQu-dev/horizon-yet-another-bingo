@@ -229,7 +229,7 @@ fn each_kind_of_square_scores_in_a_running_game() {
     host.stats.insert((ALICE, KILLED_BY.into(), "minecraft:skeleton".into()), 1);
     poll(&mut host, &mut session);
     assert!(!is_found(&last_tiles(&host, ALICE), SKELETON_ID));
-    assert!(announced(&host, "Alice found minecraft:adventure/arbalistic"));
+    assert!(announced(&host, "Alice got minecraft:adventure/arbalistic"));
 }
 
 #[test]
@@ -260,7 +260,7 @@ fn in_lockout_the_first_team_to_hold_a_square_keeps_it() {
     poll(&mut host, &mut session);
     assert!(!is_found(&last_tiles(&host, BOB), ARBALISTIC_ID));
     assert!(is_found(&last_tiles(&host, ALICE), ARBALISTIC_ID));
-    assert!(!announced(&host, "Bob found minecraft:adventure/arbalistic"));
+    assert!(!announced(&host, "Bob got minecraft:adventure/arbalistic"));
 }
 
 #[test]

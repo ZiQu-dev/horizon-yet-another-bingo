@@ -366,7 +366,7 @@ fn a_find_is_told_only_to_the_player_who_wants_it_when_another_turned_item_messa
     assert_eq!(
         host.take_tells(),
         [
-            (BOB, format!("Bob found {}", short(&names[0]))),
+            (BOB, format!("Bob got [{}]", short(&names[0]))),
             (ALICE, "Blue is in the lead with 1 item!".to_string()),
             (BOB, "Blue is in the lead with 1 item!".to_string()),
         ]
@@ -384,7 +384,7 @@ fn without_settings_a_find_is_broadcast() {
 
     session.on_inventory(&mut host, BOB, &held(&names[0..1]));
     host.take();
-    assert_eq!(host.take_broadcasts(), [format!("Bob found {}", short(&names[0]))]);
+    assert_eq!(host.take_broadcasts(), [format!("Bob got [{}]", short(&names[0]))]);
     // The find makes blue the leader: the leading message goes to each player, as the original sends it.
     assert_eq!(
         host.take_tells(),

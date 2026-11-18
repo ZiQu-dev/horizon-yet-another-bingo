@@ -168,7 +168,7 @@ fn goal_items_three_is_not_won_with_two_squares_and_is_won_with_three() {
     host.take();
     assert_eq!(
         host.take_broadcasts(),
-        [format!("Alice found {}", short(&names[0])), format!("Alice found {}", short(&names[1]))]
+        [format!("Alice got [{}]", short(&names[0])), format!("Alice got [{}]", short(&names[1]))]
     );
     let text = status(&mut session, &mut host);
     assert!(text.contains("Playing") && text.contains("Red: 1 players, 2 items"), "{text}");
@@ -178,7 +178,7 @@ fn goal_items_three_is_not_won_with_two_squares_and_is_won_with_three() {
     let finish = host.take();
     assert_eq!(
         host.take_broadcasts(),
-        [format!("Alice found {}", short(&names[2])), "Red won the game!".to_string()]
+        [format!("Alice got [{}]", short(&names[2])), "Red won the game!".to_string()]
     );
     assert!(status(&mut session, &mut host).contains("Postgame"));
     let over = decode(&only(&finish, ALICE, "game_over_v2"), GameOverPacket::read_v2).unwrap();
@@ -211,7 +211,7 @@ fn goal_full_card_needs_all_twenty_five_squares() {
     host.take();
     assert_eq!(
         host.take_broadcasts(),
-        [format!("Alice found {}", short(&names[24])), "Red won the game!".to_string()]
+        [format!("Alice got [{}]", short(&names[24])), "Red won the game!".to_string()]
     );
     assert!(status(&mut session, &mut host).contains("Postgame"));
 }
@@ -232,7 +232,7 @@ fn endwhen_never_announces_the_goal_but_does_not_end_until_end() {
     host.take();
     assert_eq!(
         host.take_broadcasts(),
-        [format!("Alice found {}", short(&names[0])), "Red reached the goal!".to_string()]
+        [format!("Alice got [{}]", short(&names[0])), "Red reached the goal!".to_string()]
     );
     assert!(status(&mut session, &mut host).contains("Playing"));
 
@@ -266,7 +266,7 @@ fn endwhen_all_win_lets_the_first_team_to_reach_the_goal_play_on() {
     host.take();
     assert_eq!(
         host.take_broadcasts(),
-        [format!("Alice found {}", short(&names[0])), "Red reached the goal!".to_string()]
+        [format!("Alice got [{}]", short(&names[0])), "Red reached the goal!".to_string()]
     );
     assert!(status(&mut session, &mut host).contains("Playing"));
 
@@ -275,7 +275,7 @@ fn endwhen_all_win_lets_the_first_team_to_reach_the_goal_play_on() {
     let finish = host.take();
     assert_eq!(
         host.take_broadcasts(),
-        [format!("Bob found {}", short(&names[0])), "Red won the game!".to_string()]
+        [format!("Bob got [{}]", short(&names[0])), "Red won the game!".to_string()]
     );
     assert!(status(&mut session, &mut host).contains("Postgame"));
     let alice = decode(&only(&finish, ALICE, "game_over_v2"), GameOverPacket::read_v2).unwrap();
@@ -300,7 +300,7 @@ fn lockout_gives_a_square_to_the_first_team_only() {
     // Red finds square 0.
     session.on_inventory(&mut host, ALICE, &held(&names[0..1]));
     host.take();
-    assert_eq!(host.take_broadcasts(), [format!("Alice found {}", short(&names[0]))]);
+    assert_eq!(host.take_broadcasts(), [format!("Alice got [{}]", short(&names[0]))]);
 
     // Blue holds the same item: square 0 is red's, so blue gets nothing, not even a find line or a score.
     session.on_inventory(&mut host, BOB, &held(&names[0..1]));
@@ -312,7 +312,7 @@ fn lockout_gives_a_square_to_the_first_team_only() {
     // Blue finds square 1 next to it: that one is blue's.
     session.on_inventory(&mut host, BOB, &held(&names[0..2]));
     host.take();
-    assert_eq!(host.take_broadcasts(), [format!("Bob found {}", short(&names[1]))]);
+    assert_eq!(host.take_broadcasts(), [format!("Bob got [{}]", short(&names[1]))]);
     assert_eq!(
         status(&mut session, &mut host),
         "Status: Playing.\nRed: 1 players, 1 items, 0 lines\nBlue: 1 players, 1 items, 0 lines"
@@ -333,7 +333,7 @@ fn inventory_mode_takes_a_square_back_when_the_item_leaves_the_inventory() {
     session.on_inventory(&mut host, ALICE, &held(&names[0..1]));
     let found = host.take();
     assert_eq!(score_of(&only(&found, ALICE, "score_update")).score.items, 1);
-    assert_eq!(host.take_broadcasts(), [format!("Alice found {}", short(&names[0]))]);
+    assert_eq!(host.take_broadcasts(), [format!("Alice got [{}]", short(&names[0]))]);
 
     // The item is gone from the inventory: the score goes back to 0, and nobody is told of a find.
     session.on_inventory(&mut host, ALICE, &HashMap::new());
@@ -500,7 +500,7 @@ fn resume_after_a_first_win_turns_the_end_condition_off() {
 
     session.on_inventory(&mut host, ALICE, &held(&names[0..1]));
     host.take();
-    assert_eq!(host.take_broadcasts(), [format!("Alice found {}", short(&names[0])), "Red won the game!".to_string()]);
+    assert_eq!(host.take_broadcasts(), [format!("Alice got [{}]", short(&names[0])), "Red won the game!".to_string()]);
     assert!(status(&mut session, &mut host).contains("Postgame"));
 
     assert_eq!(run(&mut session, &mut host, Some(ALICE), "resume"), "The game continues.");
@@ -512,7 +512,7 @@ fn resume_after_a_first_win_turns_the_end_condition_off() {
     // Another square: the goal was already reached, and with no end condition the game does not end again.
     session.on_inventory(&mut host, ALICE, &held(&names[0..2]));
     host.take();
-    assert_eq!(host.take_broadcasts(), [format!("Alice found {}", short(&names[1]))]);
+    assert_eq!(host.take_broadcasts(), [format!("Alice got [{}]", short(&names[1]))]);
     assert!(status(&mut session, &mut host).contains("Playing"));
 }
 

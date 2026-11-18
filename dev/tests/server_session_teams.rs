@@ -248,7 +248,7 @@ fn two_teams_share_one_card_and_each_sees_the_others_finds_as_taken_by_them() {
     assert!(!bob_after.should_notify, "the other team is not told");
     let bob_score = score_of(&only(&sent, BOB, "score_update"));
     assert_eq!((bob_score.team.as_str(), bob_score.is_viewer_on_team, bob_score.score.items), ("bingo_red", false, 1));
-    assert_eq!(host.take_broadcasts(), [format!("Alice found {}", short(&names[0]))]);
+    assert_eq!(host.take_broadcasts(), [format!("Alice got [{}]", short(&names[0]))]);
 
     // Bob's team finds the same square: now both teams have it, each as its own achievement and the other's key.
     session.on_inventory(&mut host, BOB, &held(&names[0..1]));
@@ -262,7 +262,7 @@ fn two_teams_share_one_card_and_each_sees_the_others_finds_as_taken_by_them() {
     assert!(bob_after.should_notify && !alice_after.should_notify);
     let alice_score = score_of(&only(&sent, ALICE, "score_update"));
     assert_eq!((alice_score.team.as_str(), alice_score.is_viewer_on_team, alice_score.score.items), ("bingo_blue", false, 1));
-    assert_eq!(host.take_broadcasts(), [format!("Bob found {}", short(&names[0]))]);
+    assert_eq!(host.take_broadcasts(), [format!("Bob got [{}]", short(&names[0]))]);
     assert!(run(&mut session, &mut host, None, "status").contains("Playing"), "no line yet, so no winner");
 }
 
@@ -285,7 +285,7 @@ fn a_team_that_completes_a_line_wins_and_the_ranking_lists_every_team() {
     session.on_inventory(&mut host, ALICE, &held(&names[0..5]));
     let finish = host.take();
     let broadcasts = host.take_broadcasts();
-    let mut expected: Vec<String> = names[0..5].iter().map(|name| format!("Alice found {}", short(name))).collect();
+    let mut expected: Vec<String> = names[0..5].iter().map(|name| format!("Alice got [{}]", short(name))).collect();
     expected.push("Red won the game!".to_string());
     assert_eq!(broadcasts, expected);
 
