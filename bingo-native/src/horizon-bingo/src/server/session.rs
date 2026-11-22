@@ -109,6 +109,9 @@ pub struct Session {
     ready: ReadyTimer,
     /// The lobby flow of a start: the players out of the vanilla worlds, the reset, and the players into the new game.
     world: WorldReset,
+    /// Players who joined while the game was Pregame and have not been sent to the lobby yet (the lobby was not open,
+    /// or the move was refused). The lobby gate sends them on the next ticks (`gather_in_lobby`).
+    lobby_wanted: BTreeSet<u128>,
     /// The cards of the round, in the order they were made. The first is made when play begins; the others are made as
     /// teams need them (`multicard`). A one-card round has one entry, and every team plays it.
     cards: Vec<Card>,
@@ -230,6 +233,7 @@ impl Session {
             teams: Teams::new(),
             ready: ReadyTimer::new(options.ready),
             world: WorldReset::new(),
+            lobby_wanted: BTreeSet::new(),
             cards: Vec::new(),
             card_started: Vec::new(),
             team_card: BTreeMap::new(),
@@ -436,6 +440,11 @@ impl Session {
         self.ensure_loaded(host);
         self.await_rejoin = false;
         self.joined_at.insert(player.uuid, self.ticks);
+        if self.game.status() == GameStatus::Pregame {
+            // Before play the players wait in the lobby: a joiner goes there now, or as soon as the lobby is open.
+            self.lobby_wanted.insert(player.uuid);
+            self.gather_in_lobby(host);
+        }
         send(host, player.uuid, self.game_status());
         match self.game.status() {
             GameStatus::Pregame => self.send_ready_updates(host),
@@ -457,10 +466,38 @@ impl Session {
     pub fn on_leave(&mut self, host: &mut dyn ServerHost, player: u128) {
         self.hud.remove(&player);
         self.joined_at.remove(&player);
+        self.lobby_wanted.remove(&player);
         self.ready.remove(player);
         if self.game.status() == GameStatus::Pregame {
             self.teams.leave(player);
             self.send_ready_updates(host);
+        }
+    }
+
+    /// The lobby gate, Pregame only: sends the players `world_reset::gate_targets` picks to the lobby, the ones who joined
+    /// and were not moved yet, and outside a start anyone in a vanilla level. A move the engine refuses is tried again on
+    /// the next tick (the player stays remembered).
+    fn gather_in_lobby(&mut self, host: &mut dyn ServerHost) {
+        let starting = self.starting();
+        let Some(port) = host.world_port() else {
+            return;
+        };
+        if !port.lobby_is_open() {
+            return;
+        }
+        let in_vanilla = port.vanilla_players();
+        for uuid in world_reset::gate_targets(&self.lobby_wanted, &in_vanilla, starting) {
+            if port.teleport_to_lobby(uuid) {
+                self.lobby_wanted.remove(&uuid);
+            }
+        }
+    }
+
+    /// The players go back to the lobby: a game is reset, ended by a command, or the vote sends it back. Idempotent: the
+    /// lobby flow does nothing when no start or game is running.
+    fn send_to_lobby(&mut self, host: &mut dyn ServerHost) {
+        if let Some(port) = host.world_port() {
+            self.world.return_to_lobby(port);
         }
     }
 
@@ -764,13 +801,11 @@ impl Session {
         }
     }
 
-    /// Ends the game with `winner` (`None` for nobody), through the game's own end.
+    /// Ends the game with `winner` (`None` for nobody), through the game's own end. The players stay where they are, on
+    /// the end screen, until the game is reset or a command sends them back.
     fn end_game(&mut self, host: &mut dyn ServerHost, winner: Option<String>) {
         if let Ok(events) = self.game.end(winner) {
             self.dispatch(host, events);
-            if let Some(port) = host.world_port() {
-                self.world.return_to_lobby(port);
-            }
         }
     }
 
@@ -972,20 +1007,19 @@ impl Session {
     /// The engine's `levels_reset` hook: the vanilla worlds are new, so the players go into the new overworld and the
     /// game begins. Ignored unless a start is waiting for the reset.
     pub fn levels_reset(&mut self, host: &mut dyn ServerHost) {
-        let outcome = match host.world_port() {
-            Some(port) => self.world.levels_reset_done(port),
-            None => None,
-        };
-        if let Some(outcome) = outcome {
-            self.world_outcome(host, outcome);
+        if let Some(port) = host.world_port() {
+            self.world.levels_reset_done(port);
         }
     }
 
-    /// Whether the lobby flow is bringing the players out and resetting the worlds for a start.
+    /// Whether the lobby flow is bringing the players out, resetting the worlds or taking the players to the new spawn for
+    /// a start.
     fn starting(&self) -> bool {
         matches!(
             self.world.state(),
-            world_reset::State::WaitingForPlayersOut { .. } | world_reset::State::Resetting
+            world_reset::State::WaitingForPlayersOut { .. }
+                | world_reset::State::Resetting
+                | world_reset::State::AwaitingSpawn { .. }
         )
     }
 
@@ -1036,6 +1070,7 @@ impl Session {
             }
         }
         if self.game.status() == GameStatus::Pregame {
+            self.gather_in_lobby(host);
             if !self.starting() {
                 self.tick_lobby(host);
             }
@@ -1192,11 +1227,13 @@ impl Session {
                     self.forfeit = true;
                     self.end_reason = Some(texts::stopped_reason());
                     self.dispatch(host, events);
+                    self.send_to_lobby(host);
                     self.say(texts::end_success())
                 }
                 Err(_) => "The game is not Playing.".to_string(),
             },
             Command::Reset => {
+                // The reset goes back to Pregame through `reset_round`, which sends the players to the lobby.
                 let events = self.game.reset();
                 self.dispatch(host, events);
                 self.say(texts::reset_success())
@@ -1812,6 +1849,7 @@ impl Session {
     /// Back to Pregame: the card, the progress and the ready flags go; the teams stay, but the server's team list drops
     /// the teams the start added.
     fn reset_round(&mut self, host: &mut dyn ServerHost) {
+        self.send_to_lobby(host);
         self.hide_boss_bars(host);
         self.sidebar_end = None;
         Self::clear_saved_game(host);

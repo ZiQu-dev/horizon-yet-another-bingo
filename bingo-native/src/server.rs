@@ -2,6 +2,7 @@
 //! `horizon-bingo`'s `server` modules; this file adapts the mod API's `ServerHost` to their `ServerHost` and keeps the session.
 //! Each hook runs under `guarded`, and a poisoned lock is taken as it is, so one panic does not end the server's mod.
 use super::{MOD_ID, guarded, log};
+use horizon_bingo::lobby_world;
 use horizon_bingo::server::chat;
 use horizon_bingo::server::commands::{Command, chat_shortcut, parse, requires_op};
 use horizon_bingo::server::game::GameOptions;
@@ -122,6 +123,12 @@ const LOBBY_SPAWN: [f64; 3] = [0.5, 17.0, 1.5];
 const LOBBY_ROTATION: [f32; 2] = [-180.0, 0.0];
 /// Whether the lobby level is still to be opened: set when a server starts, cleared once the engine has the request.
 static LOBBY_TO_OPEN: AtomicBool = AtomicBool::new(false);
+/// Whether the lobby's files were looked at for this server's world (`prepare_lobby_files`). Cleared when a server starts.
+static LOBBY_FILES_DONE: AtomicBool = AtomicBool::new(false);
+/// The overworld the reset makes, and the staging place the players wait in there until its spawn is known: high above
+/// the terrain, so the wait is spent in the air, not on the ground.
+const OVERWORLD: &str = "minecraft:overworld";
+const STAGING_POS: [f64; 3] = [0.5, 150.0, 0.5];
 /// Votes typed in chat (`vote lobby` and the rest) during Postgame, with the player who typed each. The chat hook has no
 /// host and a vote needs one, so they run on the next server tick, in order.
 static CHAT_VOTES: Mutex<Vec<(u128, Command)>> = Mutex::new(Vec::new());
@@ -204,6 +211,7 @@ fn with_session<T>(f: impl FnOnce(&mut Session) -> T) -> T {
 pub fn server_about_to_start() {
     *SESSION.lock().unwrap_or_else(PoisonError::into_inner) = None;
     LOBBY_TO_OPEN.store(true, Ordering::Relaxed);
+    LOBBY_FILES_DONE.store(false, Ordering::Relaxed);
     CHAT_VOTES
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
@@ -372,7 +380,7 @@ impl ServerHost for ServerAdapter<'_> {
     }
 
     fn warn(&mut self, line: &str) {
-        ::log::warn!("{line}");
+        warn_line(line);
     }
 
     fn append_line(&mut self, name: &str, line: &str) {
@@ -536,13 +544,18 @@ impl WorldPort for ServerAdapter<'_> {
         self.host.runtime_levels().is_open(LOBBY_LEVEL)
     }
 
-    fn players_in_vanilla(&self) -> bool {
+    fn vanilla_players(&self) -> Vec<u128> {
         let host: &dyn mod_api::ServerHost = &*self.host;
-        host.players().server_players().into_iter().any(|player| {
-            player
-                .dimension(host)
-                .is_some_and(|dimension| world_reset::is_vanilla_dimension(&dimension.to_string()))
-        })
+        host.players()
+            .server_players()
+            .into_iter()
+            .filter(|player| {
+                player
+                    .dimension(host)
+                    .is_some_and(|dimension| world_reset::is_vanilla_dimension(&dimension.to_string()))
+            })
+            .map(|player| player.uuid())
+            .collect()
     }
 
     fn reset_vanilla(&mut self, seed: u64) -> Result<(), ResetRefusal> {
@@ -559,39 +572,109 @@ impl WorldPort for ServerAdapter<'_> {
             })
     }
 
-    fn teleport_all_to_lobby(&mut self) {
-        teleport_all(&mut *self.host, LOBBY_LEVEL, LOBBY_SPAWN, LOBBY_ROTATION);
+    fn teleport_all_to_lobby(&mut self) -> bool {
+        teleport_all(&mut *self.host, LOBBY_LEVEL, LOBBY_SPAWN, Some(LOBBY_ROTATION))
     }
 
-    fn teleport_all_to_overworld_spawn(&mut self) {
-        let Some(level) = self.host.level("minecraft:overworld") else {
-            log("bingo: the overworld is not loaded, the players were not sent to its spawn");
-            return;
+    fn teleport_to_lobby(&mut self, player: u128) -> bool {
+        teleport_one(&mut *self.host, player, LOBBY_LEVEL, LOBBY_SPAWN, Some(LOBBY_ROTATION))
+    }
+
+    fn teleport_all_to_staging(&mut self) -> bool {
+        teleport_all(&mut *self.host, OVERWORLD, STAGING_POS, None)
+    }
+
+    fn overworld_spawn_known(&self) -> bool {
+        overworld_spawn(&*self.host).is_some()
+    }
+
+    fn teleport_all_to_overworld_spawn(&mut self) -> bool {
+        let Some((pos, rotation)) = overworld_spawn(&*self.host) else {
+            return false;
         };
-        let Some(spawn) = level.respawn_data(&*self.host) else {
-            log("bingo: the world spawn is not known, the players were not sent to it");
-            return;
-        };
-        let pos = [f64::from(spawn.pos[0]) + 0.5, f64::from(spawn.pos[1]), f64::from(spawn.pos[2]) + 0.5];
-        teleport_all(&mut *self.host, "minecraft:overworld", pos, [spawn.yaw, spawn.pitch]);
+        teleport_all(&mut *self.host, OVERWORLD, pos, Some(rotation))
     }
 }
 
-/// Sends every online player to `dimension` at `pos`, facing `rotation`. A move the engine refuses is logged.
-fn teleport_all(host: &mut dyn mod_api::ServerHost, dimension: &str, pos: [f64; 3], rotation: [f32; 2]) {
+/// The new overworld's spawn as the players are sent to it: the centre of the spawn block, and the way they face. None
+/// while the engine has not opened the overworld or has not chosen its spawn. The engine opens the level when a player
+/// first enters it, and computes the spawn then, so the staging place is what gets it going.
+fn overworld_spawn(host: &dyn mod_api::ServerHost) -> Option<([f64; 3], [f32; 2])> {
+    let spawn = host.level(OVERWORLD)?.respawn_data(host)?;
+    let pos = [f64::from(spawn.pos[0]) + 0.5, f64::from(spawn.pos[1]), f64::from(spawn.pos[2]) + 0.5];
+    Some((pos, [spawn.yaw, spawn.pitch]))
+}
+
+/// Sends every online player to `dimension` at `pos`, facing `rotation` when given. A move the engine refuses is logged.
+/// True only when every player was moved: a refused move is tried again by the caller.
+fn teleport_all(host: &mut dyn mod_api::ServerHost, dimension: &str, pos: [f64; 3], rotation: Option<[f32; 2]>) -> bool {
     let players = host.players().server_players();
+    let mut all_moved = true;
     for player in players {
-        if !player.entity().teleport_to_level(&mut *host, dimension, pos, Some(rotation)) {
+        if !player.entity().teleport_to_level(&mut *host, dimension, pos, rotation) {
             log(&format!("bingo: a player was not sent to {dimension}"));
+            all_moved = false;
         }
     }
+    all_moved
+}
+
+/// Sends one online player to `dimension` at `pos`, facing `rotation` when given. False when they are not online or the
+/// engine refuses the move.
+fn teleport_one(host: &mut dyn mod_api::ServerHost, uuid: u128, dimension: &str, pos: [f64; 3], rotation: Option<[f32; 2]>) -> bool {
+    let Some(player) = host.player(uuid) else {
+        return false;
+    };
+    player.entity().teleport_to_level(&mut *host, dimension, pos, rotation)
+}
+
+/// A line for the operator: the `log` crate's and the debug file's (`BINGO_H0_LOG`, see `log`).
+fn warn_line(line: &str) {
+    ::log::warn!("{line}");
+    log(line);
+}
+
+/// Makes the lobby's files ready in the world, once per server start and before the lobby opens: the lobby's dimension
+/// (`dimensions/bingo/lobby`) and the datapack (`datapacks/bingo`) are copied from the assets when the world does not
+/// have them (`lobby_world::install_into_world`). Nothing that exists is overwritten. Returns false while the world is
+/// not open yet, so the next tick asks again.
+fn prepare_lobby_files(host: &dyn mod_api::ServerHost) -> bool {
+    let Some(world) = host.world_dir() else {
+        return false;
+    };
+    let template = assets_dir(host).join("lobby_world");
+    if !template.is_dir() {
+        warn_line(&format!(
+            "bingo: no lobby world in {}: the lobby will be empty",
+            template.display()
+        ));
+        return true;
+    }
+    match lobby_world::install_into_world(&template, &world) {
+        Ok(parts) => {
+            log(&format!(
+                "bingo: lobby world in {}: dimension {:?}, datapack {:?}",
+                world.display(),
+                parts.dimension,
+                parts.datapack
+            ));
+            if parts.datapack == lobby_world::Part::Copied {
+                log("bingo: the datapack bingo was copied into the world; it applies after the next server restart");
+            }
+        }
+        Err(error) => warn_line(&format!("bingo: the lobby world was not copied into {}: {error}", world.display())),
+    }
+    true
 }
 
 /// Asks the engine for the lobby level once per server start. A request the engine refuses for now (no world yet) is
-/// asked again on the next tick; `AlreadyOpen` means the level is there.
+/// asked again on the next tick; `AlreadyOpen` means the level is there. The lobby's files come first.
 fn open_lobby(host: &mut dyn mod_api::ServerHost) {
     if !LOBBY_TO_OPEN.load(Ordering::Relaxed) {
         return;
+    }
+    if !LOBBY_FILES_DONE.load(Ordering::Relaxed) && prepare_lobby_files(&*host) {
+        LOBBY_FILES_DONE.store(true, Ordering::Relaxed);
     }
     let level = RuntimeLevel::new("minecraft:overworld", RuntimeGenerator::Void, 0);
     match host.runtime_levels().open(LOBBY_LEVEL, level) {
