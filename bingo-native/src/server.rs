@@ -603,14 +603,14 @@ impl WorldPort for ServerAdapter<'_> {
     fn player_mode(&self, player: u128) -> Option<Mode> {
         let host: &dyn mod_api::ServerHost = &*self.host;
         let player = host.player(player)?;
-        host.player_game_mode(player).map(mode_from_game_mode)
+        player.game_mode(host).map(mode_from_game_mode)
     }
 
     fn set_player_mode(&mut self, player: u128, mode: Mode) -> bool {
         let Some(player) = self.host.player(player) else {
             return false;
         };
-        self.host.player_set_game_mode(player, game_mode_of(mode))
+        player.set_game_mode(&mut *self.host, game_mode_of(mode))
     }
 
     fn player_away_from_overworld_spawn(&self, blocks: f64) -> bool {
@@ -620,7 +620,7 @@ impl WorldPort for ServerAdapter<'_> {
         };
         host.players().server_players().into_iter().any(|player| {
             let in_overworld = player.dimension(host).is_some_and(|dimension| dimension.to_string() == OVERWORLD);
-            let far = host.entity_position(player.entity()).is_some_and(|pos| distance(pos, spawn) > blocks);
+            let far = player.entity().position(host).is_some_and(|pos| distance(pos, spawn) > blocks);
             !in_overworld || far
         })
     }
@@ -693,8 +693,8 @@ fn move_player(
     pos: [f64; 3],
     rotation: Option<[f32; 2]>,
 ) -> bool {
-    let alive = host.living_alive(player.entity().living()).unwrap_or(true);
-    if !alive && host.player_respawn(player).is_err() {
+    let alive = mod_api::LivingRef::new(player.entity()).alive(&*host).unwrap_or(true);
+    if !alive && player.respawn(&mut *host).is_err() {
         return false;
     }
     player.entity().teleport_to_level(&mut *host, dimension, pos, rotation)
