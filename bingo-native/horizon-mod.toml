@@ -9,6 +9,7 @@ capabilities = ["registries"]
 
 [native]
 game = "26.3"
-horizon = "413ef02fddfac06ece3d318e88f0764fbd7d268c"
+horizon = "b69aba13c38a2b1604d5116e03382ae5976fa46a"
 mixins = "e59da9094f0c2fdda6c627fe9eff22dec6a906f0"
 world_control = true
+level_reset = true

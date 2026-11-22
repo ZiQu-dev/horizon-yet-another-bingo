@@ -539,8 +539,8 @@ impl WorldPort for ServerAdapter<'_> {
     fn players_in_vanilla(&self) -> bool {
         let host: &dyn mod_api::ServerHost = &*self.host;
         host.players().server_players().into_iter().any(|player| {
-            host.players()
-                .player_dimension(player)
+            player
+                .dimension(host)
                 .is_some_and(|dimension| world_reset::is_vanilla_dimension(&dimension.to_string()))
         })
     }
@@ -568,7 +568,7 @@ impl WorldPort for ServerAdapter<'_> {
             log("bingo: the overworld is not loaded, the players were not sent to its spawn");
             return;
         };
-        let Some(spawn) = self.host.levels().level_respawn_data(level) else {
+        let Some(spawn) = level.respawn_data(&*self.host) else {
             log("bingo: the world spawn is not known, the players were not sent to it");
             return;
         };
