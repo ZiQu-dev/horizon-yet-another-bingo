@@ -1522,8 +1522,8 @@ impl Session {
     /// The game's own start: the gamerules, the teams on the server and the game itself. Runs at once, or once the
     /// lobby flow has the players in the new overworld.
     fn begin_game(&mut self, host: &mut dyn ServerHost) -> Result<(), String> {
-        host.command(&format!("gamerule pvp {}", self.rules.pvp));
-        host.command(&format!("gamerule keep_inventory {}", self.rules.keep_inventory));
+        host.set_game_rule("pvp", self.rules.pvp);
+        host.set_game_rule("keep_inventory", self.rules.keep_inventory);
         let players = host.players();
         self.add_teams_to_server(host, &players);
         let events = self.game.start().map_err(str::to_owned)?;

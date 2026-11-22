@@ -333,6 +333,19 @@ impl ServerHost for ServerAdapter<'_> {
         }
     }
 
+    fn set_game_rule(&mut self, rule: &str, value: bool) {
+        // The overworld's own setter (`GameRules.set`). The `gamerule` command refuses a rule that already has the
+        // value, so it failed for the defaults (`pvp true`, `keep_inventory false`); the setter does not. Without an
+        // open overworld, or for a rule it refuses, the command is queued as before.
+        let overworld = (&*self.host).level(OVERWORLD);
+        let set = overworld.is_some_and(|level| {
+            level.set_game_rule(&mut *self.host, rule, mod_api::GameRuleValue::Bool(value))
+        });
+        if !set {
+            self.command(&format!("gamerule {rule} {value}"));
+        }
+    }
+
     fn world_port(&mut self) -> Option<&mut dyn WorldPort> {
         Some(self)
     }

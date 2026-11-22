@@ -26,6 +26,12 @@ pub trait ServerHost {
     /// A console command (for example `team add bingo_red`), queued and run at the next server tick. Commands
     /// that fail are only logged by the game. The default does nothing, so a test host need not implement it.
     fn command(&mut self, _line: &str) {}
+    /// Sets a boolean game rule to `value`, as `gamerule <rule> <value>` does, but without the command's refusal when the
+    /// rule already has that value (the defaults `pvp true` and `keep_inventory false` are such values). The default queues
+    /// the command, so a test host sees the same line it saw before.
+    fn set_game_rule(&mut self, rule: &str, value: bool) {
+        self.command(&format!("gamerule {rule} {value}"));
+    }
     /// Runs a console command now and returns its result (vanilla's count for `clear ... 0`, a success count for others),
     /// or `None` when the host cannot read it. Unlike `command`, this is not queued. The default is `None`; the Horizon
     /// adapter answers from `run_command_with_output` (Horizon 918dc1f01d and later), and a host without it gets `None`,
