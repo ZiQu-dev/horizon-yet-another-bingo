@@ -2,15 +2,18 @@
 //! gets. The order of the engine calls is the rule under test: players go to the lobby, the reset is asked only when
 //! nobody is in a vanilla level, nobody goes to the new overworld before `levels_reset_done`, and players go to its
 //! spawn only once it is known. A refused move is tried again, and a start never reports success with a player unmoved.
-use std::collections::{BTreeSet, VecDeque};
+use std::cell::Cell;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+use horizon_bingo::server::texts;
 use horizon_bingo::server::world_reset::{
-    gate_targets, is_vanilla_dimension, Failure, Outcome, ResetRefusal, StartRefused, State, WorldPort, WorldReset,
-    MAX_RESET_TICKS, MAX_RETRY_TICKS, MAX_SPAWN_TICKS,
+    gate_targets, is_vanilla_dimension, Failure, Mode, Outcome, ResetRefusal, StartRefused, State, WorldPort, WorldReset,
+    MAX_RESET_TICKS, MAX_RETRY_TICKS, MAX_SETTLE_TICKS, MAX_SPAWN_TICKS, STAGING_MODE,
 };
 
 const SEED: u64 = 42;
 const ALICE: u128 = 1;
+const BOB: u128 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Call {
@@ -32,6 +35,12 @@ struct Fake {
     spawn_moves_refused: u32,
     refusals: VecDeque<ResetRefusal>,
     log: Vec<Call>,
+    /// The players online, each with the mode they have now.
+    modes: BTreeMap<u128, Mode>,
+    /// The next mode changes the engine refuses.
+    mode_refusals: u32,
+    /// Checks of the spawn distance that still find a player away from the spawn.
+    away_checks_left: Cell<u32>,
 }
 
 impl Fake {
@@ -45,7 +54,17 @@ impl Fake {
             spawn_moves_refused: 0,
             refusals: VecDeque::new(),
             log: Vec::new(),
+            modes: BTreeMap::from([(ALICE, Mode::Survival)]),
+            mode_refusals: 0,
+            away_checks_left: Cell::new(0),
         }
+    }
+
+    /// Two players online: Alice in `alice`, Bob in `bob`.
+    fn with_two(alice: Mode, bob: Mode) -> Self {
+        let mut port = Self::new();
+        port.modes = BTreeMap::from([(ALICE, alice), (BOB, bob)]);
+        port
     }
 
     fn refusing(refusals: &[ResetRefusal]) -> Self {
@@ -108,6 +127,34 @@ impl WorldPort for Fake {
     fn teleport_all_to_overworld_spawn(&mut self) -> bool {
         self.log.push(Call::TeleportToOverworld);
         take(&mut self.spawn_moves_refused)
+    }
+
+    fn online_players(&self) -> Vec<u128> {
+        self.modes.keys().copied().collect()
+    }
+
+    fn player_mode(&self, player: u128) -> Option<Mode> {
+        self.modes.get(&player).copied()
+    }
+
+    fn set_player_mode(&mut self, player: u128, mode: Mode) -> bool {
+        if self.mode_refusals > 0 {
+            self.mode_refusals -= 1;
+            return false;
+        }
+        match self.modes.get_mut(&player) {
+            Some(current) => {
+                *current = mode;
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn player_away_from_overworld_spawn(&self, _blocks: f64) -> bool {
+        let left = self.away_checks_left.get();
+        self.away_checks_left.set(left.saturating_sub(1));
+        left > 0
     }
 }
 
@@ -464,4 +511,137 @@ fn only_the_three_vanilla_levels_count_as_vanilla() {
     assert!(is_vanilla_dimension("minecraft:the_end"));
     assert!(!is_vanilla_dimension("bingo:lobby"));
     assert!(!is_vanilla_dimension("minecraft:overworld_caves"));
+}
+
+/// A start whose players are in the staging place and whose spawn is not known yet: the flow waits in `AwaitingSpawn`.
+fn waiting_for_spawn(port: &mut Fake) -> WorldReset {
+    port.spawn_known = false;
+    let mut flow = resetting(port);
+    flow.levels_reset_done(port);
+    assert!(matches!(flow.state(), State::AwaitingSpawn { staged: true, .. }));
+    flow
+}
+
+#[test]
+fn players_wait_in_the_staging_mode_and_a_failed_start_gives_each_their_own_mode_back() {
+    let mut port = Fake::with_two(Mode::Adventure, Mode::Spectator);
+    port.spawn_known = false;
+    let mut flow = WorldReset::new();
+    flow.start(&mut port, &mut fixed_seed()).unwrap();
+    flow.tick(&mut port);
+    assert_eq!(port.player_mode(ALICE), Some(Mode::Adventure), "the lobby does not change modes");
+    flow.levels_reset_done(&mut port);
+    assert_eq!(port.player_mode(ALICE), Some(STAGING_MODE));
+    assert_eq!(port.player_mode(BOB), Some(STAGING_MODE));
+
+    // Nobody goes to the spawn: the start gives up, and each player has the mode they had before the staging.
+    for _ in 0..MAX_SPAWN_TICKS {
+        assert_eq!(flow.tick(&mut port), None);
+    }
+    assert_eq!(flow.tick(&mut port), Some(Outcome::Failed(Failure::SpawnTimedOut)));
+    assert_eq!(port.player_mode(ALICE), Some(Mode::Adventure));
+    assert_eq!(port.player_mode(BOB), Some(Mode::Spectator));
+    assert_eq!(port.log.last(), Some(&Call::TeleportToLobby));
+}
+
+#[test]
+fn a_player_is_held_only_once_the_staging_place_has_them() {
+    let mut port = Fake::with_two(Mode::Survival, Mode::Survival);
+    port.staging_moves_refused = 1;
+    let mut flow = resetting(&mut port);
+    flow.levels_reset_done(&mut port);
+    assert_eq!(port.player_mode(ALICE), Some(Mode::Survival), "not staged, so not held");
+
+    // The staging works on the next tick and the spawn is known: the start is done, the players are in the spawn and
+    // still in the staging mode until the game sets its modes (`begin_round`, on the commands of this tick).
+    assert_eq!(flow.tick(&mut port), Some(Outcome::Started));
+    assert_eq!(port.player_mode(ALICE), Some(STAGING_MODE));
+    assert_eq!(flow.state(), State::Running);
+}
+
+#[test]
+fn a_refused_mode_change_is_tried_again_on_the_next_tick() {
+    let mut port = Fake::with_two(Mode::Adventure, Mode::Survival);
+    port.mode_refusals = 2;
+    let mut flow = waiting_for_spawn(&mut port);
+    assert_eq!(port.player_mode(ALICE), Some(Mode::Adventure), "both changes were refused");
+    assert_eq!(port.player_mode(BOB), Some(Mode::Survival));
+
+    assert_eq!(flow.tick(&mut port), None);
+    assert_eq!(port.player_mode(ALICE), Some(STAGING_MODE));
+    assert_eq!(port.player_mode(BOB), Some(STAGING_MODE));
+
+    // Returned to the lobby: each gets the mode from before the staging, not the one a refused change left.
+    assert!(flow.return_to_lobby(&mut port));
+    assert_eq!(port.player_mode(ALICE), Some(Mode::Adventure));
+    assert_eq!(port.player_mode(BOB), Some(Mode::Survival));
+}
+
+#[test]
+fn players_sent_to_the_spawn_are_sent_again_while_they_are_away_and_the_checks_end_once_they_stay() {
+    let mut port = Fake::new();
+    let mut flow = resetting(&mut port);
+    flow.levels_reset_done(&mut port);
+    port.away_checks_left.set(2);
+    assert_eq!(flow.tick(&mut port), Some(Outcome::Started));
+    assert_eq!(port.overworld_teleports(), 1);
+
+    // One tick later the player is still away: sent to the spawn again, and once more on the next tick.
+    assert_eq!(flow.tick(&mut port), None);
+    assert_eq!(port.overworld_teleports(), 2);
+    assert_eq!(flow.tick(&mut port), None);
+    assert_eq!(port.overworld_teleports(), 3);
+
+    // At the spawn: no more moves.
+    for _ in 0..MAX_SETTLE_TICKS {
+        assert_eq!(flow.tick(&mut port), None);
+    }
+    assert_eq!(port.overworld_teleports(), 3);
+    assert_eq!(flow.state(), State::Running);
+}
+
+#[test]
+fn a_player_who_stays_away_is_sent_to_the_spawn_at_most_max_settle_ticks_times() {
+    let mut port = Fake::new();
+    let mut flow = resetting(&mut port);
+    flow.levels_reset_done(&mut port);
+    port.away_checks_left.set(u32::MAX);
+    assert_eq!(flow.tick(&mut port), Some(Outcome::Started));
+    for _ in 0..MAX_SETTLE_TICKS + 10 {
+        assert_eq!(flow.tick(&mut port), None);
+    }
+    assert_eq!(port.overworld_teleports(), 1 + MAX_SETTLE_TICKS as usize);
+    assert_eq!(flow.state(), State::Running);
+}
+
+#[test]
+fn a_failed_start_that_left_a_player_out_of_the_lobby_does_not_say_everyone_is_there() {
+    let mut port = Fake::new();
+    let mut flow = waiting_for_spawn(&mut port);
+    // The player on the death screen cannot be moved back to the lobby.
+    port.lobby_moves_refused = 1;
+    for _ in 0..MAX_SPAWN_TICKS {
+        flow.tick(&mut port);
+    }
+    assert_eq!(flow.tick(&mut port), Some(Outcome::Failed(Failure::SpawnTimedOut)));
+    assert!(flow.lobby_missed());
+
+    let line = texts::start_failed(!flow.lobby_missed());
+    assert_eq!(line.key, "bingo.native.start_failed_some_not_moved");
+    assert!(!line.render().contains("Everyone"), "the line {:?} claims everyone is there", line.render());
+}
+
+#[test]
+fn a_failed_start_that_moved_everyone_to_the_lobby_says_everyone_is_there() {
+    let mut port = Fake::new();
+    let mut flow = waiting_for_spawn(&mut port);
+    for _ in 0..MAX_SPAWN_TICKS {
+        flow.tick(&mut port);
+    }
+    assert_eq!(flow.tick(&mut port), Some(Outcome::Failed(Failure::SpawnTimedOut)));
+    assert!(!flow.lobby_missed());
+
+    let line = texts::start_failed(!flow.lobby_missed());
+    assert_eq!(line.key, "bingo.native.start_failed");
+    assert!(line.render().contains("Everyone is back in the lobby."));
 }

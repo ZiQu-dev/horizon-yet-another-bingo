@@ -16,9 +16,9 @@ use horizon_bingo::server::session::{Session, SessionOptions};
 use horizon_bingo::server::sidebar::Shown;
 use horizon_bingo::server::texts::Line;
 use horizon_bingo::server::types::Player;
-use horizon_bingo::server::world_reset::{self, ResetRefusal, WorldPort};
+use horizon_bingo::server::world_reset::{self, Mode, ResetRefusal, WorldPort};
 use mod_api::{
-    ConfigFileError, ConfigPath, Flow, Identifier, ItemKey, ItemStack, LevelResetError, MenuReplace, PayloadBytes,
+    ConfigFileError, ConfigPath, Flow, GameMode, Identifier, ItemKey, ItemStack, LevelResetError, MenuReplace, PayloadBytes,
     PayloadId, RuntimeGenerator, RuntimeLevel, RuntimeLevelError, ServerTickPhase, StatType, Tag, Text,
 };
 use std::{
@@ -594,6 +594,61 @@ impl WorldPort for ServerAdapter<'_> {
         };
         teleport_all(&mut *self.host, OVERWORLD, pos, Some(rotation))
     }
+
+    fn online_players(&self) -> Vec<u128> {
+        let host: &dyn mod_api::ServerHost = &*self.host;
+        host.players().server_players().into_iter().map(|player| player.uuid()).collect()
+    }
+
+    fn player_mode(&self, player: u128) -> Option<Mode> {
+        let host: &dyn mod_api::ServerHost = &*self.host;
+        let player = host.player(player)?;
+        host.player_game_mode(player).map(mode_from_game_mode)
+    }
+
+    fn set_player_mode(&mut self, player: u128, mode: Mode) -> bool {
+        let Some(player) = self.host.player(player) else {
+            return false;
+        };
+        self.host.player_set_game_mode(player, game_mode_of(mode))
+    }
+
+    fn player_away_from_overworld_spawn(&self, blocks: f64) -> bool {
+        let host: &dyn mod_api::ServerHost = &*self.host;
+        let Some((spawn, _)) = overworld_spawn(host) else {
+            return false;
+        };
+        host.players().server_players().into_iter().any(|player| {
+            let in_overworld = player.dimension(host).is_some_and(|dimension| dimension.to_string() == OVERWORLD);
+            let far = host.entity_position(player.entity()).is_some_and(|pos| distance(pos, spawn) > blocks);
+            !in_overworld || far
+        })
+    }
+}
+
+/// The distance between two points, in blocks.
+fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
+    ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+}
+
+/// The flow's mode as the engine's game mode.
+fn game_mode_of(mode: Mode) -> GameMode {
+    match mode {
+        Mode::Survival => GameMode::Survival,
+        Mode::Creative => GameMode::Creative,
+        Mode::Adventure => GameMode::Adventure,
+        Mode::Spectator => GameMode::Spectator,
+    }
+}
+
+/// The engine's game mode as the flow's mode.
+fn mode_from_game_mode(mode: GameMode) -> Mode {
+    match mode {
+        GameMode::Survival => Mode::Survival,
+        GameMode::Creative => Mode::Creative,
+        GameMode::Adventure => Mode::Adventure,
+        GameMode::Spectator => Mode::Spectator,
+    }
 }
 
 /// The new overworld's spawn as the players are sent to it: the centre of the spawn block, and the way they face. None
@@ -611,7 +666,7 @@ fn teleport_all(host: &mut dyn mod_api::ServerHost, dimension: &str, pos: [f64; 
     let players = host.players().server_players();
     let mut all_moved = true;
     for player in players {
-        if !player.entity().teleport_to_level(&mut *host, dimension, pos, rotation) {
+        if !move_player(host, player, dimension, pos, rotation) {
             log(&format!("bingo: a player was not sent to {dimension}"));
             all_moved = false;
         }
@@ -625,6 +680,23 @@ fn teleport_one(host: &mut dyn mod_api::ServerHost, uuid: u128, dimension: &str,
     let Some(player) = host.player(uuid) else {
         return false;
     };
+    move_player(host, player, dimension, pos, rotation)
+}
+
+/// Moves one player to `dimension`. A dead player (on the death screen) cannot be moved, so they are respawned first, as
+/// their Respawn button does; the respawn is refused while a player's own hook runs, and then the move is not made here
+/// and the caller tries again on a later tick. False when the respawn or the move is refused.
+fn move_player(
+    host: &mut dyn mod_api::ServerHost,
+    player: mod_api::PlayerRef,
+    dimension: &str,
+    pos: [f64; 3],
+    rotation: Option<[f32; 2]>,
+) -> bool {
+    let alive = host.living_alive(player.entity().living()).unwrap_or(true);
+    if !alive && host.player_respawn(player).is_err() {
+        return false;
+    }
     player.entity().teleport_to_level(&mut *host, dimension, pos, rotation)
 }
 

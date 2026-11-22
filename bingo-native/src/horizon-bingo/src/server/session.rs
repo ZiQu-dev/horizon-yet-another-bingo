@@ -1044,7 +1044,7 @@ impl Session {
             }
             Outcome::Failed(failure) => {
                 host.warn(&format!("bingo: the game did not start: {failure:?}"));
-                host.broadcast_line(&texts::start_failed());
+                host.broadcast_line(&texts::start_failed(!self.world.lobby_missed()));
             }
         }
     }

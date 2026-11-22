@@ -278,9 +278,18 @@ pub fn lobby_not_open() -> Line {
     Line::new("bingo.native.lobby_not_open", "The lobby is not open yet, so the game cannot start.", &[])
 }
 
-/// The worlds could not be reset for the game, so it did not start; everyone is back in the lobby.
-pub fn start_failed() -> Line {
-    Line::new("bingo.native.start_failed", "The game did not start: the worlds could not be reset. Everyone is back in the lobby.", &[])
+/// The game did not start. `all_in_lobby` says whether every player was sent back to the lobby: when one was not (a dead
+/// player on the death screen, say), the line does not claim that everyone is there.
+pub fn start_failed(all_in_lobby: bool) -> Line {
+    if all_in_lobby {
+        Line::new("bingo.native.start_failed", "The game did not start: the worlds could not be reset. Everyone is back in the lobby.", &[])
+    } else {
+        Line::new(
+            "bingo.native.start_failed_some_not_moved",
+            "The game did not start: the worlds could not be reset. Some players could not be sent back to the lobby yet; they are not in it.",
+            &[],
+        )
+    }
 }
 
 /// `Game duration: %s`.

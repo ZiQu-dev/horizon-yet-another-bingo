@@ -8,11 +8,31 @@
 //! place in it (`AwaitingSpawn`) and go to the spawn once the world has chosen one. A move the engine refuses is tried
 //! again on the next ticks; the start gives up after a bounded time, and it never reports `Started` while a player was
 //! not moved.
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Ticks a reset waits, after the first attempt, for players to leave the vanilla levels or for a busy engine, and for
 /// a refused move to the lobby to succeed. At 20 server ticks per second this is 5 seconds.
 pub const MAX_RETRY_TICKS: u32 = 100;
+
+/// Ticks after a start, the players are checked against the spawn they were sent to, and sent back when they are farther
+/// than [`SPAWN_SETTLE_DISTANCE`]. At 20 server ticks per second this is 2 seconds.
+pub const MAX_SETTLE_TICKS: u32 = 40;
+
+/// How far, in blocks, a player may be from the new spawn once the start has sent them there.
+pub const SPAWN_SETTLE_DISTANCE: f64 = 4.0;
+
+/// A player's game mode, as the flow decides it. The adapter maps it to the engine's game mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Survival,
+    Creative,
+    Adventure,
+    Spectator,
+}
+
+/// The mode the players wait in while they are in the staging place of the new overworld. A spectator takes no damage and
+/// does not fall, so the wait for the spawn is safe at any height.
+pub const STAGING_MODE: Mode = Mode::Spectator;
 
 /// Ticks a reset may take with the engine, from the tick that asked for it, before the start is given up. The engine
 /// fires no event when a reset fails, so this is the only way the flow learns of it. At 20 server ticks per second this
@@ -73,6 +93,15 @@ pub trait WorldPort {
     fn overworld_spawn_known(&self) -> bool;
     /// Sends every player to the spawn of the new overworld. False, with the spawn not known, when nobody is moved.
     fn teleport_all_to_overworld_spawn(&mut self) -> bool;
+    /// The players online right now.
+    fn online_players(&self) -> Vec<u128>;
+    /// A player's game mode now, or None when they are not online.
+    fn player_mode(&self, player: u128) -> Option<Mode>;
+    /// Sets a player's game mode. False when the engine refuses, or the player is not online.
+    fn set_player_mode(&mut self, player: u128, mode: Mode) -> bool;
+    /// Whether an online player is more than `blocks` from the spawn of the new overworld, or is not in the overworld at
+    /// all. False while the spawn is not known.
+    fn player_away_from_overworld_spawn(&self, blocks: f64) -> bool;
 }
 
 /// Where the reset seed comes from. Tests pass a fixed value; the server passes a random one. A closure works too.
@@ -129,11 +158,18 @@ pub enum State {
     Running,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WorldReset {
     state: State,
     /// Ticks since the reset was asked for, while it is with the engine.
     reset_ticks: u32,
+    /// The players the flow put in [`STAGING_MODE`], with the mode each had before. Restored when the start gives up; a
+    /// started game sets its own modes (`begin_round`).
+    held_modes: BTreeMap<u128, Mode>,
+    /// Checks left after a start, see [`WorldReset::tick_settle`].
+    settle_ticks: u32,
+    /// Whether the last move to the lobby missed a player, who then stays where they are (a dead player, say).
+    lobby_missed: bool,
 }
 
 impl WorldReset {
@@ -143,6 +179,11 @@ impl WorldReset {
 
     pub fn state(&self) -> State {
         self.state
+    }
+
+    /// Whether the last return to the lobby (a failed start, or the end of a game) left a player out of it.
+    pub fn lobby_missed(&self) -> bool {
+        self.lobby_missed
     }
 
     /// Starts a game from the lobby: draws the seed and sends everyone to the lobby. The reset itself is requested by
@@ -173,7 +214,11 @@ impl WorldReset {
             }
             State::WaitingForPlayersOut { seed, retries, gathered } => self.tick_gathering(port, seed, retries, gathered),
             State::AwaitingSpawn { waits, staged } => self.tick_spawn(port, waits, staged),
-            State::LobbyOnly | State::Running => None,
+            State::Running => {
+                self.tick_settle(port);
+                None
+            }
+            State::LobbyOnly => None,
         }
     }
 
@@ -208,8 +253,14 @@ impl WorldReset {
             return Some(self.fail(port, Failure::SpawnTimedOut));
         }
         let staged = staged || port.teleport_all_to_staging();
+        if staged {
+            self.hold_players(port);
+        }
         if staged && port.overworld_spawn_known() && port.teleport_all_to_overworld_spawn() {
+            // The players keep the staging mode until `begin_round` gives them the game's modes, on this tick's commands.
+            self.held_modes.clear();
             self.state = State::Running;
+            self.settle_ticks = MAX_SETTLE_TICKS;
             return Some(Outcome::Started);
         }
         self.state = State::AwaitingSpawn { waits, staged };
@@ -223,6 +274,9 @@ impl WorldReset {
             return;
         }
         let staged = port.teleport_all_to_staging();
+        if staged {
+            self.hold_players(port);
+        }
         self.state = State::AwaitingSpawn { waits: 0, staged };
     }
 
@@ -233,16 +287,60 @@ impl WorldReset {
         if self.state == State::LobbyOnly {
             return false;
         }
-        port.teleport_all_to_lobby();
+        self.lobby_missed = !port.teleport_all_to_lobby();
+        self.release_players(port);
         self.state = State::LobbyOnly;
         self.reset_ticks = 0;
+        self.settle_ticks = 0;
         true
     }
 
     fn fail(&mut self, port: &mut dyn WorldPort, failure: Failure) -> Outcome {
         self.state = State::LobbyOnly;
         self.reset_ticks = 0;
-        port.teleport_all_to_lobby();
+        self.settle_ticks = 0;
+        self.lobby_missed = !port.teleport_all_to_lobby();
+        self.release_players(port);
         Outcome::Failed(failure)
+    }
+
+    /// Puts every online player into [`STAGING_MODE`], each remembering the mode they had. A player already held is left
+    /// alone; one whose change the engine refuses is tried again on the next tick, so no player is left unheld by a
+    /// refusal.
+    fn hold_players(&mut self, port: &mut dyn WorldPort) {
+        for player in port.online_players() {
+            if self.held_modes.contains_key(&player) {
+                continue;
+            }
+            let Some(previous) = port.player_mode(player) else {
+                continue;
+            };
+            if previous != STAGING_MODE && !port.set_player_mode(player, STAGING_MODE) {
+                continue;
+            }
+            self.held_modes.insert(player, previous);
+        }
+    }
+
+    /// Gives every held player back the mode they had before the staging.
+    fn release_players(&mut self, port: &mut dyn WorldPort) {
+        for (player, mode) in std::mem::take(&mut self.held_modes) {
+            port.set_player_mode(player, mode);
+        }
+    }
+
+    /// The first ticks after a start: a player still farther than [`SPAWN_SETTLE_DISTANCE`] from the spawn (a fall, a push,
+    /// or a move the engine made after the teleport) is sent to the spawn again. At most [`MAX_SETTLE_TICKS`] such moves
+    /// are made, and the check ends as soon as everyone is at the spawn.
+    fn tick_settle(&mut self, port: &mut dyn WorldPort) {
+        if self.settle_ticks == 0 {
+            return;
+        }
+        if !port.player_away_from_overworld_spawn(SPAWN_SETTLE_DISTANCE) {
+            self.settle_ticks = 0;
+            return;
+        }
+        port.teleport_all_to_overworld_spawn();
+        self.settle_ticks -= 1;
     }
 }
