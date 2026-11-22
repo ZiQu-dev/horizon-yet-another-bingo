@@ -268,6 +268,21 @@ pub fn stopped_reason() -> Line {
     Line::new("bingo.native.game_stopped", "Game stopped.", &[])
 }
 
+/// A start was asked while the game is already being started (the players are being moved and the worlds reset).
+pub fn already_starting() -> Line {
+    Line::new("bingo.native.already_starting", "The game is already starting.", &[])
+}
+
+/// A start was asked before the lobby world is open.
+pub fn lobby_not_open() -> Line {
+    Line::new("bingo.native.lobby_not_open", "The lobby is not open yet, so the game cannot start.", &[])
+}
+
+/// The worlds could not be reset for the game, so it did not start; everyone is back in the lobby.
+pub fn start_failed() -> Line {
+    Line::new("bingo.native.start_failed", "The game did not start: the worlds could not be reset. Everyone is back in the lobby.", &[])
+}
+
 /// `Game duration: %s`.
 pub fn game_duration(clock: &str) -> Line {
     Line::new("bingo.game.end.duration", "Game duration: %s", &[clock])

@@ -2,6 +2,7 @@
 use super::map_render::DirtyRect;
 use super::texts::Line;
 use super::types::Player;
+use super::world_reset::WorldPort;
 
 pub trait ServerHost {
     /// Send a plugin message on `yet-another-minecraft-bingo:<path>` to one player. `path` is the channel path only.
@@ -106,5 +107,10 @@ pub trait ServerHost {
     /// `block.<ns>.<path>` for an item that is a block. The default is the item key.
     fn item_name_key(&self, item: &str) -> String {
         format!("item.{}", item.replacen(':', ".", 1))
+    }
+    /// The world's control for the lobby flow (the lobby level, the vanilla reset, the players' moves). `None` when the
+    /// host has none: a game then starts at once, without the lobby. The default is `None`.
+    fn world_port(&mut self) -> Option<&mut dyn WorldPort> {
+        None
     }
 }

@@ -17,6 +17,7 @@ use super::kit::{self, KitCommand};
 use super::map_items::{self, Flashes, MapItems, SquareState, Want, FILLED_MAP, MAP_IDS_FILE, PREVIEW_KEY};
 use super::map_render::{CardView, IconSource, Overlays};
 use super::texts::{self, Line};
+use super::world_reset::{self, Outcome, WorldPort, WorldReset};
 use super::multicard::{
     complete_card, finish_card_on_goal, reroll_card, round_ends, settle_pending, stalemate_action, stalemate_reason,
     team_score, CardCompletion, CardState, Completion, CompletionOutcome, EndCause, Rules, StalemateAction,
@@ -106,6 +107,8 @@ pub struct Session {
     rng: Rng,
     teams: Teams,
     ready: ReadyTimer,
+    /// The lobby flow of a start: the players out of the vanilla worlds, the reset, and the players into the new game.
+    world: WorldReset,
     /// The cards of the round, in the order they were made. The first is made when play begins; the others are made as
     /// teams need them (`multicard`). A one-card round has one entry, and every team plays it.
     cards: Vec<Card>,
@@ -226,6 +229,7 @@ impl Session {
             rng: Rng::new(seed),
             teams: Teams::new(),
             ready: ReadyTimer::new(options.ready),
+            world: WorldReset::new(),
             cards: Vec::new(),
             card_started: Vec::new(),
             team_card: BTreeMap::new(),
@@ -764,6 +768,9 @@ impl Session {
     fn end_game(&mut self, host: &mut dyn ServerHost, winner: Option<String>) {
         if let Ok(events) = self.game.end(winner) {
             self.dispatch(host, events);
+            if let Some(port) = host.world_port() {
+                self.world.return_to_lobby(port);
+            }
         }
     }
 
@@ -957,8 +964,55 @@ impl Session {
     /// One server tick. Before play, the ready timer runs and starts the game when it ends. Otherwise the game moves
     /// on, and its events go to everyone.
     pub fn tick(&mut self, host: &mut dyn ServerHost) {
+        self.tick_world(host);
         self.tick_game(host);
         self.tick_night_vision(host);
+    }
+
+    /// The engine's `levels_reset` hook: the vanilla worlds are new, so the players go into the new overworld and the
+    /// game begins. Ignored unless a start is waiting for the reset.
+    pub fn levels_reset(&mut self, host: &mut dyn ServerHost) {
+        let outcome = match host.world_port() {
+            Some(port) => self.world.levels_reset_done(port),
+            None => None,
+        };
+        if let Some(outcome) = outcome {
+            self.world_outcome(host, outcome);
+        }
+    }
+
+    /// Whether the lobby flow is bringing the players out and resetting the worlds for a start.
+    fn starting(&self) -> bool {
+        matches!(
+            self.world.state(),
+            world_reset::State::WaitingForPlayersOut { .. } | world_reset::State::Resetting
+        )
+    }
+
+    /// The lobby flow's part of a tick: a reset that does not come in time ends the start.
+    fn tick_world(&mut self, host: &mut dyn ServerHost) {
+        let outcome = match host.world_port() {
+            Some(port) => self.world.tick(port),
+            None => None,
+        };
+        if let Some(outcome) = outcome {
+            self.world_outcome(host, outcome);
+        }
+    }
+
+    /// What the lobby flow ended with: the game begins, or the start gave up and the players are in the lobby.
+    fn world_outcome(&mut self, host: &mut dyn ServerHost, outcome: Outcome) {
+        match outcome {
+            Outcome::Started => {
+                if let Err(error) = self.begin_game(host) {
+                    host.warn(&error);
+                }
+            }
+            Outcome::Failed(failure) => {
+                host.warn(&format!("bingo: the game did not start: {failure:?}"));
+                host.broadcast_line(&texts::start_failed());
+            }
+        }
     }
 
     /// The game's part of a tick: the lobby, the game's own tick and its events.
@@ -982,7 +1036,9 @@ impl Session {
             }
         }
         if self.game.status() == GameStatus::Pregame {
-            self.tick_lobby(host);
+            if !self.starting() {
+                self.tick_lobby(host);
+            }
             self.tick_maps(host);
             return;
         }
@@ -1384,7 +1440,12 @@ impl Session {
 
     /// Checks the start rules and, if they hold, sets up the teams and the server's team list, then starts the countdown.
     /// The teams change only when the start goes ahead.
+    /// Where the host has the lobby flow, the start waits for it (`start_from_lobby`): the game begins with `begin_game`
+    /// once the players are in the new overworld.
     fn start_game(&mut self, host: &mut dyn ServerHost, ignore_warnings: bool) -> Result<(), String> {
+        if self.starting() {
+            return Err(self.say(texts::already_starting()));
+        }
         if self.game.status() != GameStatus::Pregame {
             return Err(format!("The game is not in Pregame ({:?}).", self.game.status()));
         }
@@ -1400,8 +1461,33 @@ impl Session {
         }
         self.teams = teams;
         self.ready.clear();
+        match host.world_port() {
+            None => self.begin_game(host),
+            Some(port) => {
+                let seed = self.rng.next_u64();
+                self.start_from_lobby(port, seed)
+            }
+        }
+    }
+
+    /// Asks the lobby flow for the start: the players go to the lobby, and the vanilla worlds reset with `seed` once
+    /// nobody is in them. The game begins later, on `levels_reset`.
+    fn start_from_lobby(&mut self, port: &mut dyn WorldPort, seed: u64) -> Result<(), String> {
+        // A game that ended without its end (`bingo end`, a reset) may still have its players in the new overworld.
+        self.world.return_to_lobby(port);
+        match self.world.start(port, &mut || seed) {
+            Ok(()) => Ok(()),
+            Err(world_reset::StartRefused::LobbyClosed) => Err(self.say(texts::lobby_not_open())),
+            Err(world_reset::StartRefused::AlreadyStarted) => Err(self.say(texts::already_starting())),
+        }
+    }
+
+    /// The game's own start: the gamerules, the teams on the server and the game itself. Runs at once, or once the
+    /// lobby flow has the players in the new overworld.
+    fn begin_game(&mut self, host: &mut dyn ServerHost) -> Result<(), String> {
         host.command(&format!("gamerule pvp {}", self.rules.pvp));
         host.command(&format!("gamerule keep_inventory {}", self.rules.keep_inventory));
+        let players = host.players();
         self.add_teams_to_server(host, &players);
         let events = self.game.start().map_err(str::to_owned)?;
         self.dispatch(host, events);

@@ -14,7 +14,7 @@ use mod_api::{
     RegisterCommandsEvent, Registrar, RegistrationContext, RunModCommandEvent, ScreenKeyPressedPreEvent,
     ScreenMouseButtonPressedPreEvent, ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent,
     ScreenMouseScrolledPreEvent, ScreenRenderPostEvent, ServerAboutToStartEvent, ServerChatEvent, ServerHost, ServerTickEvent,
-    EntityRef, HudMode, Identifier, ItemKey, SoundPlay, Text,
+    EntityRef, HudMode, Identifier, ItemKey, LevelsResetEvent, SoundPlay, Text,
 };
 use std::{
     collections::HashMap,
@@ -832,6 +832,11 @@ impl Hooks for Mod {
 
     fn server_about_to_start(&self, _host: &mut dyn ServerHost, _event: &mut ServerAboutToStartEvent) {
         server::server_about_to_start();
+    }
+
+    /// The vanilla worlds were reset for a game: the lobby flow puts the players into the new overworld and begins.
+    fn levels_reset(&self, host: &mut dyn ServerHost, _event: &mut LevelsResetEvent) {
+        server::levels_reset(host);
     }
 
     fn menu_clicked(&self, host: &mut dyn ServerHost, event: &mut MenuClickedEvent) {

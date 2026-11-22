@@ -15,14 +15,18 @@ use horizon_bingo::server::session::{Session, SessionOptions};
 use horizon_bingo::server::sidebar::Shown;
 use horizon_bingo::server::texts::Line;
 use horizon_bingo::server::types::Player;
+use horizon_bingo::server::world_reset::{self, ResetRefusal, WorldPort};
 use mod_api::{
-    ConfigFileError, ConfigPath, Flow, Identifier, ItemKey, ItemStack, MenuReplace, PayloadBytes,
-    PayloadId, ServerTickPhase, StatType, Tag, Text,
+    ConfigFileError, ConfigPath, Flow, Identifier, ItemKey, ItemStack, LevelResetError, MenuReplace, PayloadBytes,
+    PayloadId, RuntimeGenerator, RuntimeLevel, RuntimeLevelError, ServerTickPhase, StatType, Tag, Text,
 };
 use std::{
     collections::{BTreeSet, HashMap},
     path::PathBuf,
-    sync::{Mutex, OnceLock, PoisonError},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex, OnceLock, PoisonError,
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -111,6 +115,13 @@ const COMMAND_QUEUE_MAX: usize = 256;
 
 /// The one session of this server. Made on the first server hook.
 static SESSION: Mutex<Option<Session>> = Mutex::new(None);
+/// The lobby world's runtime level: the mod opens it under this id, and its saved folder is `dimensions/bingo/lobby`.
+const LOBBY_LEVEL: &str = "bingo:lobby";
+/// Where the lobby's spawn is, and how the players face there (the original's lobby).
+const LOBBY_SPAWN: [f64; 3] = [0.5, 17.0, 1.5];
+const LOBBY_ROTATION: [f32; 2] = [-180.0, 0.0];
+/// Whether the lobby level is still to be opened: set when a server starts, cleared once the engine has the request.
+static LOBBY_TO_OPEN: AtomicBool = AtomicBool::new(false);
 /// Votes typed in chat (`vote lobby` and the rest) during Postgame, with the player who typed each. The chat hook has no
 /// host and a vote needs one, so they run on the next server tick, in order.
 static CHAT_VOTES: Mutex<Vec<(u128, Command)>> = Mutex::new(Vec::new());
@@ -192,6 +203,7 @@ fn with_session<T>(f: impl FnOnce(&mut Session) -> T) -> T {
 /// A new server (a world opens): the old game and its players belong to the previous world.
 pub fn server_about_to_start() {
     *SESSION.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    LOBBY_TO_OPEN.store(true, Ordering::Relaxed);
     CHAT_VOTES
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
@@ -311,6 +323,10 @@ impl ServerHost for ServerAdapter<'_> {
                 "bingo: console command `{line}` dropped, the queue is full"
             ));
         }
+    }
+
+    fn world_port(&mut self) -> Option<&mut dyn WorldPort> {
+        Some(self)
     }
 
     fn stat_value(&self, player: u128, stat_type: &str, stat_name: Option<&str>) -> Option<i64> {
@@ -514,6 +530,87 @@ impl ServerHost for ServerAdapter<'_> {
     }
 }
 
+/// The lobby flow's reads and moves through the mod API: the lobby level, the vanilla reset and the players.
+impl WorldPort for ServerAdapter<'_> {
+    fn lobby_is_open(&mut self) -> bool {
+        self.host.runtime_levels().is_open(LOBBY_LEVEL)
+    }
+
+    fn players_in_vanilla(&self) -> bool {
+        let host: &dyn mod_api::ServerHost = &*self.host;
+        host.players().server_players().into_iter().any(|player| {
+            host.players()
+                .player_dimension(player)
+                .is_some_and(|dimension| world_reset::is_vanilla_dimension(&dimension.to_string()))
+        })
+    }
+
+    fn reset_vanilla(&mut self, seed: u64) -> Result<(), ResetRefusal> {
+        self.host
+            .runtime_levels()
+            .reset_vanilla(seed as i64)
+            .map_err(|error| match error {
+                LevelResetError::NotPermitted => ResetRefusal::NotPermitted,
+                LevelResetError::PlayersInside => ResetRefusal::PlayersInside,
+                LevelResetError::NoHoldingLevel => ResetRefusal::NoHoldingLevel,
+                LevelResetError::Busy => ResetRefusal::Busy,
+                // Unavailable, and any refusal a later engine adds: the start gives up.
+                _ => ResetRefusal::Unavailable,
+            })
+    }
+
+    fn teleport_all_to_lobby(&mut self) {
+        teleport_all(&mut *self.host, LOBBY_LEVEL, LOBBY_SPAWN, LOBBY_ROTATION);
+    }
+
+    fn teleport_all_to_overworld_spawn(&mut self) {
+        let Some(level) = self.host.level("minecraft:overworld") else {
+            log("bingo: the overworld is not loaded, the players were not sent to its spawn");
+            return;
+        };
+        let Some(spawn) = self.host.levels().level_respawn_data(level) else {
+            log("bingo: the world spawn is not known, the players were not sent to it");
+            return;
+        };
+        let pos = [f64::from(spawn.pos[0]) + 0.5, f64::from(spawn.pos[1]), f64::from(spawn.pos[2]) + 0.5];
+        teleport_all(&mut *self.host, "minecraft:overworld", pos, [spawn.yaw, spawn.pitch]);
+    }
+}
+
+/// Sends every online player to `dimension` at `pos`, facing `rotation`. A move the engine refuses is logged.
+fn teleport_all(host: &mut dyn mod_api::ServerHost, dimension: &str, pos: [f64; 3], rotation: [f32; 2]) {
+    let players = host.players().server_players();
+    for player in players {
+        if !player.entity().teleport_to_level(&mut *host, dimension, pos, Some(rotation)) {
+            log(&format!("bingo: a player was not sent to {dimension}"));
+        }
+    }
+}
+
+/// Asks the engine for the lobby level once per server start. A request the engine refuses for now (no world yet) is
+/// asked again on the next tick; `AlreadyOpen` means the level is there.
+fn open_lobby(host: &mut dyn mod_api::ServerHost) {
+    if !LOBBY_TO_OPEN.load(Ordering::Relaxed) {
+        return;
+    }
+    let level = RuntimeLevel::new("minecraft:overworld", RuntimeGenerator::Void, 0);
+    match host.runtime_levels().open(LOBBY_LEVEL, level) {
+        Err(RuntimeLevelError::Unavailable) => {}
+        Ok(_) | Err(RuntimeLevelError::AlreadyOpen) => LOBBY_TO_OPEN.store(false, Ordering::Relaxed),
+        Err(error) => {
+            LOBBY_TO_OPEN.store(false, Ordering::Relaxed);
+            log(&format!("bingo: the lobby level was not opened: {error:?}"));
+        }
+    }
+}
+
+/// The engine's `levels_reset` hook: the vanilla worlds are new, so the lobby flow's start can finish.
+pub fn levels_reset(host: &mut dyn mod_api::ServerHost) {
+    guarded("levels reset", || {
+        with_session(|s| s.levels_reset(&mut ServerAdapter { host: &mut *host }))
+    });
+}
+
 /// Whether a stack carries custom data with the key `tag` (the mod's own item tags, such as the tutorial book's).
 fn carries_tag(stack: &ItemStack, tag: &str) -> bool {
     let Some(components) = stack.components() else {
@@ -661,6 +758,7 @@ pub fn server_tick(host: &mut dyn mod_api::ServerHost, phase: ServerTickPhase) {
     if !matches!(phase, ServerTickPhase::ServerTickStart { .. }) {
         return;
     }
+    open_lobby(&mut *host);
     // The item names are read on the first tick, so a missing file is reported when the server starts.
     let _ = item_ids(&*host);
     // Once per process: the first tick installs the pool, later sessions take it in `new_session`.
