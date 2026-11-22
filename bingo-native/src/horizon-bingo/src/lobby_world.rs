@@ -20,8 +20,11 @@ const LOBBY_DIMENSION_IN_DATAPACK: &str = "data/bingo/dimension/lobby.json";
 pub enum Install {
     /// `saves/<folder>` was made from the template.
     Created,
-    /// `saves/<folder>` is there already (a save of any kind, or a file): nothing is touched.
+    /// `saves/<folder>` is there already and needs nothing: nothing is touched.
     Exists,
+    /// `saves/<folder>` is there already from before the lobby became a runtime level: its datapack's lobby dimension
+    /// file (`LOBBY_DIMENSION_IN_SAVE`) was removed, and nothing else in the save was changed.
+    Repaired,
     /// The template is not there (assets prepared without the original's jar's lobby): nothing is made.
     NoTemplate,
 }
@@ -47,14 +50,15 @@ pub struct WorldParts {
 
 /// Copies the template folder `template` to `saves/<folder>` unless that exists. The copy is made beside it under a
 /// temporary name and renamed, so a game never sees half a save. Links in the template are refused, the session lock
-/// is not copied, and a bad folder name is an error.
+/// is not copied, and a bad folder name is an error. A save that exists is left alone, except that its lobby dimension
+/// file is removed when it has one (`repair_save`).
 pub fn install(template: &Path, saves: &Path, folder: &str) -> Result<Install, String> {
     if !lobby_folder_ok(folder) {
         return Err(format!("{folder:?} is not a plain folder name"));
     }
     let target = saves.join(folder);
     if fs::symlink_metadata(&target).is_ok() {
-        return Ok(Install::Exists);
+        return repair_save(&target);
     }
     if !template.join("level.dat").is_file() {
         return Ok(Install::NoTemplate);
@@ -77,6 +81,39 @@ pub fn install_into_world(template: &Path, world: &Path) -> Result<WorldParts, S
 
 /// The lobby's dimension file relative to a save (its datapack's file).
 const LOBBY_DIMENSION_IN_SAVE: &str = "datapacks/bingo/data/bingo/dimension/lobby.json";
+
+/// Removes the lobby's dimension file from the save `save`, when it has one. Only that file is removed: each folder on
+/// its way is checked as it is, and a link on the way or the file itself is refused with an error, never followed. A
+/// save that is not a folder, or lacks a folder on the way or the file, is `Exists` and untouched.
+fn repair_save(save: &Path) -> Result<Install, String> {
+    match fs::symlink_metadata(save) {
+        Ok(meta) if meta.is_dir() => {}
+        _ => return Ok(Install::Exists),
+    }
+    let parts: Vec<&str> = LOBBY_DIMENSION_IN_SAVE.split('/').collect();
+    let mut at = save.to_path_buf();
+    for (index, part) in parts.iter().enumerate() {
+        at.push(part);
+        let meta = match fs::symlink_metadata(&at) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Install::Exists),
+            Err(e) => return Err(format!("{}: {e}", at.display())),
+        };
+        if meta.file_type().is_symlink() {
+            return Err(format!("{}: a link in a save; it is not followed", at.display()));
+        }
+        let last = index + 1 == parts.len();
+        if last {
+            if !meta.is_file() {
+                return Ok(Install::Exists);
+            }
+        } else if !meta.is_dir() {
+            return Ok(Install::Exists);
+        }
+    }
+    remove_file_if_present(&at)?;
+    Ok(Install::Repaired)
+}
 
 /// Copies the folder `from` to `to` when `to` does not exist. The copy is made beside `to` under a temporary name, `after`
 /// may change it (the copy only, never `from`), and then it is renamed to `to`, so nothing sees half a copy. A `from`

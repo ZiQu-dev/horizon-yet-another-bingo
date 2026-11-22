@@ -174,3 +174,105 @@ fn a_linked_template_part_is_refused_and_leaves_no_copy() {
     }
     fs::remove_dir_all(&root).unwrap();
 }
+
+/// A save made before the lobby became a runtime level: its datapack still has the lobby dimension file.
+fn old_save(saves: &PathBuf, folder: &str) -> PathBuf {
+    let save = saves.join(folder);
+    fs::create_dir_all(save.join("dimensions/bingo/lobby/region")).unwrap();
+    fs::write(save.join("dimensions/bingo/lobby/region/r.0.0.mca"), b"played").unwrap();
+    fs::write(save.join("level.dat"), b"played level").unwrap();
+    let datapack = save.join("datapacks/bingo");
+    for file in ["data/bingo/dimension/lobby.json", "data/bingo/dimension_type/lobby.json", "pack.mcmeta"] {
+        fs::create_dir_all(datapack.join(file).parent().unwrap()).unwrap();
+        fs::write(datapack.join(file), format!("content of {file}")).unwrap();
+    }
+    save
+}
+
+#[test]
+fn an_old_save_loses_its_lobby_dimension_file_and_nothing_else() {
+    let root = scratch("repair");
+    let t = lobby_template(&root);
+    let saves = root.join("saves");
+    fs::create_dir_all(&saves).unwrap();
+    let save = old_save(&saves, "bingo");
+    let datapack = save.join("datapacks/bingo");
+
+    assert_eq!(install(&t, &saves, "bingo"), Ok(Install::Repaired));
+    assert!(!datapack.join("data/bingo/dimension/lobby.json").exists(), "the lobby dimension file is gone");
+    assert_eq!(fs::read(save.join("level.dat")).unwrap(), b"played level", "the player's world is kept");
+    assert_eq!(fs::read(save.join("dimensions/bingo/lobby/region/r.0.0.mca")).unwrap(), b"played", "the lobby's chunks are kept");
+    assert_eq!(fs::read_to_string(datapack.join("data/bingo/dimension_type/lobby.json")).unwrap(), "content of data/bingo/dimension_type/lobby.json");
+    assert_eq!(fs::read_to_string(datapack.join("pack.mcmeta")).unwrap(), "content of pack.mcmeta");
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn repairing_a_save_twice_changes_nothing_the_second_time() {
+    let root = scratch("repair-again");
+    let t = lobby_template(&root);
+    let saves = root.join("saves");
+    fs::create_dir_all(&saves).unwrap();
+    let save = old_save(&saves, "bingo");
+    assert_eq!(install(&t, &saves, "bingo"), Ok(Install::Repaired));
+    fs::write(save.join("level.dat"), b"after a game").unwrap();
+
+    assert_eq!(install(&t, &saves, "bingo"), Ok(Install::Exists));
+    assert!(!save.join("datapacks/bingo/data/bingo/dimension/lobby.json").exists());
+    assert_eq!(fs::read(save.join("level.dat")).unwrap(), b"after a game");
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn a_linked_lobby_dimension_file_is_refused_and_its_target_is_untouched() {
+    let root = scratch("repair-link");
+    let t = lobby_template(&root);
+    let saves = root.join("saves");
+    fs::create_dir_all(&saves).unwrap();
+    let save = old_save(&saves, "bingo");
+    let file = save.join("datapacks/bingo/data/bingo/dimension/lobby.json");
+    fs::remove_file(&file).unwrap();
+    let outside = root.join("outside.json");
+    fs::write(&outside, b"not the save's").unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&outside, &file).unwrap();
+        assert!(install(&t, &saves, "bingo").is_err(), "a link is refused");
+        assert!(fs::symlink_metadata(&file).unwrap().file_type().is_symlink(), "the link is not removed");
+        assert_eq!(fs::read(&outside).unwrap(), b"not the save's", "its target is not touched");
+    }
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn a_linked_folder_on_the_way_to_the_lobby_file_is_refused() {
+    let root = scratch("repair-link-dir");
+    let t = lobby_template(&root);
+    let saves = root.join("saves");
+    fs::create_dir_all(&saves).unwrap();
+    let save = old_save(&saves, "bingo");
+    let outside = root.join("elsewhere");
+    fs::create_dir_all(outside.join("dimension")).unwrap();
+    fs::write(outside.join("dimension/lobby.json"), b"elsewhere").unwrap();
+    #[cfg(unix)]
+    {
+        fs::remove_dir_all(save.join("datapacks/bingo/data/bingo/dimension")).unwrap();
+        std::os::unix::fs::symlink(&outside, save.join("datapacks/bingo/data/bingo/dimension")).unwrap();
+        assert!(install(&t, &saves, "bingo").is_err(), "a linked folder is refused");
+        assert_eq!(fs::read(outside.join("dimension/lobby.json")).unwrap(), b"elsewhere", "nothing behind the link is removed");
+    }
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn another_save_with_the_lobby_file_is_untouched() {
+    let root = scratch("repair-other");
+    let t = lobby_template(&root);
+    let saves = root.join("saves");
+    fs::create_dir_all(&saves).unwrap();
+    let other = old_save(&saves, "survival");
+
+    assert_eq!(install(&t, &saves, "bingo"), Ok(Install::Created));
+    assert!(other.join("datapacks/bingo/data/bingo/dimension/lobby.json").is_file(), "a save that is not the lobby keeps its file");
+    fs::remove_dir_all(&root).unwrap();
+}

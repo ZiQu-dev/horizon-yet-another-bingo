@@ -559,5 +559,9 @@
   "bingo.native.stalemate_no_team_can_win": "A stalemate: no team can win the card, so the game ends.",
   "bingo.native.stalemate_lockout": "A stalemate: every square is claimed and no team leads, so the game ends.",
   "bingo.native.stalemate_impossible_goal": "A stalemate: no team can reach the goal, so the game ends.",
-  "bingo.native.game_stopped": "Game stopped."
+  "bingo.native.game_stopped": "Game stopped.",
+  "bingo.native.already_starting": "The game is already starting.",
+  "bingo.native.lobby_not_open": "The lobby is not open yet, so the game cannot start.",
+  "bingo.native.start_failed": "The game did not start: the worlds could not be reset. Everyone is back in the lobby.",
+  "bingo.native.start_failed_some_not_moved": "The game did not start: the worlds could not be reset. Some players could not be sent back to the lobby yet; they are not in it."
 }

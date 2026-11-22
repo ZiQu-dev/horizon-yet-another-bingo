@@ -90,7 +90,10 @@ pub(super) fn tick(host: &mut dyn ClientHost) {
     let saves = host.instance_dir().join("saves");
     match lobby_world::install(&super::assets_dir(host).join("lobby_world"), &saves, folder) {
         Ok(lobby_world::Install::Created) => log(&format!("title button: made saves/{folder} from the lobby world")),
-        Ok(_) => {}
+        Ok(lobby_world::Install::Repaired) => {
+            log(&format!("title button: removed the lobby dimension file from saves/{folder}/datapacks/bingo (an older save)"))
+        }
+        Ok(lobby_world::Install::Exists | lobby_world::Install::NoTemplate) => {}
         Err(e) => log(&format!("title button: the lobby world was not made: {e}")),
     }
     let answer = answer(host.request_world(folder));

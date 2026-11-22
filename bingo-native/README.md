@@ -60,7 +60,6 @@ See [NOTICE.md](NOTICE.md) for the licence position, which is not yet decided.
 - **The title-screen BINGO! button** opens the lobby world: Horizon asks the player first (see its section).
 - **Permissions**: the API has no permission nodes, so `bingo.op` is read as operator level 2 (`server.rs`, `is_op`).
 - **`preventLobbyChaos`** is not implemented.
-- **Physical lobby world** is not implemented: the lobby is logical only.
 - **Per-player sidebar**: Horizon has no per-player sidebar, so every player gets the spectators' version. The
   differences are the `PORT-GAP` comments in `horizon-bingo/src/server/sidebar.rs`.
 
@@ -76,6 +75,11 @@ See [NOTICE.md](NOTICE.md) for the licence position, which is not yet decided.
 - Python 3 (standard library only) for `prepare_assets.py`.
 - The original mod's jar for Minecraft 26.3. Source version: 2.15.1 (`gradle.properties` of the upstream). Download it
   yourself from Modrinth; it is not in this repository.
+- Horizon features the mod needs, all required (none is optional):
+  - `[native] level_reset = true` and `world_control = true` in `horizon-mod.toml`.
+  - The `reset_vanilla` API, merged on 2026-11-22 as horizon-rust/horizon#18379.
+  - A fix that finds the world spawn again after a reset. It is not in a release yet, so the Horizon build must include
+    it. This README does not check that the pinned commit does.
 - To play multiplayer bingo: a server running this bundle's server half or the original mod. A client without the mod
   shows no bingo content.
 
@@ -270,9 +274,22 @@ opens it only on Yes; the mod never opens a world by itself. The mod declares th
 - The lobby world's folder is `LOBBY_FOLDER` in `src/horizon-bingo/src/title_button.rs` ("bingo"). When `saves/bingo` is
   missing the button makes it from the original's own lobby world (`src/horizon-bingo/src/lobby_world.rs`): the saved
   world "Bingo Lobby" in the original jar, which `tools/prepare_assets.py` unpacks to `<assets>/lobby_world/`. A save
-  that is there is never touched. Without that folder (assets prepared by an older script) the button shows a red hint
+  that is there is not overwritten. Without that folder (assets prepared by an older script) the button shows a red hint
   under it: create a world with that folder name first.
+- A save made before the lobby became a runtime level still has the lobby's dimension file in its datapack. The engine
+  refuses that id (`ReservedId`), so the press removes `datapacks/bingo/data/bingo/dimension/lobby.json` from that save and
+  nothing else (`Install::Repaired`, logged). A link at that path or on the way to it is refused and left alone, and the press logs it.
 - The rule (the hints, the folder rule, the button's place, the hit test) is pure logic, tested in `dev/tests/title_button.rs`.
+
+## The lobby and starting a game
+
+- The lobby is the runtime level `bingo:lobby`. The server opens it when it starts, from the lobby world in the
+  world's folder (see Server). It is not a datapack dimension.
+- A start sends everyone to the lobby, resets the three vanilla dimensions (overworld, nether, end) with a new seed
+  through the engine's `reset_vanilla`, and puts everyone at the new overworld's spawn. The players wait high above
+  the terrain until that spawn is known.
+- Ending a game or resetting it sends the players back to the lobby.
+- A start that fails (the reset is refused or does not finish) sends everyone back to the lobby, and chat says so.
 
 ## Server
 
@@ -280,6 +297,7 @@ The bundle's server half (`src/server.rs`, with `src/horizon-bingo/src/server/`)
 install the same bundle on the server.
 
 - **Item names.** The server needs `item_names.txt` in the mod's assets folder, `<game dir>/horizon-mod-data/bingo/assets/`, or in the folder named by `BINGO_ASSETS`. `tools/prepare_assets.py` writes it from your own copy of the original mod jar (Install, step 2). Without it the server still runs, but cards have no item icons. The server log then gets one WARNING line, at the first tick, with the path it searched, and `bingo status` and `bingo start` add a note saying so.
+- **Lobby files.** On each server start, the lobby's dimension (`dimensions/bingo/lobby`) and its datapack (`datapacks/bingo`, without the lobby's dimension file) are copied from the mod's assets into the world, for the parts the world lacks. Nothing that exists is overwritten. The assets folder is `BINGO_ASSETS`, else `horizon-mod-data/bingo/assets` in the instance folder. The datapack applies after one restart of the server. Run `tools/prepare_assets.py` first (Install, step 2), or the lobby is empty.
 - **Clients.** The original Fabric mod 2.15.1 clients work too: a real Fabric client with the original mod joined this server and played a full game (card with icons, score messages, end screen) in a live test.
 - **Commands.** Players and the console type `bingo <command>`. `join <team>`, `ready` and `spectator` also work without `bingo`. Commands that change a game need operator level 2: `start`, `end`, `reset`, `shuffleteams`, `ready cancel`, `timelimit`, `goal`, `mode`, `endwhen`, `pvp`, `keepinventory`, `elytra`, `nightvision`, `spawndistance`, `playto`, `stalemate` and `resume`. `bingo help` lists the usages:
 
