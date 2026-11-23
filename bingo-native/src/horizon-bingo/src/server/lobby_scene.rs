@@ -15,8 +15,8 @@ pub const LOBBY_LEVEL: &str = "bingo:lobby";
 pub const MENU_POS: [i32; 3] = [0, 17, -5];
 /// The wall blocks a click counts on, inclusive: x -2..3, y 17..20 on the wall's row z -5 (the three oak wall signs and the
 /// stone around them). The panel's tiles stand in front of this wall, so a click ray ends on one of these blocks.
-const WALL_MIN: [i32; 3] = [-2, 17, -5];
-const WALL_MAX: [i32; 3] = [3, 20, -5];
+const WALL_MIN: [i32; 3] = [-2, 16, -7];
+const WALL_MAX: [i32; 3] = [3, 21, -5];
 /// The panel's plane: displays stand just in front of the wall's south face (z -4), where the signs hang.
 pub const PANEL_Z: f64 = -3.9;
 /// The rotation `[yaw, pitch]` of the panel's displays. Entity yaw 0 faces south (+z) and a text display's readable side is

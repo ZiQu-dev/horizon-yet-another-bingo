@@ -85,15 +85,17 @@ fn wall_clicks_on_other_tiles_or_between_tiles_open_the_menu() {
 }
 
 #[test]
-fn only_the_walls_row_of_the_panel_is_clickable() {
+fn only_the_wall_behind_the_panel_is_clickable() {
     let on_start = [2.0, 18.0, -4.0];
     assert_eq!(lobby_scene::click_at([-2, 17, -5], on_start), Some(Click::Start));
     assert_eq!(lobby_scene::click_at([3, 20, -5], on_start), Some(Click::Start));
     assert_eq!(lobby_scene::click_at([4, 18, -5], on_start), None);
     assert_eq!(lobby_scene::click_at([-3, 18, -5], on_start), None);
-    assert_eq!(lobby_scene::click_at([0, 21, -5], on_start), None);
+    assert_eq!(lobby_scene::click_at([0, 22, -5], on_start), None);
+    // The wall's own face is one block behind the signs for the blocks beside them.
+    assert_eq!(lobby_scene::click_at([2, 18, -6], on_start), Some(Click::Start));
     assert_eq!(lobby_scene::click_at([0, 17, -4], on_start), None);
-    assert_eq!(lobby_scene::click_at([0, 17, -6], on_start), None);
+    assert_eq!(lobby_scene::click_at([0, 17, -8], on_start), None);
 }
 
 #[test]
