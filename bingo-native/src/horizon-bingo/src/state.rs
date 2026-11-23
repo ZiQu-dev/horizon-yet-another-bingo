@@ -535,9 +535,13 @@ impl HudState {
     /// `BingoHudController.onGameOver` (the screen itself is the host's: only the state and the event are here).
     fn on_game_over(&mut self, p: GameOverPacket) {
         let is_update = p.is_update;
+        let is_winner = p.is_winner;
         self.game_over = Some(p);
         self.update_game_over_views();
         if !is_update {
+            // `ScorePacketReceiver.onGameOver`: the winner's sound, or the loser's, when the end screen arrives.
+            let key = if is_winner { SoundKey::GameWon } else { SoundKey::GameLost };
+            self.sound(key, 1.0, 1.0);
             self.emit(ClientEvent::OpenEndScreen);
         }
     }

@@ -16,7 +16,7 @@ use super::host::ServerHost;
 use super::kit::{self, KitCommand};
 use super::map_items::{self, Flashes, MapItems, SquareState, Want, FILLED_MAP, MAP_IDS_FILE, PREVIEW_KEY};
 use super::map_render::{CardView, IconSource, Overlays};
-use super::texts::{self, Line};
+use super::texts::{self, Line, Span};
 use super::world_reset::{self, Outcome, WorldPort, WorldReset};
 use super::multicard::{
     complete_card, finish_card_on_goal, reroll_card, round_ends, settle_pending, stalemate_action, stalemate_reason,
@@ -161,6 +161,11 @@ pub struct Session {
     /// The game's end as the sidebar shows it (`sidebar::End`): set when the game ends, cleared when it goes back to
     /// Pregame.
     sidebar_end: Option<super::sidebar::End>,
+    /// Who won the game that ended (`Some(None)`: nobody), for the end screen sent again to a player who joins in
+    /// Postgame. `None` while no game is over.
+    end_winner: Option<Option<String>>,
+    /// The seed the vanilla worlds were reset with at the last start (the end's chat and screen show it).
+    world_seed: Option<u64>,
     /// A game restored from `game-state.json` waits for its players: the empty-server reset does not run until one
     /// of them has joined.
     await_rejoin: bool,
@@ -260,6 +265,8 @@ impl Session {
             forfeit: false,
             end_reason: None,
             sidebar_end: None,
+            end_winner: None,
+            world_seed: None,
             await_rejoin: false,
             reply: None,
             countdown_first: false,
@@ -463,7 +470,8 @@ impl Session {
                 }
                 self.send_round(host, player.uuid);
             }
-            GameStatus::Starting | GameStatus::Postgame => {}
+            GameStatus::Postgame => self.send_game_over(host, player.uuid, true),
+            GameStatus::Starting => {}
         }
     }
 
@@ -793,7 +801,7 @@ impl Session {
         }
         if immediate {
             self.forfeit = true;
-            self.end_reason = Some(texts::stopped_reason());
+            self.end_reason = Some(texts::game_over_reason());
             self.end_game(host, None);
             return;
         }
@@ -1231,7 +1239,11 @@ impl Session {
             Command::End => match self.game.end(None) {
                 Ok(events) => {
                     self.forfeit = true;
-                    self.end_reason = Some(texts::stopped_reason());
+                    let name = match player {
+                        Some(uuid) => host.players().into_iter().find(|p| p.uuid == uuid).map(|p| p.name),
+                        None => Some("RCON".to_owned()),
+                    };
+                    self.end_reason = Some(texts::stopped_reason(&name.unwrap_or_else(|| "[unknown]".to_owned())));
                     self.dispatch(host, events);
                     self.send_to_lobby(host);
                     self.say(texts::end_success())
@@ -1519,6 +1531,7 @@ impl Session {
     fn start_from_lobby(&mut self, port: &mut dyn WorldPort, seed: u64) -> Result<(), String> {
         // A game that ended without its end (`bingo end`, a reset) may still have its players in the new overworld.
         self.world.return_to_lobby(port);
+        self.world_seed = Some(seed);
         match self.world.start(port, &mut || seed) {
             Ok(()) => Ok(()),
             Err(world_reset::StartRefused::LobbyClosed) => Err(self.say(texts::lobby_not_open())),
@@ -1852,12 +1865,9 @@ impl Session {
         });
         self.record_game(host, winner.as_deref());
         Self::clear_saved_game(host);
-        let ranking = self.ranking();
-        let duration = self.game.elapsed_ms();
+        self.end_winner = Some(winner.clone());
         for player in host.players() {
-            let is_winner = winner.is_some() && self.teams.team_of(player.uuid) == winner.as_deref();
-            let end = self.end_stats(Some(player.uuid));
-            send(host, player.uuid, wire::game_over_v2_with(winner.as_deref(), is_winner, duration, ranking.clone(), &end));
+            self.send_game_over(host, player.uuid, false);
         }
         // Postgame shows every square, so each team's card is sent again with nothing hidden.
         if self.rules.hidden_consume.hidden_items {
@@ -1869,24 +1879,44 @@ impl Session {
                 }
             }
         }
-        let line = match winner.as_deref() {
-            Some(team) => texts::team_won_game(team_name(team)),
-            None => texts::game_ended(),
-        };
-        host.broadcast_line(&line);
-        self.send_end_summary(host, winner.as_deref());
+        self.send_end_summary(host);
     }
 
-    /// The end's chat for each player on a team (`GameOverController.broadcastGameOver`): a rule, the reason, the duration,
-    /// the ranking of the teams when there is more than one (unless the first win ends a game with one win condition),
-    /// and a rule. The reason is the team that completed its card, else why the game ended.
-    fn send_end_summary(&mut self, host: &mut dyn ServerHost, winner: Option<&str>) {
-        let stopped = self.end_reason.take();
-        let reason = match winner {
-            Some(team) => texts::completed_card(team_name(team)),
-            None => stopped.unwrap_or_else(texts::out_of_time),
+    /// The end screen's packet to one player (`GameOverService.createPacket`), who wins if their team does. `is_update`
+    /// refreshes a screen already open (a player who joins in Postgame), without opening it or playing the sound.
+    fn send_game_over(&self, host: &mut dyn ServerHost, uuid: u128, is_update: bool) {
+        let Some(winner) = self.end_winner.clone() else { return };
+        let is_winner = winner.is_some() && self.teams.team_of(uuid) == winner.as_deref();
+        let end = self.end_stats(Some(uuid));
+        let extras = wire::EndExtras {
+            seed: Some(self.world_seed.unwrap_or(self.seed) as i64),
+            ready_vote_available: true,
+            is_update,
+            title: self.sidebar_end.as_ref().map(|end| (end.reason.key.to_owned(), end.reason.template.to_owned(), end.reason.args.clone())),
+            subtitle: self.sidebar_end.as_ref().and_then(|end| end.message.as_ref()).map(|m| {
+                let args = m.team.iter().map(|t| t.name.clone()).collect();
+                (m.key.to_owned(), m.fallback.to_owned(), args)
+            }),
         };
-        let duration = texts::duration_text(self.game.elapsed_ms());
+        let packet = wire::game_over_v2_with(winner.as_deref(), is_winner, self.game.elapsed_ms(), self.ranking(), &end, &extras);
+        send(host, uuid, packet);
+    }
+
+    /// The end's chat for each player on a team (`GameOverController.broadcastGameOver`, `game_end.json`): a yellow rule,
+    /// the message (yellow) or else the reason, the duration, the seed, the ranking of the teams after a blank line when
+    /// there is more than one (unless the first win ends a game with one win condition), and a yellow rule.
+    fn send_end_summary(&mut self, host: &mut dyn ServerHost) {
+        self.end_reason = None;
+        let Some(end) = self.sidebar_end.clone() else { return };
+        let reason = match &end.message {
+            Some(message) => {
+                let name = message.team.as_ref().map(|team| Span::text(team.name.clone()));
+                Span::translate(message.key, message.fallback, name.into_iter().collect()).in_color("yellow")
+            }
+            None => line_span(&end.reason),
+        };
+        let clock = texts::duration_text(self.game.elapsed_ms());
+        let seed = self.world_seed.unwrap_or(self.seed) as i64;
         let ranking = self.ranking();
         let ranked = !(self.rules.end_when == EndWhen::FirstWin && self.rules.win_condition != WinCondition::Infinite)
             && ranking.len() > 1;
@@ -1894,17 +1924,20 @@ impl Session {
             if self.teams.team_of(player.uuid).is_none() {
                 continue;
             }
-            host.tell(player.uuid, &texts::separator());
-            host.tell_line(player.uuid, &reason);
-            host.tell_line(player.uuid, &texts::game_duration(&duration));
+            host.tell_spans(player.uuid, &texts::end_rule_spans());
+            host.tell_spans(player.uuid, &[Span::text("  "), reason.clone()]);
+            host.tell_spans(player.uuid, &texts::end_duration_spans(&clock));
+            host.tell_spans(player.uuid, &texts::end_seed_spans(seed));
             if ranked {
+                host.tell_spans(player.uuid, &[]);
                 for row in &ranking {
                     let score = texts::score_text(row.score);
-                    let line = texts::score_row(row.index as usize + 1, team_name(&row.key), &score, &duration);
-                    host.tell(player.uuid, &line);
+                    let duration = row.duration.as_deref().map(|d| texts::duration_text(parse_java_duration(d)));
+                    let line = texts::end_row_spans(row.index as usize + 1, team_name(&row.key), &score, duration.as_deref());
+                    host.tell_spans(player.uuid, &line);
                 }
             }
-            host.tell(player.uuid, &texts::separator());
+            host.tell_spans(player.uuid, &texts::end_rule_spans());
         }
     }
 
@@ -1915,6 +1948,7 @@ impl Session {
         self.send_to_lobby(host);
         self.hide_boss_bars(host);
         self.sidebar_end = None;
+        self.end_winner = None;
         Self::clear_saved_game(host);
         for team in std::mem::take(&mut self.added_teams) {
             host.command(&format!("team remove {team}"));
@@ -2205,21 +2239,24 @@ impl Session {
         }
     }
 
-    /// The end-screen ranking: every team that plays, by lines and then items, most first. Ties keep the order of the
-    /// presets.
+    /// The end-screen ranking in the order of `ScoreRankingService`: the teams that finished first, then by cards, lines and
+    /// items, a tie sharing its place. A team that finished has the time it took; one that did not has none (`DNF`),
+    /// except in infinite mode, where every team has the game's duration.
     fn ranking(&self) -> Vec<ScoreRanking> {
-        let mut rows: Vec<(&'static str, TeamScore)> =
-            self.teams.teams().into_iter().map(|key| (key, self.score(key))).collect();
-        rows.sort_by(|a, b| (b.1.lines, b.1.items).cmp(&(a.1.lines, a.1.items)));
-        let duration = java_duration(self.game.elapsed_ms());
-        rows.into_iter()
-            .enumerate()
-            .map(|(index, (key, score))| ScoreRanking {
-                index: index as i32,
-                key: key.to_string(),
-                name: Text::plain(team_name(key)),
-                score,
-                duration: Some(duration.clone()),
+        let teams = self.sidebar_teams(&[]);
+        let infinite = self.rules.win_condition == WinCondition::Infinite;
+        super::sidebar::ranked(&teams)
+            .into_iter()
+            .map(|(place, team)| ScoreRanking {
+                index: place as i32,
+                key: team.key.clone(),
+                name: Text::plain(team_name(&team.key)),
+                score: self.score(&team.key),
+                duration: match team.finished {
+                    _ if infinite => Some(java_duration(self.game.elapsed_ms())),
+                    Some(ms) => Some(java_duration(ms)),
+                    None => None,
+                },
             })
             .collect()
     }
@@ -3166,6 +3203,28 @@ fn team_name(team: &str) -> &str {
 /// The item's path without the `minecraft:` namespace, for chat.
 fn short_name(item: &str) -> &str {
     item.strip_prefix("minecraft:").unwrap_or(item)
+}
+
+/// The milliseconds of a `Duration.toString()` text this module wrote (`PT1H2M3.5S`); 0 for anything else.
+fn parse_java_duration(text: &str) -> i64 {
+    let Some(mut rest) = text.strip_prefix("PT") else { return 0 };
+    let mut millis = 0.0;
+    while let Some(at) = rest.find(|c: char| c.is_ascii_alphabetic()) {
+        let value: f64 = rest[..at].parse().unwrap_or(0.0);
+        millis += value
+            * match &rest[at..=at] {
+                "H" => 3_600_000.0,
+                "M" => 60_000.0,
+                _ => 1_000.0,
+            };
+        rest = &rest[at + 1..];
+    }
+    millis.round() as i64
+}
+
+/// A translatable line as a styled piece, its arguments plain.
+fn line_span(line: &Line) -> Span {
+    Span::translate(line.key, line.template, line.args.iter().map(|arg| Span::text(arg.clone())).collect())
 }
 
 /// `Duration.toString()` of a span in milliseconds: `PT5S`, `PT1M`, `PT1H2M3.5S`; zero is `PT0S`.

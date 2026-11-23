@@ -190,7 +190,6 @@ fn two_cards_round_gives_the_team_its_next_card_and_ends_on_the_second() {
     complete_row(&mut session, &mut host, ALICE);
     let lines = host.take_broadcasts();
     assert!(lines.contains(&"Red completed card 2/2!".to_string()), "{lines:?}");
-    assert!(lines.contains(&"Red won the game!".to_string()), "{lines:?}");
     assert!(status(&mut session, &mut host).contains("Postgame"));
     let sent = host.take();
     let over = decode(&only(&sent, ALICE, "game_over_v2"), GameOverPacket::read_v2).unwrap();
@@ -212,7 +211,6 @@ fn a_round_of_three_cards_ends_only_after_the_third() {
     complete_row(&mut session, &mut host, ALICE);
     let lines = host.take_broadcasts();
     assert!(lines.contains(&"Red completed card 3/3!".to_string()), "{lines:?}");
-    assert!(lines.contains(&"Red won the game!".to_string()), "{lines:?}");
     assert!(status(&mut session, &mut host).contains("Postgame"));
 }
 
@@ -262,8 +260,7 @@ fn infinite_never_ends_the_round_by_cards() {
 fn a_card_completed_within_three_ticks_of_being_made_ends_the_game() {
     let (mut session, mut host) = start(7, &["playto cards 2"]);
     complete_row(&mut session, &mut host, ALICE);
-    let lines = host.take_broadcasts();
-    assert!(lines.contains(&"The game has ended.".to_string()), "{lines:?}");
+    host.take_broadcasts();
     assert!(status(&mut session, &mut host).contains("Postgame"));
 }
 
@@ -290,7 +287,6 @@ fn stalemate_end_game_ends_a_lockout_round_with_no_possible_win() {
     assert!(status(&mut session, &mut host).contains("Postgame"));
     let lines = host.take_broadcasts();
     assert!(lines.contains(&"A stalemate: no team can reach the goal, so the game ends.".to_string()), "{lines:?}");
-    assert!(lines.contains(&"The game has ended.".to_string()), "{lines:?}");
     let sent = host.take();
     let over = decode(&only(&sent, ALICE, "game_over_v2"), GameOverPacket::read_v2).unwrap();
     assert_eq!(over.winner, None, "nobody wins a stalemate");
@@ -351,8 +347,7 @@ fn a_multi_card_round_restores_its_cards_and_progress_from_its_snapshot() {
 
     // Red completes its second card, which is the card the snapshot kept.
     restored.on_inventory(&mut restored_host, ALICE, &held(&card1[0..5]));
-    let lines = restored_host.take_broadcasts();
-    assert!(lines.contains(&"Red won the game!".to_string()), "{lines:?}");
+    restored_host.take_broadcasts();
     assert!(status(&mut restored, &mut restored_host).contains("Postgame"));
 }
 

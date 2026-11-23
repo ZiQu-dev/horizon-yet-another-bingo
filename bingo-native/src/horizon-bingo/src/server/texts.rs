@@ -149,15 +149,6 @@ pub fn team_reached_goal(team: &str) -> Line {
     Line::new("bingo.native.team_reached_goal", "%s reached the goal!", &[team])
 }
 
-/// `%s won the game!`
-pub fn team_won_game(team: &str) -> Line {
-    Line::new("bingo.native.team_won_game", "%s won the game!", &[team])
-}
-
-pub fn game_ended() -> Line {
-    Line::new("bingo.native.game_ended", "The game has ended.", &[])
-}
-
 pub fn game_continues() -> Line {
     Line::new("bingo.native.game_continues", "The game continues.", &[])
 }
@@ -365,9 +356,158 @@ pub fn soft_locked_reason() -> Line {
     Line::new("bingo.game.end.reason_impossible_goal", "Soft-locked!", &[])
 }
 
-/// `Game stopped.`, the reason when `bingo end` stopped the game. The original names who stopped it; this does not know.
-pub fn stopped_reason() -> Line {
-    Line::new("bingo.native.game_stopped", "Game stopped.", &[])
+/// `Stopped by <name>`, the reason when `bingo end` stopped the game (`GameEndReason.Command`): the sender's name, `RCON`
+/// from the console.
+pub fn stopped_reason(name: &str) -> Line {
+    Line::new("bingo.game.end.reason_command", "Stopped by %s", &[name])
+}
+
+/// `Game over!`, the reason of an end with no better one (`GameEndReason.Error`, the default).
+pub fn game_over_reason() -> Line {
+    Line::new("bingo.game.end.game_over", "Game over!", &[])
+}
+
+/// `DNF`, the time of a team that did not finish.
+pub const DNF: &str = "DNF";
+
+/// A piece of a styled chat line: literal text with an optional colour (and a click that copies a value), or a translation
+/// whose arguments are pieces themselves. The host shows it with its colours when it can, else as plain text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Span {
+    Text { text: String, color: Option<&'static str>, copy: Option<String> },
+    Translate { key: &'static str, template: &'static str, args: Vec<Span>, color: Option<&'static str> },
+}
+
+impl Span {
+    pub fn text(text: impl Into<String>) -> Self {
+        Span::Text { text: text.into(), color: None, copy: None }
+    }
+
+    pub fn colored(text: impl Into<String>, color: &'static str) -> Self {
+        Span::Text { text: text.into(), color: Some(color), copy: None }
+    }
+
+    /// A translation with the English as its fallback, its `%s` places filled by `args`.
+    pub fn translate(key: &'static str, template: &'static str, args: Vec<Span>) -> Self {
+        Span::Translate { key, template, args, color: None }
+    }
+
+    /// The same piece in `color`.
+    pub fn in_color(mut self, color: &'static str) -> Self {
+        match &mut self {
+            Span::Text { color: c, .. } | Span::Translate { color: c, .. } => *c = Some(color),
+        }
+        self
+    }
+
+    /// The English with no colours: each `%s` takes the next argument, `%%` is `%`.
+    pub fn plain(&self) -> String {
+        match self {
+            Span::Text { text, .. } => text.clone(),
+            Span::Translate { template, args, .. } => {
+                let mut args = args.iter();
+                let mut out = String::new();
+                let mut chars = template.chars().peekable();
+                while let Some(c) = chars.next() {
+                    match (c, chars.peek()) {
+                        ('%', Some('s')) => {
+                            chars.next();
+                            out.push_str(&args.next().map(Span::plain).unwrap_or_else(|| "%s".to_owned()));
+                        }
+                        ('%', Some('%')) => {
+                            chars.next();
+                            out.push('%');
+                        }
+                        _ => out.push(c),
+                    }
+                }
+                out
+            }
+        }
+    }
+
+    /// The piece as a JSON text component (what `tellraw` takes).
+    pub fn json(&self) -> String {
+        match self {
+            Span::Text { text, color, copy } => {
+                let mut out = format!("{{\"text\":{}", json_string(text));
+                if let Some(color) = color {
+                    out.push_str(&format!(",\"color\":\"{color}\""));
+                }
+                if let Some(copy) = copy {
+                    out.push_str(&format!(
+                        ",\"click_event\":{{\"action\":\"copy_to_clipboard\",\"value\":{}}}",
+                        json_string(copy)
+                    ));
+                }
+                out.push('}');
+                out
+            }
+            Span::Translate { key, template, args, color } => {
+                let mut out = format!("{{\"translate\":\"{key}\",\"fallback\":{}", json_string(template));
+                if !args.is_empty() {
+                    let args: Vec<String> = args.iter().map(Span::json).collect();
+                    out.push_str(&format!(",\"with\":[{}]", args.join(",")));
+                }
+                if let Some(color) = color {
+                    out.push_str(&format!(",\"color\":\"{color}\""));
+                }
+                out.push('}');
+                out
+            }
+        }
+    }
+}
+
+/// A line of pieces as one JSON component: an array whose first element is empty, so the pieces keep their own styles.
+pub fn spans_json(spans: &[Span]) -> String {
+    let mut parts = vec!["\"\"".to_owned()];
+    parts.extend(spans.iter().map(Span::json));
+    format!("[{}]", parts.join(","))
+}
+
+fn json_string(text: &str) -> String {
+    let mut out = String::from("\"");
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// The end's duration line: two spaces, `Game duration: ` and the time in green (`GameOverController`).
+pub fn end_duration_spans(clock: &str) -> Vec<Span> {
+    vec![
+        Span::text("  "),
+        Span::translate("bingo.game.end.duration", "Game duration: %s", vec![Span::colored(clock, "green")]),
+    ]
+}
+
+/// The end's seed line: two spaces and `Seed: [seed]`, the seed copyable on a click.
+pub fn end_seed_spans(seed: i64) -> Vec<Span> {
+    let value = seed.to_string();
+    let seed = Span::Text { text: format!("[{value}]"), color: Some("green"), copy: Some(value) };
+    vec![Span::text("  "), Span::translate("bingo.game.end.seed", "Seed: %s", vec![seed])]
+}
+
+/// A ranking row of the end's chat: gray `N. `, the team, ` - `, the score, ` - ` and the time or `DNF`.
+pub fn end_row_spans(place: usize, team: &str, score: &str, duration: Option<&str>) -> Vec<Span> {
+    let duration = match duration {
+        Some(clock) => Span::text(clock),
+        None => Span::text(DNF),
+    };
+    vec![Span::colored(format!("{place}. "), "gray"), Span::text(team), Span::text(" - "), Span::text(score), Span::text(" - "), duration]
+}
+
+/// The yellow rule of dashes that frames the end's chat.
+pub fn end_rule_spans() -> Vec<Span> {
+    vec![Span::colored(separator(), "yellow")]
 }
 
 /// A start was asked while the game is already being started (the players are being moved and the worlds reset).

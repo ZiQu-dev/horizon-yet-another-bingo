@@ -325,7 +325,8 @@ fn the_end_screen_opens_for_a_new_result_and_not_for_an_update() {
     let mut p = decode(&row("read_v2_minimal"), GameOverPacket::read_v2).unwrap();
     p.is_update = false;
     feed(&mut state, "game_over_v2", &encode(|w| p.write_v2(w).unwrap()));
-    assert_eq!(state.take_events(), [ClientEvent::OpenEndScreen]);
+    let events = state.take_events();
+    assert_eq!(events.last(), Some(&ClientEvent::OpenEndScreen));
     assert!(state.game_over.is_some());
     p.is_update = true;
     feed(&mut state, "game_over_v2", &encode(|w| p.write_v2(w).unwrap()));
@@ -335,7 +336,27 @@ fn the_end_screen_opens_for_a_new_result_and_not_for_an_update() {
     v1.is_update = false;
     let mut other = HudState::new();
     feed(&mut other, "game_over", &encode(|w| v1.write_v1(w).unwrap()));
-    assert_eq!(other.take_events(), [ClientEvent::OpenEndScreen]);
+    assert_eq!(other.take_events().last(), Some(&ClientEvent::OpenEndScreen));
+}
+
+/// `ScorePacketReceiver.onGameOver`: the end screen's arrival plays GAME_WON for a winner and GAME_LOST for everyone else;
+/// an update plays nothing.
+#[test]
+fn the_end_screen_plays_the_winners_or_the_losers_sound_but_an_update_plays_none() {
+    for (is_winner, key) in [(true, SoundKey::GameWon), (false, SoundKey::GameLost)] {
+        let mut state = HudState::new();
+        let mut p = decode(&row("read_v2_minimal"), GameOverPacket::read_v2).unwrap();
+        p.is_update = false;
+        p.is_winner = is_winner;
+        feed(&mut state, "game_over_v2", &encode(|w| p.write_v2(w).unwrap()));
+        assert_eq!(
+            state.take_events(),
+            [ClientEvent::Sound { key, volume: 1.0, pitch: 1.0 }, ClientEvent::OpenEndScreen]
+        );
+        p.is_update = true;
+        feed(&mut state, "game_over_v2", &encode(|w| p.write_v2(w).unwrap()));
+        assert!(state.take_events().is_empty());
+    }
 }
 
 #[test]

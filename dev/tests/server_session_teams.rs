@@ -167,7 +167,7 @@ fn ranking(index: i32, key: &str, name: &str, items: i32, lines: i32, cards: i32
         key: key.to_string(),
         name: Text::plain(name),
         score: TeamScore { items, lines, cards },
-        duration: Some(duration.to_string()),
+        duration: (duration != "DNF").then(|| duration.to_string()),
     }
 }
 
@@ -286,10 +286,9 @@ fn a_team_that_completes_a_line_wins_and_the_ranking_lists_every_team() {
     let finish = host.take();
     let broadcasts = host.take_broadcasts();
     let mut expected: Vec<String> = names[0..5].iter().map(|name| format!("Alice got [{}]", short(name))).collect();
-    expected.push("Red won the game!".to_string());
     assert_eq!(broadcasts, expected);
 
-    let scores = [ranking(0, "bingo_red", "Red", 5, 1, 1, "PT5S"), ranking(1, "bingo_blue", "Blue", 0, 0, 0, "PT5S")];
+    let scores = [ranking(0, "bingo_red", "Red", 5, 1, 1, "PT5S"), ranking(1, "bingo_blue", "Blue", 0, 0, 0, "DNF")];
     let alice = decode(&only(&finish, ALICE, "game_over_v2"), GameOverPacket::read_v2).unwrap();
     let bob = decode(&only(&finish, BOB, "game_over_v2"), GameOverPacket::read_v2).unwrap();
     assert_eq!(alice.winner.as_deref(), Some("bingo_red"));
@@ -621,11 +620,11 @@ fn the_ranking_orders_teams_by_lines_then_items_and_ties_keep_the_preset_order()
     let over = decode(&only(&host.take(), ALICE, "game_over_v2"), GameOverPacket::read_v2).unwrap();
     assert_eq!(over.winner, None);
     assert!(!over.is_winner);
-    assert_eq!(over.scores, [ranking(0, "bingo_blue", "Blue", 1, 0, 0, "PT0S"), ranking(1, "bingo_red", "Red", 0, 0, 0, "PT0S")]);
+    assert_eq!(over.scores, [ranking(0, "bingo_blue", "Blue", 1, 0, 0, "DNF"), ranking(1, "bingo_red", "Red", 0, 0, 0, "DNF")]);
 }
 
 #[test]
-fn a_tie_in_the_ranking_keeps_the_order_of_the_presets() {
+fn a_tie_in_the_ranking_shares_a_place_and_keeps_the_order_of_the_presets() {
     let mut host = FakeHost::default();
     let mut session = Session::new(options(7, 0, None));
     lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(BOB, "blue"), (ALICE, "red")]);
@@ -634,6 +633,6 @@ fn a_tie_in_the_ranking_keeps_the_order_of_the_presets() {
 
     run(&mut session, &mut host, None, "end");
     let over = decode(&only(&host.take(), BOB, "game_over_v2"), GameOverPacket::read_v2).unwrap();
-    assert_eq!(over.scores, [ranking(0, "bingo_red", "Red", 0, 0, 0, "PT0S"), ranking(1, "bingo_blue", "Blue", 0, 0, 0, "PT0S")]);
+    assert_eq!(over.scores, [ranking(0, "bingo_red", "Red", 0, 0, 0, "DNF"), ranking(0, "bingo_blue", "Blue", 0, 0, 0, "DNF")]);
     assert_eq!(over.winner, None);
 }

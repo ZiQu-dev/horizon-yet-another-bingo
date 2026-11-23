@@ -15,6 +15,12 @@ pub trait ServerHost {
     fn tell_line(&mut self, player: u128, line: &Line) {
         self.tell(player, &line.render());
     }
+    /// A chat line of styled pieces (colours, a click that copies) to one player. The default sends its English with no
+    /// colours, so a test host need not implement it.
+    fn tell_spans(&mut self, player: u128, spans: &[super::texts::Span]) {
+        let plain: String = spans.iter().map(super::texts::Span::plain).collect();
+        self.tell(player, &plain);
+    }
     /// A translatable chat line to everyone. The default sends its English.
     fn broadcast_line(&mut self, line: &Line) {
         self.broadcast(&line.render());

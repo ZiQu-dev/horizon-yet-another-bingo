@@ -178,7 +178,7 @@ fn goal_items_three_is_not_won_with_two_squares_and_is_won_with_three() {
     let finish = host.take();
     assert_eq!(
         host.take_broadcasts(),
-        [format!("Alice got [{}]", short(&names[2])), "Red won the game!".to_string()]
+        [format!("Alice got [{}]", short(&names[2]))]
     );
     assert!(status(&mut session, &mut host).contains("Postgame"));
     let over = decode(&only(&finish, ALICE, "game_over_v2"), GameOverPacket::read_v2).unwrap();
@@ -211,7 +211,7 @@ fn goal_full_card_needs_all_twenty_five_squares() {
     host.take();
     assert_eq!(
         host.take_broadcasts(),
-        [format!("Alice got [{}]", short(&names[24])), "Red won the game!".to_string()]
+        [format!("Alice got [{}]", short(&names[24]))]
     );
     assert!(status(&mut session, &mut host).contains("Postgame"));
 }
@@ -245,7 +245,7 @@ fn endwhen_never_announces_the_goal_but_does_not_end_until_end() {
 
     assert_eq!(run(&mut session, &mut host, Some(ALICE), "end"), "Stopped the game!");
     host.take();
-    assert_eq!(host.take_broadcasts(), ["The game has ended."]);
+    assert!(host.take_broadcasts().is_empty());
     assert!(status(&mut session, &mut host).contains("Postgame"));
 }
 
@@ -275,7 +275,7 @@ fn endwhen_all_win_lets_the_first_team_to_reach_the_goal_play_on() {
     let finish = host.take();
     assert_eq!(
         host.take_broadcasts(),
-        [format!("Bob got [{}]", short(&names[0])), "Red won the game!".to_string()]
+        [format!("Bob got [{}]", short(&names[0]))]
     );
     assert!(status(&mut session, &mut host).contains("Postgame"));
     let alice = decode(&only(&finish, ALICE, "game_over_v2"), GameOverPacket::read_v2).unwrap();
@@ -500,7 +500,7 @@ fn resume_after_a_first_win_turns_the_end_condition_off() {
 
     session.on_inventory(&mut host, ALICE, &held(&names[0..1]));
     host.take();
-    assert_eq!(host.take_broadcasts(), [format!("Alice got [{}]", short(&names[0])), "Red won the game!".to_string()]);
+    assert_eq!(host.take_broadcasts(), [format!("Alice got [{}]", short(&names[0]))]);
     assert!(status(&mut session, &mut host).contains("Postgame"));
 
     assert_eq!(run(&mut session, &mut host, Some(ALICE), "resume"), "The game continues.");
