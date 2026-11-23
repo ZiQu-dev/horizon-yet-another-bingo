@@ -9,7 +9,7 @@ use crate::buf::encode;
 use crate::card_reset::CardResetPacket;
 use crate::card_tile::{CardTile, TierLabel};
 use crate::card_tile_action::CardTileAction;
-use crate::card_tile_image::CardTileImage;
+use crate::card_tile_image::{CardTileImage, Decoration};
 use crate::display_cards::{CardDisplay, CardDisplayPacket, PlayerProfile, FORMATTING_NAMES};
 use crate::game_over::{GameOverPacket, ScoreRanking};
 use crate::game_reset::GameResetPacket;
@@ -19,7 +19,7 @@ use crate::nbt::Nbt;
 use crate::open_card::CardOpenPacket;
 use crate::score_update::{ScoredItemPacket, TeamScore};
 use crate::server::hidden_consume::TileView;
-use crate::server::types::{Card, Player, CARD_SQUARES};
+use crate::server::types::{Card, Player, CARD_SQUARES, FREE_SPACE};
 use crate::text::Text;
 use crate::timer::{CountdownPacket, TimerPacket};
 use crate::update_card_tiles::CardTilesPacket;
@@ -124,7 +124,7 @@ pub fn card_tiles(
             };
             let tile = CardTile {
                 id: Some(objective.item.clone()),
-                image: CardTileImage { item: stack, is_achieved: is_found, ..CardTileImage::default() },
+                image: CardTileImage { item: stack, is_achieved: is_found, decoration: free_decoration(&objective.item), ..CardTileImage::default() },
                 image_list: vec![],
                 action,
                 item_tier: Some(objective.tier),
@@ -187,6 +187,12 @@ pub fn game_over_v2_with(
 /// The tile name: a translation key of the vanilla item, with the id path as fallback. A non-vanilla id is
 /// plain text.
 pub(super) fn item_name(item: &str) -> Text {
+    if item == FREE_SPACE {
+        return Text(Nbt::compound(vec![
+            ("translate", Nbt::string("bingo.card.free_space")),
+            ("fallback", Nbt::string("Free Space")),
+        ]));
+    }
     match item.strip_prefix("minecraft:") {
         Some(path) => Text(Nbt::compound(vec![
             ("translate", Nbt::string(&format!("item.minecraft.{path}"))),
@@ -335,7 +341,7 @@ pub fn card_tiles_seen(
                 };
                 CardTile {
                     id: Some(objective.item.clone()),
-                    image: CardTileImage { item: stack, is_achieved: is_found, ..CardTileImage::default() },
+                    image: CardTileImage { item: stack, is_achieved: is_found, decoration: free_decoration(&objective.item), ..CardTileImage::default() },
                     image_list: vec![],
                     action,
                     item_tier: Some(objective.tier),
@@ -353,4 +359,9 @@ pub fn card_tiles_seen(
         .collect();
     let packet = CardTilesPacket { team_key: Some(viewer_team.to_owned()), tiles, should_notify };
     ("update_card_tiles", encode(|w| packet.write(w).expect("update_card_tiles: a tile fails to write")))
+}
+
+/// The decoration of a square's picture: a free space has its own frame.
+fn free_decoration(item: &str) -> Decoration {
+    if item == FREE_SPACE { Decoration::FreeSpace } else { Decoration::None }
 }

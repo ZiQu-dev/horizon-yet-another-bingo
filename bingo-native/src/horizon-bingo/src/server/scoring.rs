@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 
 use super::options::{EndWhen, Goal, Mode};
-use super::types::{Card, TeamProgress, CARD_SQUARES};
+use super::types::{Card, TeamProgress, CARD_SQUARES, FREE_SPACE};
 use crate::score_update::TeamScore;
 
 /// The 12 lines as square indices (index = row * 5 + col): rows 0-4, columns 0-4, main diagonal, anti-diagonal.
@@ -55,7 +55,7 @@ pub fn score_inventory(card: &Card, progress: &mut TeamProgress, held: &HashMap<
         if progress.found.contains(&index) {
             continue;
         }
-        if held.get(&square.item).copied().unwrap_or(0) >= 1 {
+        if square.item == FREE_SPACE || held.get(&square.item).copied().unwrap_or(0) >= 1 {
             progress.found.push(index);
             newly_found.push(index);
         }
@@ -109,11 +109,10 @@ fn items_found(found: &[usize]) -> usize {
 }
 
 /// Whether the team has reached `goal`. `Lines(n)`: at least `n` lines. `Items(n)`: at least `n` squares.
-/// `FullCard`: all 25 squares. `Lines(0)` and `Items(0)` are false: a goal of nothing would be reached before
-/// the first square, so it is treated as no goal.
+/// `FullCard`: all 25 squares. `Lines(0)` and `Items(0)` are reached at once (`score >= goal` with 0 >= 0,
+/// ScoredItemCheck.kt:186-190).
 pub fn goal_reached(progress: &TeamProgress, goal: Goal) -> bool {
     match goal {
-        Goal::Lines(0) | Goal::Items(0) => false,
         Goal::Lines(n) => count_lines(&progress.found) as u32 >= n,
         Goal::Items(n) => items_found(&progress.found) as u32 >= n,
         Goal::FullCard => items_found(&progress.found) == CARD_SQUARES,
@@ -131,7 +130,7 @@ pub fn team_score_goal(progress: &TeamProgress, goal: Goal) -> TeamScore {
 fn square_held(card: &Card, index: usize, held: &HashMap<String, u32>) -> bool {
     card.squares
         .get(index)
-        .is_some_and(|square| held.get(&square.item).copied().unwrap_or(0) >= 1)
+        .is_some_and(|square| square.item == FREE_SPACE || held.get(&square.item).copied().unwrap_or(0) >= 1)
 }
 
 /// Scores the card in `mode` and returns `(newly found, lost)`, both as square indices.
@@ -184,13 +183,13 @@ pub fn claim_lockout(owners: &mut HashMap<usize, String>, team: &str, gained: &[
 }
 
 /// Whether the round ends after the current state: `reached` teams have reached the goal out of `total_teams`.
-/// `Never`: never. `FirstWin`: one team. `TeamsWin(n)`: `n` teams (`n = 0` never ends the round, since `n >= 1`
-/// is required). `AllWin`: every team, and only when there is at least one team.
+/// `Never`: never. `FirstWin`: one team. `TeamsWin(n)`: `n` teams (`n = 0` ends at once). `AllWin`: every team
+/// (with no teams it ends, as Kotlin's `all` on an empty list is true; ScoredItemCheck.kt:430-437).
 pub fn game_should_end(end_when: EndWhen, teams_reached: usize, total_teams: usize) -> bool {
     match end_when {
         EndWhen::Never => false,
         EndWhen::FirstWin => teams_reached >= 1,
-        EndWhen::TeamsWin(n) => n >= 1 && teams_reached >= n as usize,
-        EndWhen::AllWin => total_teams > 0 && teams_reached >= total_teams,
+        EndWhen::TeamsWin(n) => teams_reached >= n as usize,
+        EndWhen::AllWin => teams_reached >= total_teams,
     }
 }

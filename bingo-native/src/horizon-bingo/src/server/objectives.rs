@@ -26,7 +26,7 @@ use serde_json::{json, Value};
 use super::card_gen::Pool;
 use super::host::ServerHost;
 use super::pool;
-use super::types::{Card, CARD_SQUARES};
+use super::types::{Card, CARD_SQUARES, FREE_SPACE};
 use crate::buf::Writer;
 use crate::card_tile::{CardTile, TierLabel};
 use crate::card_tile_action::CardTileAction;
@@ -173,7 +173,7 @@ fn is_retained(objective: &Objective, inventory_mode: bool) -> bool {
 /// Whether `uuid` holds `objective` now (a player's own state; inverse is not a player's, see [`team_achieves`]).
 fn holds_now(objective: &Objective, index: usize, uuid: u128, ctx: &Ctx, runtime: &mut Runtime) -> bool {
     match objective {
-        Objective::Item { item } => ctx.facts.held(uuid, item) >= 1,
+        Objective::Item { item } => item == FREE_SPACE || ctx.facts.held(uuid, item) >= 1,
         Objective::OneOf { entries, .. } => {
             expand(entries, ctx.tags).iter().any(|item| ctx.facts.held(uuid, item) >= 1)
         }
@@ -274,6 +274,9 @@ fn to_tile(team: &str, square: &Square, index: usize, is_found: bool, item_id: &
             image.item = stack(item, item_id);
             if let Some(stack) = &image.item {
                 action = CardTileAction::Item(stack.clone());
+            }
+            if item == FREE_SPACE {
+                image.decoration = Decoration::FreeSpace;
             }
             wire::item_name(item)
         }
