@@ -1136,13 +1136,14 @@ impl Session {
             .map(|player| {
                 let team = self.teams.team_of(player.uuid);
                 let won = team.is_some_and(|key| self.reached.iter().any(|reached| reached == key));
-                let want = map_items::want_for(
+                let want = map_items::want_for_with(
                     status,
                     team,
                     self.teams.is_spectator(player.uuid),
                     // A player whose client runs our HUD needs no map.
                     self.has_card_hud(player.uuid),
                     won,
+                    self.rules.preview_card,
                 );
                 (player.uuid, player.name, want)
             })
@@ -1263,6 +1264,15 @@ impl Session {
                     // Inventory mode and consume items exclude each other: inventory mode turns consume items off.
                     if mode == Mode::Inventory {
                         rules.hidden_consume.consume_items = false;
+                    }
+                },
+                "mode",
+            ),
+            Command::ModeOff(mode) => self.set_rule(
+                host,
+                |rules| {
+                    if rules.mode == mode {
+                        rules.mode = Mode::Standard;
                     }
                 },
                 "mode",
@@ -2659,6 +2669,9 @@ impl Session {
             on(self.rules.night_vision),
             self.rules.spawn_distance
         );
+        if !self.rules.preview_card {
+            text.push_str(" Preview card: off.");
+        }
         // The win condition and the stalemate behaviour are named only when they are not the defaults.
         if self.rules.win_condition != WinCondition::default() {
             let win = match self.rules.win_condition {

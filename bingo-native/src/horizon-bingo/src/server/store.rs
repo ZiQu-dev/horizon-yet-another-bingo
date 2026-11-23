@@ -81,6 +81,9 @@ pub fn options_to_json(o: &Options) -> String {
         o.kit.write_into(object);
     }
     // The advanced squares are written only when on, so a round without them keeps the text it always had.
+    if !o.preview_card {
+        value["previewCard"] = Value::Bool(false);
+    }
     if o.objectives {
         value["objectives"] = Value::Bool(true);
     }
@@ -128,6 +131,7 @@ pub fn options_from_json(s: &str) -> Options {
         kit: Kit::read_from(&root),
         objectives: flag(&root, "objectives", d.objectives),
         lobby_tutorial_book: flag(&root, "lobbyTutorialBook", d.lobby_tutorial_book),
+        preview_card: flag(&root, "previewCard", d.preview_card),
     }
 }
 

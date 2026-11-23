@@ -50,7 +50,8 @@ fn mode_commands_parse_to_their_variant() {
 fn mode_rejects_unknown_words_and_missing_or_extra_arguments() {
     assert_eq!(parse("mode").unwrap_err(), "Usage: mode standard|inventory|lockout");
     assert_eq!(parse("mode hidden").unwrap_err(), "Unknown mode 'hidden'. Usage: mode standard|inventory|lockout");
-    assert_eq!(parse("mode lockout now").unwrap_err(), "Too many arguments for 'mode'. Usage: mode standard|inventory|lockout");
+    assert_eq!(parse("mode lockout now").unwrap_err(), "mode lockout needs on or off, got 'now'");
+    assert_eq!(parse("mode standard now").unwrap_err(), "Too many arguments for 'mode'. Usage: mode standard|inventory|lockout");
 }
 
 #[test]
@@ -62,11 +63,11 @@ fn endwhen_commands_parse_to_their_variant() {
 }
 
 #[test]
-fn endwhen_teams_win_accepts_one_and_rejects_zero() {
-    assert_eq!(parse("endwhen teams_win 1"), Ok(Command::EndWhen(EndWhen::TeamsWin(1))));
+fn endwhen_teams_win_needs_at_least_two_teams() {
+    assert_eq!(parse("endwhen teams_win 2"), Ok(Command::EndWhen(EndWhen::TeamsWin(2))));
     assert_eq!(
-        parse("endwhen teams_win 0").unwrap_err(),
-        "endwhen teams_win needs a number of teams of at least 1, got '0'"
+        parse("endwhen teams_win 1").unwrap_err(),
+        "endwhen teams_win needs a number of teams of at least 2, got '1'"
     );
     assert!(parse("endwhen teams_win many").unwrap_err().starts_with("endwhen teams_win needs"));
 }
@@ -141,15 +142,10 @@ fn spawndistance_accepts_the_range_bounds() {
 }
 
 #[test]
-fn spawndistance_rejects_zero_and_above_the_maximum() {
-    assert_eq!(
-        parse("spawndistance 0").unwrap_err(),
-        "spawndistance needs a whole number of chunks from 1 to 1000, got '0'"
-    );
-    assert_eq!(
-        parse("spawndistance 1001").unwrap_err(),
-        "spawndistance needs a whole number of chunks from 1 to 1000, got '1001'"
-    );
+fn spawndistance_accepts_zero_and_rejects_negatives_and_overflow() {
+    assert_eq!(parse("spawndistance 0"), Ok(Command::SpawnDistance(0)));
+    assert_eq!(parse("spawndistance 1001"), Ok(Command::SpawnDistance(1001)));
+    assert!(parse("spawndistance 2147483648").unwrap_err().starts_with("spawndistance needs"));
     assert!(parse("spawndistance -3").unwrap_err().starts_with("spawndistance needs"));
     assert!(parse("spawndistance far").unwrap_err().starts_with("spawndistance needs"));
     assert!(parse("spawndistance 1.5").unwrap_err().starts_with("spawndistance needs"));
@@ -157,10 +153,10 @@ fn spawndistance_rejects_zero_and_above_the_maximum() {
 
 #[test]
 fn spawndistance_without_or_with_extra_arguments_shows_usage() {
-    assert_eq!(parse("spawndistance").unwrap_err(), "Usage: spawndistance <chunks> (1 to 1000)");
+    assert_eq!(parse("spawndistance").unwrap_err(), "Usage: spawndistance <chunks> (0 or more)");
     assert_eq!(
         parse("spawndistance 5 6").unwrap_err(),
-        "Too many arguments for 'spawndistance'. Usage: spawndistance <chunks> (1 to 1000)"
+        "Too many arguments for 'spawndistance'. Usage: spawndistance <chunks> (0 or more)"
     );
 }
 

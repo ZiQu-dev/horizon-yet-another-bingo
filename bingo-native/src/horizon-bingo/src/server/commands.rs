@@ -29,15 +29,18 @@ pub enum Command {
     Card,
     /// `goal lines|items <n>` or `goal full_card`.
     Goal(Goal),
-    /// `mode standard|inventory|lockout`.
+    /// `mode standard|inventory|lockout`, or `mode lockout|inventory [on]`.
     Mode(Mode),
+    /// `mode lockout|inventory off`: back to standard, but only when that mode is the current one (the original's
+    /// per-mode toggle leaves the other modes alone).
+    ModeOff(Mode),
     /// `mode hidden_items on|off` or `mode consume_items on|off`: the card flag, on (true) or off (false).
     CardMode(CardMode, bool),
     /// `endwhen never|first_win|all_win` or `endwhen teams_win <n>`.
     EndWhen(EndWhen),
     /// `pvp`, `keepinventory`, `elytra` or `nightvision`, with `on` (true) or `off` (false).
     Toggle(Toggle, bool),
-    /// Distance between team spawns in chunks, 1 to 1000.
+    /// Distance between team spawns in chunks, 0 or more (the original's `spawn_distance` has no cap).
     SpawnDistance(u32),
     /// `playto cards <n>`, `playto infinite` or `playto replace_goals`: the win condition.
     PlayTo(WinCondition),
@@ -79,7 +82,24 @@ pub enum VoteChoice {
 
 const USAGE: &str = "start [ignore_warnings] | end | reset | defaults | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout|hidden_items on|off|consume_items on|off | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | playto cards <n>|infinite|replace_goals | stalemate end_game|reroll_card|do_nothing | options | vote next|keep|lobby | resume | stats [player] | difficulty easy|medium|hard|extreme|impossible | difficulty <S> <A> <B> <C> <D> | reroll | teams <n> | autoshuffle on|off | objectives on|off | menu | kit | kit add <item> [count] | kit remove <item> | kit clear | book | prefs <setting> [on|off]";
 
-const SPAWN_DISTANCE_MAX: u32 = 1000;
+/// The original's `integer("chunks", min = 0)` is a Brigadier integer, so the top is `Int.MAX_VALUE`.
+/// `BingoGoal.MAX_LINES` of the original.
+const MAX_LINES: u32 = 11;
+
+const SPAWN_DISTANCE_MAX: u32 = i32::MAX as u32;
+
+/// The original nests the round settings under `options <name>` with snake_case names (`BingoOptionsCommands.kt`).
+/// These are the port's flat names for them, so that both spellings are accepted.
+const OPTIONS_NAMES: [(&str, &str); 8] = [
+    ("play_to", "playto"),
+    ("end_when", "endwhen"),
+    ("stalemate", "stalemate"),
+    ("pvp", "pvp"),
+    ("elytra", "elytra"),
+    ("night_vision", "nightvision"),
+    ("keep_inventory", "keepinventory"),
+    ("spawn_distance", "spawndistance"),
+];
 
 /// The list of commands, for replies to a bad command.
 pub fn usage() -> String {
@@ -88,11 +108,36 @@ pub fn usage() -> String {
 
 /// Parses one command line (the text after `bingo`). An empty line is `Help`.
 pub fn parse(line: &str) -> Result<Command, String> {
-    let mut words = line.split_whitespace();
+    let mut words: Vec<&str> = line.split_whitespace().collect();
+    // `bingo options ...` typed as part of the line: a leading `bingo` word before another word is the command root and
+    // is skipped. `bingo` alone stays an unknown command.
+    if words.len() > 1 && words[0].eq_ignore_ascii_case("bingo") {
+        words.remove(0);
+    }
+    let mut words = words.into_iter();
     let Some(name) = words.next() else {
         return Ok(Command::Help);
     };
     let args: Vec<&str> = words.collect();
+    // The original's `options <name> ...` spelling: the same command as the flat name (`options end_when never` is
+    // `endwhen never`). `options preview_card` is only in this spelling. A bare `options` still shows the options.
+    if name.eq_ignore_ascii_case("options") {
+        if let Some((sub, rest)) = args.split_first() {
+            let sub = sub.to_lowercase();
+            if sub == "preview_card" {
+                return parse_toggle("options preview_card", Toggle::PreviewCard, rest);
+            }
+            if let Some((_, flat)) = OPTIONS_NAMES.iter().find(|(nested, _)| *nested == sub) {
+                let mut line = flat.to_string();
+                for word in rest {
+                    line.push(' ');
+                    line.push_str(word);
+                }
+                return parse(&line);
+            }
+            return Err("'options' takes no arguments.".to_string());
+        }
+    }
     match name.to_lowercase().as_str() {
         "help" => no_args(name, &args, Command::Help),
         "status" => no_args(name, &args, Command::Status),
@@ -162,6 +207,14 @@ pub fn parse(line: &str) -> Result<Command, String> {
             [] => Err("Usage: mode standard|inventory|lockout".to_string()),
             [kind, value] if kind.eq_ignore_ascii_case("hidden_items") => parse_card_mode("hidden_items", CardMode::HiddenItems, value),
             [kind, value] if kind.eq_ignore_ascii_case("consume_items") => parse_card_mode("consume_items", CardMode::ConsumeItems, value),
+            [kind, value] if kind.eq_ignore_ascii_case("lockout") || kind.eq_ignore_ascii_case("inventory") => {
+                let mode = if kind.eq_ignore_ascii_case("lockout") { Mode::Lockout } else { Mode::Inventory };
+                match value.to_lowercase().as_str() {
+                    "on" | "true" => Ok(Command::Mode(mode)),
+                    "off" | "false" => Ok(Command::ModeOff(mode)),
+                    _ => Err(format!("mode {} needs on or off, got '{value}'", kind.to_lowercase())),
+                }
+            }
             [value] => match value.to_lowercase().as_str() {
                 "standard" => Ok(Command::Mode(Mode::Standard)),
                 "inventory" => Ok(Command::Mode(Mode::Inventory)),
@@ -178,12 +231,12 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "elytra" => parse_toggle(name, Toggle::Elytra, &args),
         "nightvision" => parse_toggle(name, Toggle::NightVision, &args),
         "spawndistance" => match args.as_slice() {
-            [] => Err(format!("Usage: spawndistance <chunks> (1 to {SPAWN_DISTANCE_MAX})")),
+            [] => Err("Usage: spawndistance <chunks> (0 or more)".to_string()),
             [value] => match value.parse::<u32>() {
-                Ok(chunks) if (1..=SPAWN_DISTANCE_MAX).contains(&chunks) => Ok(Command::SpawnDistance(chunks)),
-                _ => Err(format!("spawndistance needs a whole number of chunks from 1 to {SPAWN_DISTANCE_MAX}, got '{value}'")),
+                Ok(chunks) if chunks <= SPAWN_DISTANCE_MAX => Ok(Command::SpawnDistance(chunks)),
+                _ => Err(format!("spawndistance needs a whole number of chunks, 0 or more, got '{value}'")),
             },
-            _ => Err(format!("Too many arguments for 'spawndistance'. Usage: spawndistance <chunks> (1 to {SPAWN_DISTANCE_MAX})")),
+            _ => Err("Too many arguments for 'spawndistance'. Usage: spawndistance <chunks> (0 or more)".to_string()),
         },
         "kit" => kit::parse(&args).map(Command::Kit),
         "vote" => match args.as_slice() {
@@ -224,6 +277,7 @@ pub fn requires_op(command: &Command) -> bool {
         | Command::TimeLimit(_)
         | Command::Goal(_)
         | Command::Mode(_)
+        | Command::ModeOff(_)
         | Command::CardMode(..)
         | Command::EndWhen(_)
         | Command::Toggle(..)
@@ -292,7 +346,17 @@ fn parse_goal(args: &[&str]) -> Result<Command, String> {
         [kind, value] if kind.eq_ignore_ascii_case("items") => {
             Ok(Command::Goal(Goal::Items(positive_count("goal items", value, "a number of items")?)))
         }
+        // The original's `goal <n> items|lines` order.
+        [value, kind] if value.parse::<u32>().is_ok() && kind.eq_ignore_ascii_case("lines") => {
+            Ok(Command::Goal(Goal::Lines(positive_count("goal lines", value, "a number of lines")?)))
+        }
+        [value, kind] if value.parse::<u32>().is_ok() && kind.eq_ignore_ascii_case("items") => {
+            Ok(Command::Goal(Goal::Items(positive_count("goal items", value, "a number of items")?)))
+        }
         [kind] if kind.eq_ignore_ascii_case("full_card") => Ok(Command::Goal(Goal::FullCard)),
+        [kind, what] if kind.eq_ignore_ascii_case("full_card") && what.eq_ignore_ascii_case("items") => Ok(Command::Goal(Goal::FullCard)),
+        // `full_card lines`: every line of the card, the original's `BingoGoal.MAX_LINES`.
+        [kind, what] if kind.eq_ignore_ascii_case("full_card") && what.eq_ignore_ascii_case("lines") => Ok(Command::Goal(Goal::Lines(MAX_LINES))),
         [kind] if kind.eq_ignore_ascii_case("lines") || kind.eq_ignore_ascii_case("items") => {
             Err(format!("Usage: goal {} <n>", kind.to_lowercase()))
         }
@@ -326,7 +390,7 @@ fn parse_end_when(args: &[&str]) -> Result<Command, String> {
             _ => Err(format!("Unknown endwhen '{value}'. {END_WHEN_USAGE}")),
         },
         [kind, value] if kind.eq_ignore_ascii_case("teams_win") => {
-            Ok(Command::EndWhen(EndWhen::TeamsWin(positive_count("endwhen teams_win", value, "a number of teams")?)))
+            Ok(Command::EndWhen(EndWhen::TeamsWin(min_count("endwhen teams_win", value, "a number of teams", 2)?)))
         }
         [kind, _] => Err(format!("Unknown endwhen '{kind}'. {END_WHEN_USAGE}")),
         _ => Err(format!("Too many arguments for 'endwhen'. {END_WHEN_USAGE}")),
@@ -341,7 +405,7 @@ fn parse_play_to(args: &[&str]) -> Result<Command, String> {
         [kind, value] if kind.eq_ignore_ascii_case("cards") => {
             Ok(Command::PlayTo(WinCondition::Cards(positive_count("playto cards", value, "a number of cards")?)))
         }
-        [kind] if kind.eq_ignore_ascii_case("infinite") => Ok(Command::PlayTo(WinCondition::Infinite)),
+        [kind] if kind.eq_ignore_ascii_case("infinite") || kind.eq_ignore_ascii_case("infinite_cards") => Ok(Command::PlayTo(WinCondition::Infinite)),
         [kind] if kind.eq_ignore_ascii_case("replace_goals") => Ok(Command::PlayTo(WinCondition::ReplaceGoals)),
         [kind, ..] => Err(format!("Unknown playto '{kind}'. {PLAY_TO_USAGE}")),
     }
@@ -375,8 +439,13 @@ fn parse_toggle(name: &str, toggle: Toggle, args: &[&str]) -> Result<Command, St
 
 /// A whole number of at least 1 for a count argument; `what` names it in the error.
 fn positive_count(command: &str, value: &str, what: &str) -> Result<u32, String> {
+    min_count(command, value, what, 1)
+}
+
+/// A whole number of at least `min` for a count argument; `what` names it in the error.
+fn min_count(command: &str, value: &str, what: &str, min: u32) -> Result<u32, String> {
     match value.parse::<u32>() {
-        Ok(count) if count >= 1 => Ok(count),
-        _ => Err(format!("{command} needs {what} of at least 1, got '{value}'")),
+        Ok(count) if count >= min => Ok(count),
+        _ => Err(format!("{command} needs {what} of at least {min}, got '{value}'")),
     }
 }

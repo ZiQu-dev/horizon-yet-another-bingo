@@ -64,12 +64,17 @@ impl Want {
 /// HUD get none. Before the game (`Pregame`, and `Starting` for a team) a team player gets the team's card and a player
 /// on no team gets the preview; after the game a team player gets the memento.
 pub fn want_for(status: GameStatus, team: Option<&str>, spectator: bool, hud: bool, won: bool) -> Option<Want> {
+    want_for_with(status, team, spectator, hud, won, SHOW_PREVIEW_CARD)
+}
+
+/// [`want_for`] with the `showPreviewCard` option given: off, nobody gets a map before the game.
+pub fn want_for_with(status: GameStatus, team: Option<&str>, spectator: bool, hud: bool, won: bool, preview: bool) -> Option<Want> {
     if hud || spectator {
         return None;
     }
     match (status, team) {
-        (GameStatus::Pregame, Some(key)) if SHOW_PREVIEW_CARD => Some(Want::Team { key: key.to_string() }),
-        (GameStatus::Pregame, None) if SHOW_PREVIEW_CARD => Some(Want::Preview),
+        (GameStatus::Pregame, Some(key)) if preview => Some(Want::Team { key: key.to_string() }),
+        (GameStatus::Pregame, None) if preview => Some(Want::Preview),
         (GameStatus::Starting | GameStatus::Playing, Some(key)) => Some(Want::Team { key: key.to_string() }),
         (GameStatus::Postgame, Some(key)) => Some(Want::Memento { key: key.to_string(), won }),
         _ => None,
