@@ -283,7 +283,7 @@ impl ScreenController {
             None => run(&cmds, atlas, host),
         }
         if let Some(t) = tooltip {
-            host.draw_tooltip(&t.lines, t.mouse.0 + 12, t.mouse.1 - 12);
+            host.draw_tooltip_text(&t.texts, &t.lines, t.mouse.0, t.mouse.1);
         }
         self.state = Some(state);
     }

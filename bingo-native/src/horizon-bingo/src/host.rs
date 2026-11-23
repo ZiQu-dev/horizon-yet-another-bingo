@@ -60,6 +60,12 @@ pub trait Host {
     fn draw_vanilla_nine_slice(&mut self, sprite: &str, x: f32, y: f32, w: f32, h: f32, argb: Argb);
     /// A vanilla tooltip (a dark box with these lines of text) with its corner at (x, y).
     fn draw_tooltip(&mut self, lines: &[String], x: i32, y: i32);
+    /// A tile's tooltip with the styled lines (`texts`: colours, translations kept) and their plain form (`plain`),
+    /// at the MOUSE position (x, y): vanilla's tooltip adds its own 12 px right and 12 px up. The default draws the
+    /// plain lines at that corner.
+    fn draw_tooltip_text(&mut self, _texts: &[crate::text::Text], plain: &[String], x: i32, y: i32) {
+        self.draw_tooltip(plain, x + 12, y - 12);
+    }
     /// Draws an item icon by name (`minecraft:stone`), `size` pixels square, top left at (x, y).
     fn draw_item(&mut self, name: &str, x: f32, y: f32, size: f32);
     /// Marks where a run of drawing starts, for `end_alpha` to fade. The default has nothing to fade.

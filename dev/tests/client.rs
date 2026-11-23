@@ -23,6 +23,9 @@ struct Fake {
     gui_width: Option<i32>,
     vanilla: Vec<String>,
     tooltips: Vec<Vec<String>>,
+    /// `draw_tooltip_text` calls: the components' plain lines and the mouse position they were given.
+    tile_tips: Vec<(Vec<horizon_bingo::text::Text>, (i32, i32))>,
+    mouse: (i32, i32),
     gui: Option<(i32, i32)>,
     playing: bool,
     keys: Vec<String>,
@@ -101,7 +104,7 @@ impl Host for Fake {
         self.gui
     }
     fn cursor(&self) -> (i32, i32) {
-        (0, 0)
+        self.mouse
     }
     fn is_playing_screen(&self) -> bool {
         self.playing
@@ -126,6 +129,9 @@ impl Host for Fake {
     }
     fn draw_tooltip(&mut self, lines: &[String], _x: i32, _y: i32) {
         self.tooltips.push(lines.to_vec());
+    }
+    fn draw_tooltip_text(&mut self, texts: &[horizon_bingo::text::Text], _plain: &[String], x: i32, y: i32) {
+        self.tile_tips.push((texts.to_vec(), (x, y)));
     }
     fn draw_item(&mut self, name: &str, x: f32, y: f32, size: f32) {
         self.items.push((name.to_string(), x, y, size));
@@ -1769,3 +1775,54 @@ fn the_stored_settings_hide_the_sidebar_until_the_server_sends_its_own() {
     assert!(!client.hides_layer("scoreboard_sidebar"), "the server's settings are the newer ones");
 }
 
+
+#[test]
+fn a_tile_under_the_mouse_shows_its_styled_tooltip_at_the_mouse_also_after_a_click() {
+    use horizon_bingo::text_plain::{flatten, runs};
+    let mut client = client_with_card();
+    let mut host = playing_host();
+    press_y(&mut client, &mut host);
+    for _ in 0..30 {
+        client.on_tick(&mut host);
+    }
+    let mut first = playing_host();
+    client.render_screen(&mut first);
+    let card = first.sprites.iter().find(|(_, d)| d[2] == 122.0 && d[3] == 132.0).expect("the card").1;
+    // tile (0, 0): 11 px in and 21 px down, 20 px a tile; the mouse at its middle
+    let mouse = (card[0] as i32 + 21, card[1] as i32 + 31);
+    let width = |s: &str| 6 * s.chars().count() as i32;
+    let lang = |k: &str| match k {
+        "bingo.tier.c" => Some("C-tier".to_string()),
+        "bingo.list.items" => Some("Items".to_string()),
+        _ => None,
+    };
+    for clicked in [false, true] {
+        if clicked {
+            client.screen_press((427, 240), mouse, &width);
+            client.screen_release();
+            for _ in 0..3 {
+                client.on_tick(&mut host);
+            }
+        }
+        let mut frame = playing_host();
+        frame.mouse = mouse;
+        client.render_screen(&mut frame);
+        assert_eq!(frame.tile_tips.len(), 1, "one tooltip (clicked: {clicked})");
+        let (texts, at) = &frame.tile_tips[0];
+        // vanilla adds its own 12 px offset: the mouse is passed as it is
+        assert_eq!(*at, mouse);
+        // the original's lines: the item's name (a translation key the game resolves), then tier, list and id
+        assert_eq!(texts.len(), 2);
+        assert_eq!(flatten(&texts[0], &lang), "block.minecraft.dark_oak_pressure_plate");
+        let coloured: Vec<(String, Option<u32>)> = runs(&texts[1], &lang).into_iter().map(|r| (r.text, r.rgb)).collect();
+        assert_eq!(
+            coloured,
+            [
+                ("C-tier".to_string(), Some(0xFFFF55)),
+                (" • ".to_string(), Some(0xAAAAAA)),
+                ("Items".to_string(), Some(0x5555FF)),
+                (" • b1".to_string(), Some(0xAAAAAA)),
+            ]
+        );
+    }
+}
