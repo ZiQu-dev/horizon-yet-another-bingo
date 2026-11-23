@@ -281,6 +281,44 @@ pub fn lobby_panel_reroll() -> Line {
     Line::new("bingo.native.lobby_panel_reroll", "Re-roll Card", &[])
 }
 
+/// `Auto Shuffle: On` or `Auto Shuffle: Off`, the panel's toggle tile.
+pub fn lobby_panel_auto_shuffle(on: bool) -> Line {
+    if on {
+        Line::new("bingo.native.lobby_panel_auto_shuffle_on", "Auto Shuffle: On", &[])
+    } else {
+        Line::new("bingo.native.lobby_panel_auto_shuffle_off", "Auto Shuffle: Off", &[])
+    }
+}
+
+/// `N teams` (`1 team` for one), the panel's team count tile, with the original's keys.
+pub fn lobby_panel_team_count(teams: usize) -> Line {
+    if teams == 1 {
+        return Line::new("bingo.game.team_count_1", "1 team", &[]);
+    }
+    let teams = teams.to_string();
+    Line::new("bingo.game.team_count", "%s teams", &[teams.as_str()])
+}
+
+/// `-`, the panel tile for one team fewer.
+pub fn lobby_panel_minus() -> Line {
+    Line::new("bingo.native.lobby_panel_minus", "-", &[])
+}
+
+/// `+`, the panel tile for one team more.
+pub fn lobby_panel_plus() -> Line {
+    Line::new("bingo.native.lobby_panel_plus", "+", &[])
+}
+
+/// `Shuffle`, the panel tile that shuffles the teams.
+pub fn lobby_panel_shuffle() -> Line {
+    Line::new("bingo.native.lobby_panel_shuffle", "Shuffle", &[])
+}
+
+/// `Reset Defaults`, the panel tile that puts every rule back (the original's key).
+pub fn lobby_panel_reset_defaults() -> Line {
+    Line::new("bingo.options.reset_defaults", "Reset Defaults", &[])
+}
+
 /// `You cannot ready up without joining a team! (use '%s' if you want to spectate)` (`CommandReadyNotOnATeam`).
 pub fn ready_not_on_team(spectate_command: &str) -> Line {
     Line::new(

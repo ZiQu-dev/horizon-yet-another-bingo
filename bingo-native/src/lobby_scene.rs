@@ -5,7 +5,7 @@
 use super::guarded;
 use super::server;
 use horizon_bingo::server::menu;
-use horizon_bingo::server::lobby_scene::{self, Click, LOBBY_LEVEL};
+use horizon_bingo::server::lobby_scene::{self, Click, PanelState, LOBBY_LEVEL};
 use mod_api::{BlockClick, Flow, Hand, InteractionResult, LevelDimension, LogicalSide, ServerHost};
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, Ordering},
@@ -18,6 +18,8 @@ static CLICKS: Mutex<Vec<(u128, Click)>> = Mutex::new(Vec::new());
 const CLICKS_MAX: usize = 64;
 /// Whether the displays were made for this server run.
 static SCENE_BUILT: AtomicBool = AtomicBool::new(false);
+/// What the live tiles show now (`None` until the scene is built).
+static SHOWN: Mutex<Option<PanelState>> = Mutex::new(None);
 /// Ticks since the scene was last tried, and how many tries have failed.
 static TICKS: AtomicU32 = AtomicU32::new(0);
 static FAILED_TRIES: AtomicU32 = AtomicU32::new(0);
@@ -29,6 +31,7 @@ const MAX_TRIES: u32 = 8;
 /// A new server: the displays of the last one are not this one's, and no click is left.
 pub fn server_about_to_start() {
     CLICKS.lock().unwrap_or_else(PoisonError::into_inner).clear();
+    *SHOWN.lock().unwrap_or_else(PoisonError::into_inner) = None;
     SCENE_BUILT.store(false, Ordering::Relaxed);
     TICKS.store(0, Ordering::Relaxed);
     FAILED_TRIES.store(0, Ordering::Relaxed);
@@ -66,12 +69,18 @@ pub fn tick(host: &mut dyn ServerHost) {
             Click::Menu => server::open_lobby_menu(host, player),
             Click::Start => server::panel_slot(host, player, menu::ROOT_START_SLOT),
             Click::Reroll => server::panel_slot(host, player, menu::ROOT_REROLL_SLOT),
+            Click::AutoShuffle => server::panel_slot(host, player, menu::ROOT_AUTO_SHUFFLE_SLOT),
+            Click::TeamsFewer => server::panel_slot(host, player, menu::ROOT_TEAMS_FEWER_SLOT),
+            Click::TeamsMore => server::panel_slot(host, player, menu::ROOT_TEAMS_MORE_SLOT),
+            Click::Shuffle => server::panel_slot(host, player, menu::ROOT_SHUFFLE_SLOT),
+            Click::ResetDefaults => server::panel_slot(host, player, menu::ROOT_DEFAULTS_SLOT),
             Click::Join(team) => {
                 let _ = server::perform_command(host, player, &format!("join {team}"));
             }
         }
     }
     guarded("bingo lobby scene", || build_scene(host));
+    guarded("bingo lobby tiles", || refresh_tiles(host));
 }
 
 /// Makes the displays: the old ones (by tag) are removed first, so nothing doubles. Tried every `TRY_EVERY` ticks while a
@@ -95,13 +104,30 @@ fn build_scene(host: &mut dyn ServerHost) {
     }
     // Nothing to remove the first time: the kill fails then, which is fine.
     let _ = host.commands().run_command(&lobby_scene::clear_command());
-    let all_made = lobby_scene::summon_commands()
+    let state = server::panel_state();
+    let all_made = lobby_scene::summon_commands(state)
         .iter()
         .fold(true, |made, line| host.commands().run_command(line) && made);
     if all_made {
         SCENE_BUILT.store(true, Ordering::Relaxed);
+        *SHOWN.lock().unwrap_or_else(PoisonError::into_inner) = Some(state);
         super::log("bingo: the lobby's displays were made");
     } else if FAILED_TRIES.fetch_add(1, Ordering::Relaxed) + 1 >= MAX_TRIES {
         super::log("bingo: the lobby's displays could not be made; giving up for this server run");
+    }
+}
+
+/// Makes the live tiles again when the rules they show changed (a panel click, the chest menu or a command), so the numbers
+/// are current. Only the two tagged tiles are replaced, and only when the state differs from what is shown.
+fn refresh_tiles(host: &mut dyn ServerHost) {
+    let mut shown = SHOWN.lock().unwrap_or_else(PoisonError::into_inner);
+    let Some(old) = *shown else { return };
+    let state = server::panel_state();
+    if state == old {
+        return;
+    }
+    let all_made = lobby_scene::refresh_commands(state).iter().fold(true, |made, line| host.commands().run_command(line) && made);
+    if all_made {
+        *shown = Some(state);
     }
 }

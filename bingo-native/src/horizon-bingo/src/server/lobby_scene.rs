@@ -29,23 +29,60 @@ pub const PANEL_ROTATION: [f32; 2] = [0.0, 0.0];
 pub enum Tile {
     Title,
     Players,
+    /// Auto shuffle's toggle.
+    AutoShuffle,
+    /// One team fewer, the `-` beside the count.
+    TeamsFewer,
+    /// The `N teams` tile.
     Teams,
+    /// One team more, the `+` beside the count.
+    TeamsMore,
+    Shuffle,
     Settings,
     Reroll,
+    ResetDefaults,
     Start,
 }
 
 /// The tiles and their rectangles `[x0, y0, x1, y1]` in world coordinates on the panel plane, 5 blocks wide (x -2..3) and
-/// 3 high (y 17.05..19.95). The summon commands and the click mapping both read this table. Left column: title, teams,
-/// settings, reroll; right column: players, and the tall start tile.
-pub const TILES: [(Tile, [f64; 4]); 6] = [
-    (Tile::Title, [-2.0, 19.30, 0.95, 19.95]),
-    (Tile::Teams, [-2.0, 18.55, 0.95, 19.20]),
-    (Tile::Settings, [-2.0, 17.80, 0.95, 18.45]),
-    (Tile::Reroll, [-2.0, 17.05, 0.95, 17.70]),
-    (Tile::Players, [1.05, 19.30, 3.0, 19.95]),
-    (Tile::Start, [1.05, 17.05, 3.0, 19.20]),
+/// 3.9 high (y 17.03..20.95). The summon commands and the click mapping both read this table. Left column, top to bottom:
+/// title, auto shuffle, the team count row (`-`, `N teams`, `+`), shuffle, reroll, settings, reset defaults; right column:
+/// players, and the tall start tile.
+pub const TILES: [(Tile, [f64; 4]); 11] = [
+    (Tile::Title, [-2.0, 20.45, 0.95, 20.95]),
+    (Tile::AutoShuffle, [-2.0, 19.88, 0.95, 20.38]),
+    (Tile::TeamsFewer, [-2.0, 19.31, -1.25, 19.81]),
+    (Tile::Teams, [-1.20, 19.31, 0.15, 19.81]),
+    (Tile::TeamsMore, [0.20, 19.31, 0.95, 19.81]),
+    (Tile::Shuffle, [-2.0, 18.74, 0.95, 19.24]),
+    (Tile::Reroll, [-2.0, 18.17, 0.95, 18.67]),
+    (Tile::Settings, [-2.0, 17.60, 0.95, 18.10]),
+    (Tile::ResetDefaults, [-2.0, 17.03, 0.95, 17.53]),
+    (Tile::Players, [1.05, 20.45, 3.0, 20.95]),
+    (Tile::Start, [1.05, 17.03, 3.0, 20.38]),
 ];
+
+/// The tag of the display of a tile that shows a number or a state, so it alone can be made again when that changes.
+pub fn tile_tag(tile: Tile) -> Option<&'static str> {
+    match tile {
+        Tile::AutoShuffle => Some("bingo_lobby_tile_auto_shuffle"),
+        Tile::Teams => Some("bingo_lobby_tile_team_count"),
+        _ => None,
+    }
+}
+
+/// What the panel's live tiles show: the auto shuffle rule and the team count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PanelState {
+    pub auto_shuffle: bool,
+    pub teams: usize,
+}
+
+impl Default for PanelState {
+    fn default() -> Self {
+        Self { auto_shuffle: false, teams: 2 }
+    }
+}
 
 /// The tile under the point `(x, y)` of the panel's plane, if any. The edges belong to the tile above and to the right.
 pub fn tile_at(x: f64, y: f64) -> Option<Tile> {
@@ -70,13 +107,22 @@ pub const PADS: [(&str, [i32; 3]); 8] = [
 /// What a right click on a block of the lobby does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Click {
-    /// Opens the lobby menu on its root page (the settings tile, a click on no tile, and the teams tile: the menu has no
-    /// page of its own for teams, its team count and auto shuffle are on the root page).
+    /// Opens the lobby menu on its root page (the settings tile, the team count tile, and a click on no tile).
     Menu,
     /// Starts the game, as the menu's start slot does.
     Start,
     /// Rerolls the card, as the menu's reroll slot does.
     Reroll,
+    /// Toggles the auto shuffle rule, as the menu's slot does.
+    AutoShuffle,
+    /// One team fewer in the auto shuffle (the menu's slot).
+    TeamsFewer,
+    /// One team more in the auto shuffle (the menu's slot).
+    TeamsMore,
+    /// Shuffles the teams (the menu's shuffle slot).
+    Shuffle,
+    /// Every rule back to its default (the menu's slot).
+    ResetDefaults,
     /// Joins the team with this key (`bingo_red`).
     Join(&'static str),
 }
@@ -89,6 +135,11 @@ pub fn click_at(pos: [i32; 3], point: [f64; 3]) -> Option<Click> {
         return Some(match tile_at(point[0], point[1]) {
             Some(Tile::Start) => Click::Start,
             Some(Tile::Reroll) => Click::Reroll,
+            Some(Tile::AutoShuffle) => Click::AutoShuffle,
+            Some(Tile::TeamsFewer) => Click::TeamsFewer,
+            Some(Tile::TeamsMore) => Click::TeamsMore,
+            Some(Tile::Shuffle) => Click::Shuffle,
+            Some(Tile::ResetDefaults) => Click::ResetDefaults,
             Some(Tile::Teams | Tile::Settings | Tile::Title | Tile::Players) | None => Click::Menu,
         });
     }
@@ -203,9 +254,18 @@ const SPACE_PX: f64 = 4.0;
 
 /// The command for one text display in the lobby, at `pos`, with `text` (an SNBT component). `scale` is `[x, y]`; `billboard`
 /// is `fixed` (then `rotation` is its `[yaw, pitch]`) or `center` (faces the viewer).
-fn summon_display(pos: [f64; 3], scale: [f64; 2], billboard: &str, rotation: [f32; 2], background: u32, text: &str) -> String {
+fn summon_display(
+    pos: [f64; 3],
+    scale: [f64; 2],
+    billboard: &str,
+    rotation: [f32; 2],
+    background: u32,
+    text: &str,
+    extra_tag: Option<&str>,
+) -> String {
+    let tags = extra_tag.map_or(String::new(), |tag| format!(",\"{tag}\""));
     format!(
-        "execute in {LOBBY_LEVEL} run summon minecraft:text_display {} {} {} {{Tags:[\"{UI_TAG}\"],billboard:\"{billboard}\",\
+        "execute in {LOBBY_LEVEL} run summon minecraft:text_display {} {} {} {{Tags:[\"{UI_TAG}\"{tags}],billboard:\"{billboard}\",\
          Rotation:[{:?}f,{:?}f],alignment:\"center\",background:{},shadow:true,brightness:{{block:15,sky:15}},\
          transformation:{{scale:[{:.3}f,{:.3}f,1f],translation:[0f,0f,0f],left_rotation:[0f,0f,0f,1f],right_rotation:[0f,0f,0f,1f]}},\
          text:{text}}}",
@@ -221,13 +281,13 @@ fn text_px(text: &str) -> f64 {
 /// One panel tile as a summon command: the label centred in `rect` on the panel plane. The label has blank lines above and
 /// below (`blank_lines` each) and spaces beside it, so the display's background about fills the rectangle; the scale makes
 /// the text block as high as the rectangle.
-fn tile_command(rect: [f64; 4], line: &Line, color: &str, background: u32, blank_lines: usize) -> String {
+fn tile_command(tile: Tile, rect: [f64; 4], line: &Line, color: &str, background: u32, blank_lines: usize) -> String {
     let (width, height) = (rect[2] - rect[0], rect[3] - rect[1]);
     let lines = 1 + 2 * blank_lines;
     let scale_y = height * 40.0 / (lines as f64 * LINE_PX + 2.0);
     let scale_x = scale_y * TEXT_ASPECT;
     let wanted_px = width * 40.0 / scale_x;
-    let pad = ((wanted_px - text_px(line.template)) / (2.0 * SPACE_PX)).floor().max(0.0) as usize;
+    let pad = ((wanted_px - text_px(&line.render())) / (2.0 * SPACE_PX)).floor().max(0.0) as usize;
     let spaces = literal(&" ".repeat(pad), None, false, true);
     let newlines = literal(&"\n".repeat(blank_lines), None, false, true);
     let mut parts = Vec::new();
@@ -248,6 +308,7 @@ fn tile_command(rect: [f64; 4], line: &Line, color: &str, background: u32, blank
         PANEL_ROTATION,
         background,
         &text,
+        tile_tag(tile),
     )
 }
 
@@ -256,20 +317,50 @@ pub fn clear_command() -> String {
     format!("execute in {LOBBY_LEVEL} run kill @e[type=minecraft:text_display,tag={UI_TAG}]")
 }
 
-/// The commands that summon the displays: one for each tile of the panel and, for each pad, the team's `[symbol name]` 1.4
-/// blocks above the pad block and `Click to join!` 1.1 above it. `clear_command` is not among them.
-pub fn summon_commands() -> Vec<String> {
+/// The look of a tile: its label, text colour, background and blank lines around the label, for the panel's `state`.
+fn tile_look(tile: Tile, state: PanelState) -> (Line, &'static str, u32, usize) {
+    match tile {
+        Tile::Title => (texts::lobby_panel_title(), "green", BACKGROUND_GREEN, 0),
+        Tile::Players => (texts::lobby_panel_players(), "green", BACKGROUND_GREEN, 0),
+        Tile::AutoShuffle if state.auto_shuffle => (texts::lobby_panel_auto_shuffle(true), "green", BACKGROUND_GREEN, 0),
+        Tile::AutoShuffle => (texts::lobby_panel_auto_shuffle(false), "white", BACKGROUND_DARK, 0),
+        Tile::TeamsFewer => (texts::lobby_panel_minus(), "white", BACKGROUND_DARK, 0),
+        Tile::Teams => (texts::lobby_panel_team_count(state.teams), "white", BACKGROUND_DARK, 0),
+        Tile::TeamsMore => (texts::lobby_panel_plus(), "white", BACKGROUND_DARK, 0),
+        Tile::Shuffle => (texts::lobby_panel_shuffle(), "white", BACKGROUND_DARK, 0),
+        Tile::Settings => (texts::lobby_panel_settings(), "white", BACKGROUND_DARK, 0),
+        Tile::Reroll => (texts::lobby_panel_reroll(), "white", BACKGROUND_DARK, 0),
+        Tile::ResetDefaults => (texts::lobby_panel_reset_defaults(), "white", BACKGROUND_DARK, 0),
+        Tile::Start => (texts::lobby_menu_start(), "white", BACKGROUND_DARK, 4),
+    }
+}
+
+/// The summon command of one tile for the panel's `state`.
+fn tile_summon(tile: Tile, rect: [f64; 4], state: PanelState) -> String {
+    let (line, color, background, blank) = tile_look(tile, state);
+    tile_command(tile, rect, &line, color, background, blank)
+}
+
+/// The commands that make the tiles with a number or a state (`tile_tag`) again for `state`: each old display is removed by
+/// its tag first, so running this twice leaves one display each. Cheap: two kills and two summons.
+pub fn refresh_commands(state: PanelState) -> Vec<String> {
     let mut commands = Vec::new();
     for (tile, rect) in TILES {
-        let (line, color, background, blank) = match tile {
-            Tile::Title => (texts::lobby_panel_title(), "green", BACKGROUND_GREEN, 0),
-            Tile::Players => (texts::lobby_panel_players(), "green", BACKGROUND_GREEN, 0),
-            Tile::Teams => (texts::lobby_panel_teams(), "white", BACKGROUND_DARK, 0),
-            Tile::Settings => (texts::lobby_panel_settings(), "white", BACKGROUND_DARK, 0),
-            Tile::Reroll => (texts::lobby_panel_reroll(), "white", BACKGROUND_DARK, 0),
-            Tile::Start => (texts::lobby_menu_start(), "white", BACKGROUND_DARK, 3),
-        };
-        commands.push(tile_command(rect, &line, color, background, blank));
+        if let Some(tag) = tile_tag(tile) {
+            commands.push(format!("execute in {LOBBY_LEVEL} run kill @e[type=minecraft:text_display,tag={tag}]"));
+            commands.push(tile_summon(tile, rect, state));
+        }
+    }
+    commands
+}
+
+/// The commands that summon the displays: one for each tile of the panel (its live tiles showing `state`) and, for each pad,
+/// the team's `[symbol name]` 1.4 blocks above the pad block and `Click to join!` 1.1 above it. `clear_command` is not
+/// among them.
+pub fn summon_commands(state: PanelState) -> Vec<String> {
+    let mut commands = Vec::new();
+    for (tile, rect) in TILES {
+        commands.push(tile_summon(tile, rect, state));
     }
     for (key, pad) in PADS {
         let Some(team) = PRESETS.iter().find(|p| p.key == key) else { continue };
@@ -299,7 +390,7 @@ pub fn summon_commands() -> Vec<String> {
             ],
         );
         let (x, y, z) = (f64::from(pad[0]) + 0.5, f64::from(pad[1]), f64::from(pad[2]) + 0.5);
-        commands.push(summon_display([x, y + 1.4, z], [1.0, 1.0], "center", [0.0, 0.0], BACKGROUND_LABEL, &name));
+        commands.push(summon_display([x, y + 1.4, z], [1.0, 1.0], "center", [0.0, 0.0], BACKGROUND_LABEL, &name, None));
         commands.push(summon_display(
             [x, y + 1.1, z],
             [1.0, 1.0],
@@ -307,7 +398,26 @@ pub fn summon_commands() -> Vec<String> {
             [0.0, 0.0],
             BACKGROUND_LABEL,
             &component(&texts::click_to_join(), Some("gray"), false, true),
+            None,
         ));
     }
     commands
+}
+
+/// The console commands that hold the player called `name` still for `seconds`: slowness at its top level stops walking and
+/// jump boost at a level past any jump stops jumping (the original rides players on invisible bats). Particles are hidden.
+pub fn freeze_commands(name: &str, seconds: i32) -> Vec<String> {
+    let seconds = seconds.max(1);
+    vec![
+        format!("effect give {name} minecraft:slowness {seconds} 255 true"),
+        format!("effect give {name} minecraft:jump_boost {seconds} 128 true"),
+    ]
+}
+
+/// The console commands that release `name` from `freeze_commands`: only those two effects are cleared.
+pub fn thaw_commands(name: &str) -> Vec<String> {
+    vec![
+        format!("effect clear {name} minecraft:slowness"),
+        format!("effect clear {name} minecraft:jump_boost"),
+    ]
 }

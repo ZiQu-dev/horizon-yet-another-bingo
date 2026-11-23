@@ -1262,6 +1262,11 @@ fn open_lobby_page(host: &mut dyn mod_api::ServerHost, uuid: u128, page: Page) {
 
 /// A click on the lobby panel's start or reroll tile: what a click on that slot of the menu's root page does, with no menu
 /// open. A refused start opens the menu on its warnings page, which offers the start anyway.
+/// What the lobby panel's live tiles show now: the session's auto shuffle rule and team count.
+pub(crate) fn panel_state() -> lobby_scene::PanelState {
+    with_session(|s| lobby_scene::PanelState { auto_shuffle: s.rules().team_auto_shuffle, teams: s.rules().team_count })
+}
+
 pub(crate) fn panel_slot(host: &mut dyn mod_api::ServerHost, uuid: u128, slot: usize) {
     let (rules, pregame, operator) = menu_view(&*host, uuid);
     let view = View {

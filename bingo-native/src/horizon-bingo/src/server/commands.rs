@@ -17,6 +17,8 @@ pub enum Command {
     Start { ignore_warnings: bool },
     End,
     Reset,
+    /// `defaults`: every round rule back to its default, before the game starts.
+    Defaults,
     ShuffleTeams(usize),
     Join(String),
     Spectator,
@@ -75,7 +77,7 @@ pub enum VoteChoice {
     ReturnToLobby,
 }
 
-const USAGE: &str = "start [ignore_warnings] | end | reset | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout|hidden_items on|off|consume_items on|off | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | playto cards <n>|infinite|replace_goals | stalemate end_game|reroll_card|do_nothing | options | vote next|keep|lobby | resume | stats [player] | difficulty easy|medium|hard|extreme|impossible | difficulty <S> <A> <B> <C> <D> | reroll | teams <n> | autoshuffle on|off | objectives on|off | menu | kit | kit add <item> [count] | kit remove <item> | kit clear | book | prefs <setting> [on|off]";
+const USAGE: &str = "start [ignore_warnings] | end | reset | defaults | shuffleteams <n> | join <team> | spectator | ready [cancel] | timelimit <minutes|off> | card | status | goal lines <n>|items <n>|full_card | mode standard|inventory|lockout|hidden_items on|off|consume_items on|off | endwhen never|first_win|all_win|teams_win <n> | pvp on|off | keepinventory on|off | elytra on|off | nightvision on|off | spawndistance <chunks> | playto cards <n>|infinite|replace_goals | stalemate end_game|reroll_card|do_nothing | options | vote next|keep|lobby | resume | stats [player] | difficulty easy|medium|hard|extreme|impossible | difficulty <S> <A> <B> <C> <D> | reroll | teams <n> | autoshuffle on|off | objectives on|off | menu | kit | kit add <item> [count] | kit remove <item> | kit clear | book | prefs <setting> [on|off]";
 
 const SPAWN_DISTANCE_MAX: u32 = 1000;
 
@@ -96,6 +98,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "status" => no_args(name, &args, Command::Status),
         "end" => no_args(name, &args, Command::End),
         "reset" => no_args(name, &args, Command::Reset),
+        "defaults" => no_args(name, &args, Command::Defaults),
         "spectator" => no_args(name, &args, Command::Spectator),
         "card" => no_args(name, &args, Command::Card),
         "reroll" => no_args(name, &args, Command::Reroll),
@@ -215,6 +218,7 @@ pub fn requires_op(command: &Command) -> bool {
         Command::Start { .. }
         | Command::End
         | Command::Reset
+        | Command::Defaults
         | Command::ShuffleTeams(_)
         | Command::ReadyCancel
         | Command::TimeLimit(_)

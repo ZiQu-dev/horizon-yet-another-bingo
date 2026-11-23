@@ -29,6 +29,14 @@ pub const CLOSE_SLOT: usize = 35;
 /// The root page's reroll button and its start button: the in-world panel runs these two as a click on the slot.
 pub const ROOT_REROLL_SLOT: usize = 10;
 pub const ROOT_START_SLOT: usize = 22;
+/// The root page's shuffle teams slot: shuffles the online players over the rules' team count.
+/// The root page's auto shuffle toggle, and the buttons for one team fewer and one more.
+pub const ROOT_AUTO_SHUFFLE_SLOT: usize = 12;
+pub const ROOT_TEAMS_FEWER_SLOT: usize = 14;
+pub const ROOT_TEAMS_MORE_SLOT: usize = 16;
+pub const ROOT_SHUFFLE_SLOT: usize = 11;
+/// The root page's reset defaults slot: every rule back to its default.
+pub const ROOT_DEFAULTS_SLOT: usize = 24;
 /// The spawn distances the Features page offers, in chunks.
 pub const SPAWN_DISTANCES: [u32; 4] = [10, 25, 50, 100];
 /// The reply of a successful `start`, as the session gives it.
@@ -531,7 +539,27 @@ fn root(view: &View) -> Vec<(usize, Slot)> {
             ),
         ),
         at(
-            12,
+            ROOT_SHUFFLE_SLOT,
+            button(
+                view,
+                "minecraft:ender_eye",
+                "Shuffle teams",
+                "Shuffles the players over the teams.",
+                &format!("shuffleteams {}", rules.team_count),
+            ),
+        ),
+        at(
+            ROOT_DEFAULTS_SLOT,
+            button(
+                view,
+                "minecraft:barrier",
+                "Reset defaults",
+                "Puts every rule back to its default.",
+                "defaults",
+            ),
+        ),
+        at(
+            ROOT_AUTO_SHUFFLE_SLOT,
             toggle(
                 view,
                 "minecraft:name_tag",
@@ -573,7 +601,7 @@ fn team_count_slots(view: &View) -> Vec<(usize, Slot)> {
     let mut out = Vec::new();
     if teams > 1 {
         out.push(at(
-            14,
+            ROOT_TEAMS_FEWER_SLOT,
             button(
                 view,
                 "minecraft:red_dye",
@@ -583,7 +611,7 @@ fn team_count_slots(view: &View) -> Vec<(usize, Slot)> {
             ),
         ));
     } else {
-        out.push(at(14, info("minecraft:red_dye", "Fewer teams", vec!["At least one team.".to_string()])));
+        out.push(at(ROOT_TEAMS_FEWER_SLOT, info("minecraft:red_dye", "Fewer teams", vec!["At least one team.".to_string()])));
     }
     out.push(at(
         15,
@@ -595,7 +623,7 @@ fn team_count_slots(view: &View) -> Vec<(usize, Slot)> {
     ));
     if teams < most {
         out.push(at(
-            16,
+            ROOT_TEAMS_MORE_SLOT,
             button(
                 view,
                 "minecraft:lime_dye",
@@ -605,7 +633,7 @@ fn team_count_slots(view: &View) -> Vec<(usize, Slot)> {
             ),
         ));
     } else {
-        out.push(at(16, info("minecraft:lime_dye", "More teams", vec![format!("At most {most} teams.")])));
+        out.push(at(ROOT_TEAMS_MORE_SLOT, info("minecraft:lime_dye", "More teams", vec![format!("At most {most} teams.")])));
     }
     out
 }

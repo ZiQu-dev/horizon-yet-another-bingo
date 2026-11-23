@@ -571,5 +571,10 @@
   "bingo.native.lobby_panel_players": "Players",
   "bingo.native.lobby_panel_teams": "Teams",
   "bingo.native.lobby_panel_settings": "Settings",
-  "bingo.native.lobby_panel_reroll": "Re-roll Card"
+  "bingo.native.lobby_panel_reroll": "Re-roll Card",
+  "bingo.native.lobby_panel_auto_shuffle_on": "Auto Shuffle: On",
+  "bingo.native.lobby_panel_auto_shuffle_off": "Auto Shuffle: Off",
+  "bingo.native.lobby_panel_minus": "-",
+  "bingo.native.lobby_panel_plus": "+",
+  "bingo.native.lobby_panel_shuffle": "Shuffle"
 }

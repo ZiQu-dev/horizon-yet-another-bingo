@@ -168,6 +168,8 @@ pub struct Session {
     reply: Option<Line>,
     /// Whether the countdown step being dispatched is the first, made by the start itself (see `countdown_titles`).
     countdown_first: bool,
+    /// The players are held still by the countdown's effects (`lobby_scene::freeze_commands`) and not yet released.
+    frozen: bool,
     /// Items each player found this round, for the history and `stats` (see `stats::Captures`).
     captures: Captures,
     /// Each card's objective state (`objectives::Runtime`), indexed like `cards`. Read by a card with objective squares.
@@ -261,6 +263,7 @@ impl Session {
             await_rejoin: false,
             reply: None,
             countdown_first: false,
+            frozen: false,
             captures: Captures::default(),
             objective_runtime: Vec::new(),
             held: HashMap::new(),
@@ -1241,6 +1244,7 @@ impl Session {
                 self.dispatch(host, events);
                 self.say(texts::reset_success())
             }
+            Command::Defaults => self.set_rule(host, |rules| *rules = Options::default(), "rules"),
             Command::ShuffleTeams(count) => self.shuffle_teams(host, count),
             Command::Join(team) => self.join_team(host, player, &team),
             Command::Spectator => self.become_spectator(host, player),
@@ -1770,6 +1774,11 @@ impl Session {
                 }
                 Event::Countdown { seconds } => {
                     send_all(host, wire::countdown(seconds));
+                    if self.countdown_first && seconds > 0 {
+                        self.freeze_players(host, seconds);
+                    } else if !self.countdown_first && seconds <= 0 {
+                        self.thaw_players(host);
+                    }
                     self.countdown_titles(host, seconds);
                 }
                 Event::Timer { seconds_remaining } => send_all(host, wire::timer(seconds_remaining)),
@@ -1779,6 +1788,31 @@ impl Session {
                     send_all(host, self.game_status());
                     host.broadcast_line(&texts::game_continues());
                 }
+            }
+        }
+    }
+
+    /// Holds every player on a team still for the countdown's `seconds` (the original rides them on invisible bats): slowness
+    /// and jump boost at their top levels, queued as console commands.
+    fn freeze_players(&mut self, host: &mut dyn ServerHost, seconds: i32) {
+        for player in host.players() {
+            if self.teams.team_of(player.uuid).is_some() {
+                for line in super::lobby_scene::freeze_commands(&player.name, seconds) {
+                    host.command(&line);
+                }
+            }
+        }
+        self.frozen = true;
+    }
+
+    /// Lets the players go when the countdown ends or the round is reset during it. Nothing happens if they were not held.
+    fn thaw_players(&mut self, host: &mut dyn ServerHost) {
+        if !std::mem::take(&mut self.frozen) {
+            return;
+        }
+        for player in host.players() {
+            for line in super::lobby_scene::thaw_commands(&player.name) {
+                host.command(&line);
             }
         }
     }
@@ -1877,6 +1911,7 @@ impl Session {
     /// Back to Pregame: the card, the progress and the ready flags go; the teams stay, but the server's team list drops
     /// the teams the start added.
     fn reset_round(&mut self, host: &mut dyn ServerHost) {
+        self.thaw_players(host);
         self.send_to_lobby(host);
         self.hide_boss_bars(host);
         self.sidebar_end = None;
