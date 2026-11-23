@@ -80,8 +80,8 @@ code, its packet formats and its server logic. Upstream project: https://gitlab.
 - Horizon features the mod needs, all required (none is optional):
   - `[native] level_reset = true` and `world_control = true` in `horizon-mod.toml`.
   - The `reset_vanilla` API, merged on 2026-11-22 as horizon-rust/horizon#18379.
-  - A fix that finds the world spawn again after a reset. It is not in a release yet, so the Horizon build must include
-    it. This README does not check that the pinned commit does.
+  - The fix that finds the world spawn again after a reset, merged on 2026-11-22 as horizon-rust/horizon#19899. The
+    pinned commit includes it; a Horizon build older than that leaves players without a spawn after a reset.
 - To play multiplayer bingo: a server running this bundle's server half or the original mod. A client without the mod
   shows no bingo content.
 
