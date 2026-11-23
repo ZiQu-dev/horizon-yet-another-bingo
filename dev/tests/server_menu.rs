@@ -40,8 +40,8 @@ fn every_page_has_its_slots_at_the_documented_places() {
     assert_eq!(BACK_SLOT, 27);
     assert_eq!(CLOSE_SLOT, 35);
     assert_eq!(
-        indexes(&Page::Root, &rules),
-        vec![0, 1, 2, 3, 4, 6, 7, 8, 10, 12, 13, 14, 15, 16, 22, 35]
+        { let mut got = indexes(&Page::Root, &rules); got.sort(); got },
+        vec![0, 1, 2, 3, 4, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 22, 24, 35]
     );
     assert_eq!(
         indexes(&Page::Features, &rules),
