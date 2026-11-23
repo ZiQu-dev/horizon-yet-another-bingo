@@ -94,7 +94,26 @@ def extract_lobby(z, names, out):
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(lobby.read(n))
             count += 1
+    allow_commands(root / "level.dat")
     return count
+
+
+def allow_commands(level_dat):
+    """Sets `allowCommands` in the lobby's level.dat: a world made from it has cheats on, so its player is an operator.
+
+    The mod's `bingo start`, the START tile and the settings need operator rights (the original's `CONFIGURE_GAME`
+    permission), and a single-player world has no operators without cheats. The byte is patched in place, no NBT
+    library is needed: a byte tag is `01`, a two-byte name length, the name, the value."""
+    import gzip
+    if not level_dat.is_file():
+        return
+    data = bytearray(gzip.decompress(level_dat.read_bytes()))
+    tag = b"\x01\x00\x0dallowCommands"
+    at = data.find(tag)
+    if at < 0 or data[at + len(tag)] == 1:
+        return
+    data[at + len(tag)] = 1
+    level_dat.write_bytes(gzip.compress(bytes(data)))
 
 
 def main() -> int:

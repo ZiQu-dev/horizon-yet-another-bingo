@@ -846,9 +846,7 @@ impl Hooks for Mod {
 
     /// A right click on the lobby's menu signs or a team pad (server side, main hand): opens the menu or joins the team.
     fn right_click_block(&self, host: HostSide<'_>, event: &mut RightClickBlockEvent<'_>) -> Flow {
-        if !matches!(host, HostSide::Server(_)) {
-            return Flow::Continue;
-        }
+        let _ = host;
         let mut result = *event.cancellation_result;
         let flow = lobby_scene::right_click_block(event.click, &mut result);
         *event.cancellation_result = result;

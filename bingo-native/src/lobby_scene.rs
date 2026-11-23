@@ -37,7 +37,7 @@ pub fn server_about_to_start() {
 /// The `right_click_block` hook, server side: a click of the main hand on the menu's signs or a team pad in the lobby is
 /// taken (queued, and cancelled so the block does nothing else). The off hand's call of the same click is left alone.
 pub fn right_click_block(click: &BlockClick<'_>, result: &mut InteractionResult) -> Flow {
-    if !matches!(click.side, LogicalSide::Server) || !matches!(click.hand, Hand::Main) {
+    if !matches!(click.hand, Hand::Main) {
         return Flow::Continue;
     }
     if !matches!(&click.dimension, LevelDimension::Custom(key) if key.to_string() == LOBBY_LEVEL) {
@@ -46,9 +46,13 @@ pub fn right_click_block(click: &BlockClick<'_>, result: &mut InteractionResult)
     let Some(action) = lobby_scene::click_at(click.pos, click.hit.point) else {
         return Flow::Continue;
     };
-    let mut clicks = CLICKS.lock().unwrap_or_else(PoisonError::into_inner);
-    if clicks.len() < CLICKS_MAX {
-        clicks.push((click.player, action));
+    // The window's own call only cancels, so the held item (the tutorial book) is not used on the click as well; the
+    // server's call takes the action.
+    if matches!(click.side, LogicalSide::Server) {
+        let mut clicks = CLICKS.lock().unwrap_or_else(PoisonError::into_inner);
+        if clicks.len() < CLICKS_MAX {
+            clicks.push((click.player, action));
+        }
     }
     *result = InteractionResult::Success;
     Flow::Cancel
