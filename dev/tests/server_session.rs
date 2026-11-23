@@ -258,6 +258,10 @@ fn full_game_from_start_to_game_over() {
             "team modify bingo_red color red",
             "team join bingo_red Alice",
             "team join bingo_red Bob",
+            "effect give Alice minecraft:slowness 3 255 true",
+            "effect give Alice minecraft:jump_boost 3 128 true",
+            "effect give Bob minecraft:slowness 3 255 true",
+            "effect give Bob minecraft:jump_boost 3 128 true",
         ]
     );
     let start = host.take();
