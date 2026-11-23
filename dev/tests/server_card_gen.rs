@@ -204,10 +204,11 @@ fn a_tier_that_runs_out_takes_items_from_the_next_easier_tier() {
 }
 
 #[test]
-#[should_panic(expected = "too few items")]
-fn panics_when_no_easier_tier_can_fill_the_card() {
+fn pads_with_a_free_space_when_no_tier_can_fill_the_card() {
     let pool = pool_from_json(r#"{"S": ["s1"], "A": [], "B": [], "C": [], "D": []}"#).unwrap();
-    generate_card(0, &pool, [2, 0, 0, 0, 0]);
+    let card = generate_card(0, &pool, [2, 0, 0, 0, 0]);
+    assert_eq!(card.squares.len(), 2);
+    assert_eq!(card.squares.iter().filter(|s| s.item == "bingo:free_space").count(), 1);
 }
 
 #[test]

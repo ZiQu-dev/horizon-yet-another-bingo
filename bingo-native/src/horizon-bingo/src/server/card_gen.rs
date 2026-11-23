@@ -1,7 +1,7 @@
 //! Card generation: draws a card from the card pool with a seeded SplitMix64 generator. The same seed, pool and
 //! distribution always give the same card. The pool itself (tier lists, tags, groups) is built in [`super::pool`].
 //! The draw is not the original's `kotlin.random.Random`, so the same seed gives other cards than the original does.
-use super::types::{Card, Objective};
+use super::types::{Card, Objective, FREE_SPACE};
 use crate::card_tile::TierLabel;
 use serde_json::Value;
 use std::collections::HashSet;
@@ -155,8 +155,8 @@ pub fn replace_squares(seed: u64, pool: &Pool, card: &mut Card, indices: &[usize
 }
 
 /// Builds a card: `distribution[i]` squares of tier `i`, no item twice, no two items of one group. A tier that runs out
-/// of items takes them from the nearest tiers, nearest first (the square keeps its own tier). Panics if the pool cannot
-/// fill the card.
+/// of items takes them from the nearest tiers, nearest first (the square keeps its own tier). A pool that cannot fill
+/// the card is topped up with free spaces ([`FREE_SPACE`]), as the original does.
 pub fn generate_card(seed: u64, pool: &Pool, distribution: [usize; 5]) -> Card {
     let mut rng = Rng::new(seed);
     let mut excluded = HashSet::new();
@@ -174,10 +174,8 @@ pub fn generate_card(seed: u64, pool: &Pool, distribution: [usize; 5]) -> Card {
             }
         }
         if remaining > 0 {
-            panic!(
-                "card generation: the pool has too few items for tier {}: {} square(s) cannot be filled",
-                TIER_NAMES[tier], remaining
-            );
+            // The original logs an error and pads the card with free spaces (CardService.kt:565-576).
+            squares.extend((0..remaining).map(|_| Objective { item: FREE_SPACE.to_string(), tier: TIER_LABELS[tier] }));
         }
     }
 

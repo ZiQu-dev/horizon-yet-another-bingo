@@ -52,11 +52,11 @@ fn full_card_reaches_every_goal() {
 }
 
 #[test]
-fn zero_goals_are_never_reached() {
+fn zero_goals_are_reached_at_once() {
     let all = progress(&(0..25).collect::<Vec<_>>());
-    assert!(!goal_reached(&all, Goal::Lines(0)));
-    assert!(!goal_reached(&all, Goal::Items(0)));
-    assert!(!goal_reached(&progress(&[]), Goal::Items(0)));
+    assert!(goal_reached(&all, Goal::Lines(0)));
+    assert!(goal_reached(&all, Goal::Items(0)));
+    assert!(goal_reached(&progress(&[]), Goal::Items(0)));
 }
 
 #[test]
@@ -152,9 +152,9 @@ fn game_should_end_table() {
         (EndWhen::TeamsWin(2), 2, 3, true),
         (EndWhen::TeamsWin(3), 2, 3, false),
         (EndWhen::TeamsWin(3), 3, 3, true),
-        (EndWhen::TeamsWin(0), 0, 2, false),
-        (EndWhen::TeamsWin(0), 2, 2, false),
-        (EndWhen::AllWin, 0, 0, false),
+        (EndWhen::TeamsWin(0), 0, 2, true),
+        (EndWhen::TeamsWin(0), 2, 2, true),
+        (EndWhen::AllWin, 0, 0, true),
         (EndWhen::AllWin, 1, 2, false),
         (EndWhen::AllWin, 2, 2, true),
         (EndWhen::AllWin, 1, 1, true),

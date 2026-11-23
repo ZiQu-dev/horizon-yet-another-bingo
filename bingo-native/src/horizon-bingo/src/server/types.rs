@@ -18,6 +18,9 @@ pub struct Objective {
     pub tier: TierLabel,
 }
 
+/// The item id of a free space (`BingoObjective.FreeSpace.id`): a square every team has achieved from the start.
+pub const FREE_SPACE: &str = "bingo:free_space";
+
 /// A 5x5 card, row-major: index = row * 5 + column.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Card {
