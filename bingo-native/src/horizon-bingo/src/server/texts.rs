@@ -226,6 +226,45 @@ pub fn start_subtitle() -> Line {
     Line::new("bingo.game.announce.starting", "Game is starting!", &[])
 }
 
+/// `Game has started!`, the subtitle when the countdown reaches zero.
+pub fn started_subtitle() -> Line {
+    Line::new("bingo.game.announce.started", "Game has started!", &[])
+}
+
+/// A countdown number (`3`, `2`, `1`) as a title; the number is its own text in every language.
+pub fn countdown_number(seconds: i32) -> Line {
+    Line::new("bingo.native.countdown_number", "%s", &[&seconds.to_string()])
+}
+
+/// The empty line: a title's subtitle when there is none.
+pub fn no_subtitle() -> Line {
+    Line::new("", "", &[])
+}
+
+/// `Click to join!`, under a team's name on its lobby pad (`LobbyClickToJoin`).
+pub fn click_to_join() -> Line {
+    Line::new("bingo.lobby.click_to_join", "Click to join!", &[])
+}
+
+/// `Right click to open the menu`, the second line of the lobby menu's sign text.
+pub fn lobby_menu_hint() -> Line {
+    Line::new("bingo.native.lobby_menu_hint", "Right click to open the menu", &[])
+}
+
+/// `START`, the green line of the lobby menu's sign text.
+pub fn lobby_menu_start() -> Line {
+    Line::new("bingo.native.lobby_menu_start", "START", &[])
+}
+
+/// `You cannot ready up without joining a team! (use '%s' if you want to spectate)` (`CommandReadyNotOnATeam`).
+pub fn ready_not_on_team(spectate_command: &str) -> Line {
+    Line::new(
+        "bingo.command.ready.not_on_a_team",
+        "You cannot ready up without joining a team! (use '%s' if you want to spectate)",
+        &[spectate_command],
+    )
+}
+
 /// `BINGO Start!`, the chat banner before the options of the game.
 pub fn start_banner() -> Line {
     Line::new("bingo.game.start", "BINGO Start!", &[])

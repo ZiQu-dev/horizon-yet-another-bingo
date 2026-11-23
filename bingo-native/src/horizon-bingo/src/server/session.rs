@@ -166,6 +166,8 @@ pub struct Session {
     await_rejoin: bool,
     /// The translatable reply of the last command, when its reply has a translation key (see [`Session::take_reply`]).
     reply: Option<Line>,
+    /// Whether the countdown step being dispatched is the first, made by the start itself (see `countdown_titles`).
+    countdown_first: bool,
     /// Items each player found this round, for the history and `stats` (see `stats::Captures`).
     captures: Captures,
     /// Each card's objective state (`objectives::Runtime`), indexed like `cards`. Read by a card with objective squares.
@@ -258,6 +260,7 @@ impl Session {
             sidebar_end: None,
             await_rejoin: false,
             reply: None,
+            countdown_first: false,
             captures: Captures::default(),
             objective_runtime: Vec::new(),
             held: HashMap::new(),
@@ -1245,7 +1248,7 @@ impl Session {
             Command::ReadyCancel => self.cancel_ready(host),
             Command::TimeLimit(minutes) => self.set_time_limit(host, minutes),
             Command::Difficulty(counts) => self.set_rule(host, |rules| rules.tier_counts = counts, "difficulty"),
-            Command::Reroll => self.reroll(),
+            Command::Reroll => self.reroll(host, player),
             Command::TeamCount(teams) => self.set_rule(host, |rules| rules.team_count = teams, "team count"),
             Command::Card => self.open_card(host, player),
             Command::Goal(goal) => self.set_rule(host, |rules| rules.goal = goal, "goal"),
@@ -1527,7 +1530,9 @@ impl Session {
         let players = host.players();
         self.add_teams_to_server(host, &players);
         let events = self.game.start().map_err(str::to_owned)?;
+        self.countdown_first = true;
         self.dispatch(host, events);
+        self.countdown_first = false;
         self.announce_start(host);
         Ok(())
     }
@@ -1573,7 +1578,8 @@ impl Session {
     /// player on a team. The original colours the title in the team's colour; the title here is white.
     fn announce_start(&self, host: &mut dyn ServerHost) {
         for player in host.players() {
-            host.title(player.uuid, &texts::start_title(), &texts::start_subtitle());
+            let color = self.teams.team_of(player.uuid).and_then(super::lobby_scene::team_color);
+            host.show_title(player.uuid, &texts::start_title(), &texts::start_subtitle(), color.as_deref());
         }
         let options = self.options_text();
         for player in host.players() {
@@ -1762,7 +1768,10 @@ impl Session {
                         self.begin_round(host);
                     }
                 }
-                Event::Countdown { seconds } => send_all(host, wire::countdown(seconds)),
+                Event::Countdown { seconds } => {
+                    send_all(host, wire::countdown(seconds));
+                    self.countdown_titles(host, seconds);
+                }
                 Event::Timer { seconds_remaining } => send_all(host, wire::timer(seconds_remaining)),
                 Event::Ended { winner } => self.announce_end(host, winner),
                 Event::Reset => self.reset_round(host),
@@ -1770,6 +1779,25 @@ impl Session {
                     send_all(host, self.game_status());
                     host.broadcast_line(&texts::game_continues());
                 }
+            }
+        }
+    }
+
+    /// The titles of a countdown step (`CountdownService.sendCountdownPacket`): the number for each second left, and at zero
+    /// `BINGO` in the team's colour (white without a team) over `Game has started!`. The first step, which comes with the
+    /// start's own title (`announce_start`), shows nothing: the start title stays on screen for that second instead.
+    fn countdown_titles(&mut self, host: &mut dyn ServerHost, seconds: i32) {
+        let first = std::mem::take(&mut self.countdown_first);
+        if first {
+            return;
+        }
+        for player in host.players() {
+            if seconds > 0 {
+                host.show_title(player.uuid, &texts::countdown_number(seconds), &texts::no_subtitle(), None);
+            } else if seconds == 0 {
+                let color = self.teams.team_of(player.uuid).and_then(super::lobby_scene::team_color);
+                let color = color.as_deref().unwrap_or("white");
+                host.show_title(player.uuid, &texts::start_title(), &texts::started_subtitle(), Some(color));
             }
         }
     }
@@ -2367,6 +2395,7 @@ impl Session {
             self.ready.set_ready(player, false);
             self.send_ready_updates(host);
         }
+        host.play_sound(player, super::lobby_scene::SOUND_TEAM_CHANGED);
         let name = player_name(&*host, player);
         self.say(texts::joined_team(&name, team_name(team)))
     }
@@ -2397,6 +2426,10 @@ impl Session {
         let Some(player) = player else {
             return "Only a player can ready up.".to_string();
         };
+        // As the original's `ReadyService.setReady`: a player on no team (a spectator too) cannot ready up.
+        if self.teams.team_of(player).is_none() {
+            return self.say(texts::ready_not_on_team("/spectator"));
+        }
         let ready = !self.ready.is_ready(player);
         self.ready.set_ready(player, ready);
         self.send_ready_updates(host);
@@ -2543,11 +2576,14 @@ impl Session {
     /// `/bingo reroll`: a new seed for the card the game will start with, drawn from the shuffle generator. Only before the
     /// game starts (there is no card to redraw before that: the native lobby shows none). The seed is not saved, as the
     /// round's seed is not saved outside a game in progress.
-    fn reroll(&mut self) -> String {
+    fn reroll(&mut self, host: &mut dyn ServerHost, player: Option<u128>) -> String {
         if self.game.status() != GameStatus::Pregame {
             return "The card can be rerolled only before the game starts.".to_string();
         }
         self.seed = self.rng.next_u64();
+        if let Some(player) = player {
+            host.play_sound(player, super::lobby_scene::SOUND_REROLL);
+        }
         "Card re-rolled.".to_string()
     }
 

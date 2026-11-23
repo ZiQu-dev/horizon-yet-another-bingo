@@ -44,6 +44,18 @@ pub trait ServerHost {
     /// A title and a subtitle in the middle of one player's screen (`/title`), with the default times. The default does
     /// nothing, so a test host need not implement it.
     fn title(&mut self, _player: u128, _title: &Line, _subtitle: &Line) {}
+    /// A title and a subtitle for one player, the title in the chat colour `color` (`red`, `light_purple`) when given. The
+    /// subtitle is the empty line for none. The default is `title`, which has no colour; the Horizon adapter runs `/title`.
+    fn show_title(&mut self, player: u128, title: &Line, subtitle: &Line, _color: Option<&str>) {
+        self.title(player, title, subtitle);
+    }
+    /// Plays a vanilla sound (`minecraft:block.wooden_button.click_on`) to one player, at their place, as a queued console
+    /// command. Nothing is played for a player who is not online.
+    fn play_sound(&mut self, player: u128, sound: &str) {
+        if let Some(found) = self.players().into_iter().find(|p| p.uuid == player) {
+            self.command(&super::lobby_scene::sound_command(&found.name, sound));
+        }
+    }
     /// Reads a file of the mod's data folder (for example `options.json`), or `None` if it is missing. The default
     /// has no files, so a test host need not implement it.
     fn read_file(&mut self, _name: &str) -> Option<String> {

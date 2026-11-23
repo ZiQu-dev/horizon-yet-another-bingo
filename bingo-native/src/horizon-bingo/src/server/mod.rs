@@ -30,3 +30,4 @@ pub mod texts;
 pub mod infobook;
 pub mod prefs;
 pub mod world_reset;
+pub mod lobby_scene;
