@@ -11,7 +11,7 @@ use crate::card_tile::{CardTile, TierLabel};
 use crate::card_tile_action::CardTileAction;
 use crate::card_tile_image::{CardTileImage, Decoration};
 use crate::display_cards::{CardDisplay, CardDisplayPacket, PlayerProfile, FORMATTING_NAMES};
-use crate::game_over::{GameOverPacket, ScoreRanking};
+use crate::game_over::{EndScreenTab, GameOverPacket, ScoreRanking};
 use crate::game_reset::GameResetPacket;
 use crate::game_status::{GameStatusPacket, JavaDuration};
 use crate::item::ItemStack;
@@ -152,7 +152,38 @@ pub fn game_over_v2(
     duration_ms: i64,
     scores: Vec<ScoreRanking>,
 ) -> (&'static str, Vec<u8>) {
-    game_over_v2_with(winner, is_winner, duration_ms, scores, &EndStats::default())
+    game_over_v2_with(winner, is_winner, duration_ms, scores, &EndStats::default(), &EndExtras::default())
+}
+
+/// What `GameOverService.createPacket` adds to the numbers: the world seed, whether the ready vote (the primary button,
+/// `Return to Lobby`) is on offer, and whether the packet only refreshes a screen that is already open.
+#[derive(Debug, Clone, Default)]
+pub struct EndExtras {
+    pub seed: Option<i64>,
+    pub ready_vote_available: bool,
+    pub is_update: bool,
+    /// The panel's heading (the reason) and the line under it (the yellow message), as translations with the English as
+    /// their fallback: `(key, fallback, arguments)`.
+    pub title: Option<(String, String, Vec<String>)>,
+    pub subtitle: Option<(String, String, Vec<String>)>,
+}
+
+fn translation((key, fallback, args): &(String, String, Vec<String>)) -> Text {
+    let mut entries = vec![("translate", Nbt::string(key)), ("fallback", Nbt::string(fallback))];
+    if !args.is_empty() {
+        entries.push(("with", Nbt::list(args.iter().map(|a| Nbt::string(a)).collect())));
+    }
+    Text(Nbt::compound(entries))
+}
+
+/// `GameOverPacket.defaultTab`: Scores when there are several teams and not exactly one finished (a draw, or several
+/// finishers), else Cards.
+pub fn default_tab(scores: &[ScoreRanking]) -> EndScreenTab {
+    if scores.len() > 1 && scores.iter().filter(|row| row.duration.is_some()).count() != 1 {
+        EndScreenTab::Scores
+    } else {
+        EndScreenTab::Cards
+    }
 }
 
 /// `game_over_v2` with the statistics lines: the best time, the win streak and the captured items of the viewer
@@ -163,7 +194,9 @@ pub fn game_over_v2_with(
     duration_ms: i64,
     scores: Vec<ScoreRanking>,
     end: &EndStats,
+    extras: &EndExtras,
 ) -> (&'static str, Vec<u8>) {
+    let default_tab = default_tab(&scores);
     let viewer = end.player.as_ref();
     let packet = GameOverPacket {
         winner: winner.map(str::to_owned),
@@ -179,6 +212,12 @@ pub fn game_over_v2_with(
         ended_at_millis: end.ended_at_ms,
         is_best_time: end.is_best_time,
         prev_best_time: end.prev_best_time_ms.map(JavaDuration::of_millis),
+        seed: extras.seed,
+        is_ready_vote_available: extras.ready_vote_available,
+        is_update: extras.is_update,
+        title: extras.title.as_ref().map_or_else(Text::empty, translation),
+        subtitle: extras.subtitle.as_ref().map_or_else(Text::empty, translation),
+        default_tab,
         ..GameOverPacket::default()
     };
     ("game_over_v2", encode(|w| packet.write_v2(w).expect("game_over_v2: a text component fails to write")))

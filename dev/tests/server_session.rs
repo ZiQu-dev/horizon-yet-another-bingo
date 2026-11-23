@@ -209,7 +209,7 @@ fn ranking(index: i32, key: &str, name: &str, items: i32, lines: i32, cards: i32
         key: key.to_string(),
         name: Text::plain(name),
         score: TeamScore { items, lines, cards },
-        duration: Some(duration.to_string()),
+        duration: (duration != "DNF").then(|| duration.to_string()),
     }
 }
 
@@ -346,7 +346,6 @@ fn full_game_from_start_to_game_over() {
     let expected_lines: Vec<String> = row
         .iter()
         .map(|name| format!("Alice got [{}]", name.strip_prefix("minecraft:").unwrap_or(name)))
-        .chain(std::iter::once("Red won the game!".to_string()))
         .collect();
     assert_eq!(broadcasts, expected_lines);
 
@@ -648,8 +647,8 @@ fn time_limit_ends_the_game_with_no_winner_at_tick_1200() {
     let over = decode(&only(&end, ALICE, "game_over_v2"), GameOverPacket::read_v2).unwrap();
     assert_eq!(over.winner, None);
     assert!(!over.is_winner);
-    assert_eq!(over.scores, vec![ranking(0, "bingo_red", "Red", 0, 0, 0, "PT1M")]);
-    assert_eq!(host.take_broadcasts(), vec!["The game has ended.".to_string()]);
+    assert_eq!(over.scores, vec![ranking(0, "bingo_red", "Red", 0, 0, 0, "DNF")]);
+    assert!(host.take_broadcasts().is_empty(), "the end has no extra announcement line");
 }
 
 #[test]
@@ -698,8 +697,8 @@ fn ending_by_command_sends_the_end_screen_without_a_winner() {
     let sent = host.take();
     let over = decode(&only(&sent, ALICE, "game_over_v2"), GameOverPacket::read_v2).unwrap();
     assert_eq!(over.winner, None);
-    assert_eq!(over.scores, vec![ranking(0, "bingo_red", "Red", 0, 0, 0, "PT0S")]);
-    assert_eq!(host.take_broadcasts(), vec!["The game has ended.".to_string()]);
+    assert_eq!(over.scores, vec![ranking(0, "bingo_red", "Red", 0, 0, 0, "DNF")]);
+    assert!(host.take_broadcasts().is_empty());
 }
 
 #[test]

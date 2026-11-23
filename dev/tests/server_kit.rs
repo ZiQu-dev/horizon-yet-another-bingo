@@ -341,23 +341,11 @@ fn the_cards_leave_out_the_items_of_the_kit() {
     }
 }
 
-#[test]
-fn a_round_end_says_the_game_has_ended_as_a_translatable_line() {
-    let mut host = Host::default();
-    let mut session = Session::new(options(7));
-    lobby(&mut host, &mut session);
-    run(&mut session, &mut host, Some(ALICE), "start");
-    run(&mut session, &mut host, Some(ALICE), "end");
-    assert!(host.keyed.contains(&"bingo.native.game_ended|The game has ended.".to_string()), "{:?}", host.keyed);
-    assert!(host.broadcasts.contains(&"The game has ended.".to_string()));
-}
-
 // The lines: English as rendered, and the arguments and escapes.
 
 #[test]
 fn lines_render_their_english_with_arguments_and_percent_escapes() {
     assert_eq!(texts::team_reached_goal("Red").render(), "Red reached the goal!");
-    assert_eq!(texts::team_won_game("Blue").render(), "Blue won the game!");
     assert_eq!(texts::game_continues().render(), "The game continues.");
     assert_eq!(
         texts::stalemate_lockout().render(),

@@ -15,7 +15,7 @@ use horizon_bingo::server::options::Options;
 use horizon_bingo::server::ready::ReadyOptions;
 use horizon_bingo::server::session::{Session, SessionOptions};
 use horizon_bingo::server::sidebar::Shown;
-use horizon_bingo::server::texts::Line;
+use horizon_bingo::server::texts::{self, Line};
 use horizon_bingo::server::types::Player;
 use horizon_bingo::server::world_reset::{self, Mode, ResetRefusal, WorldPort};
 use mod_api::{
@@ -292,6 +292,14 @@ impl ServerHost for ServerAdapter<'_> {
 
     fn tell(&mut self, player: u128, line: &str) {
         tell_player(&mut *self.host, player, Text::literal(line));
+    }
+
+    // PORT-GAP: the API's `Text` has no colour or click, so a styled line goes out as a queued `tellraw` command.
+    fn tell_spans(&mut self, player: u128, spans: &[texts::Span]) {
+        match self.players().into_iter().find(|p| p.uuid == player) {
+            Some(found) => self.command(&format!("tellraw {} {}", found.name, texts::spans_json(spans))),
+            None => {}
+        }
     }
 
     fn broadcast(&mut self, line: &str) {
