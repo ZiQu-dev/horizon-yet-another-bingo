@@ -405,10 +405,13 @@ pub fn summon_commands(state: PanelState) -> Vec<String> {
 }
 
 /// The console commands that hold the player called `name` still for `seconds`: slowness at its top level stops walking and
-/// jump boost at a level past any jump stops jumping (the original rides players on invisible bats). Particles are hidden.
+/// jump boost at a level past any jump stops jumping (the original rides players on invisible bats). The players wait
+/// for the start in spectator mode, which flies and which no effect holds, so they are put in adventure mode first (the
+/// game's own modes are given back when the round begins). Particles are hidden.
 pub fn freeze_commands(name: &str, seconds: i32) -> Vec<String> {
     let seconds = seconds.max(1);
     vec![
+        format!("gamemode adventure {name}"),
         format!("effect give {name} minecraft:slowness {seconds} 255 true"),
         format!("effect give {name} minecraft:jump_boost {seconds} 128 true"),
     ]

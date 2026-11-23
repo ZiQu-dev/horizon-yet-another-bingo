@@ -253,6 +253,7 @@ fn freeze_and_thaw_commands_name_only_slowness_and_jump_boost() {
     assert_eq!(
         lobby_scene::freeze_commands("Alice", 5),
         vec![
+            "gamemode adventure Alice".to_owned(),
             "effect give Alice minecraft:slowness 5 255 true".to_owned(),
             "effect give Alice minecraft:jump_boost 5 128 true".to_owned(),
         ]
