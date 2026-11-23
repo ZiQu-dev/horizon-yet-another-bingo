@@ -151,7 +151,7 @@ enum Op {
     Item { key: ItemKey, at: [f32; 2], size: f32 },
     NineSlice { sprite: String, rect: [f32; 4], argb: u32 },
     // PORT-GAP: a tooltip is drawn at full alpha; the new draw context gives no way to fade it.
-    Tooltip { lines: Vec<String>, at: [f32; 2] },
+    Tooltip { lines: Vec<Text>, at: [f32; 2] },
 }
 
 impl Op {
@@ -188,11 +188,63 @@ impl Draw {
                 }
                 Op::NineSlice { sprite, rect, argb } => out.gui_nine_slice(&sprite, rect, argb),
                 Op::Tooltip { lines, at } => {
-                    let texts: Vec<Text> = lines.into_iter().map(|l| Text::literal(l)).collect();
-                    let _ = out.gui_tooltip(&texts, at);
+                    let _ = out.gui_tooltip(&lines, at);
                 }
             }
         }
+    }
+}
+
+/// A component as the wire sends it (network NBT) as the game's own text: translations stay keys for the game to
+/// resolve (item names), colours and italics are kept.
+fn text_of(nbt: &horizon_bingo::nbt::Nbt) -> Text {
+    use horizon_bingo::nbt::Nbt;
+    use mod_api::text::{TextContent, TextStyle};
+    fn flag(nbt: &Nbt, key: &str) -> Option<bool> {
+        match nbt.get(key) {
+            Some(Nbt::Byte(b)) => Some(*b != 0),
+            _ => None,
+        }
+    }
+    match nbt {
+        Nbt::String(s) => Text::literal(s.clone()),
+        Nbt::List { items, .. } => {
+            let mut it = items.iter().map(text_of);
+            let first = it.next().unwrap_or_else(|| Text::literal(""));
+            it.fold(first, |t, next| t.append(next))
+        }
+        Nbt::Compound(_) => {
+            let string = |k: &str| match nbt.get(k) {
+                Some(Nbt::String(s)) => Some(s.clone()),
+                _ => None,
+            };
+            let content = if let Some(key) = string("translate") {
+                let arguments = match nbt.get("with") {
+                    Some(Nbt::List { items, .. }) => items.iter().map(text_of).collect(),
+                    _ => Vec::new(),
+                };
+                TextContent::Translatable { key, fallback: string("fallback"), arguments }
+            } else {
+                TextContent::Literal(string("text").or_else(|| string("")).unwrap_or_default())
+            };
+            let mut style = TextStyle::default();
+            style.color = string("color");
+            style.italic = flag(nbt, "italic");
+            style.bold = flag(nbt, "bold");
+            let mut text = Text::new(content).with_style(style);
+            if let Some(Nbt::List { items, .. }) = nbt.get("extra") {
+                for item in items {
+                    text = text.append(text_of(item));
+                }
+            }
+            text
+        }
+        other => Text::literal(match other {
+            Nbt::Int(v) => v.to_string(),
+            Nbt::Long(v) => v.to_string(),
+            Nbt::Short(v) => v.to_string(),
+            _ => String::new(),
+        }),
     }
 }
 
@@ -478,7 +530,16 @@ impl BingoHost for ReadOnly<'_> {
         self.draw.ops.push(Op::NineSlice { sprite: full, rect: [x, y, w, h], argb });
     }
     fn draw_tooltip(&mut self, lines: &[String], x: i32, y: i32) {
-        self.draw.ops.push(Op::Tooltip { lines: lines.to_vec(), at: [x as f32, y as f32] });
+        let lines = lines.iter().map(|l| Text::literal(l.clone())).collect();
+        self.draw.ops.push(Op::Tooltip { lines, at: [x as f32, y as f32] });
+    }
+    fn draw_tooltip_text(&mut self, texts: &[horizon_bingo::text::Text], plain: &[String], x: i32, y: i32) {
+        // The engine's tooltip is placed from the mouse and adds vanilla's offset itself.
+        let lines: Vec<Text> = match texts.len() == plain.len() {
+            true => texts.iter().map(|t| text_of(&t.0)).collect(),
+            false => plain.iter().map(|l| Text::literal(l.clone())).collect(),
+        };
+        self.draw.ops.push(Op::Tooltip { lines, at: [x as f32, y as f32] });
     }
     fn draw_item(&mut self, name: &str, x: f32, y: f32, size: f32) {
         let Some(id) = Identifier::parse_namespaced(name) else { return };

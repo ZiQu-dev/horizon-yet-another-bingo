@@ -154,6 +154,8 @@ pub struct TileTooltip {
     pub team: TeamKey,
     pub index: usize,
     pub lines: Vec<String>,
+    /// The same lines as components, keeping their colours and translations (a lore line that had to wrap is plain).
+    pub texts: Vec<crate::text::Text>,
     pub mouse: (i32, i32),
 }
 
@@ -454,6 +456,28 @@ pub fn tile_tooltip_lines(tile: &CardTile, lang: Lang<'_>, text_width: &dyn Fn(&
     lines
 }
 
+/// The tooltip lines of a tile as components: `tile_tooltip_lines`' lines, each kept as the original's styled text
+/// unless wrapping split it.
+pub fn tile_tooltip_texts(tile: &CardTile, lang: Lang<'_>, text_width: &dyn Fn(&str) -> i32) -> Vec<crate::text::Text> {
+    let mut out = Vec::new();
+    if let Some(name) = &tile.name {
+        out.push(name.clone());
+    }
+    for (i, lore) in tile.lore.iter().enumerate() {
+        if i + 1 >= tile.lore.len() {
+            out.push(lore.clone());
+            continue;
+        }
+        let wrapped = wrap_lines(&flatten(lore, lang), TOOLTIP_MAX_WIDTH, text_width);
+        if wrapped.len() == 1 {
+            out.push(lore.clone());
+        } else {
+            out.extend(wrapped.iter().map(|l| crate::text::Text::plain(l)));
+        }
+    }
+    out
+}
+
 /// `Font.wrapLines`, approximated: greedy word wrap at spaces, a newline always breaks, and a word wider than the
 /// line is cut by characters. TODO(integration): Minecraft's `StringSplitter` also keeps the style and the spaces at
 /// a break; this drops the trailing space of each line.
@@ -642,7 +666,8 @@ pub fn frame(input: &CardsInput<'_>, scroll: &CardsScroll) -> CardsFrame {
                 if let Some(tile) = slot.card.tiles.get(index) {
                     let lines = tile_tooltip_lines(tile, input.lang, input.text_width);
                     if !lines.is_empty() {
-                        out.tooltip = Some(TileTooltip { team: slot.team.clone(), index, lines, mouse: input.mouse });
+                        let texts = tile_tooltip_texts(tile, input.lang, input.text_width);
+                        out.tooltip = Some(TileTooltip { team: slot.team.clone(), index, lines, texts, mouse: input.mouse });
                     }
                 }
             }
