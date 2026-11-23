@@ -7,6 +7,7 @@ use horizon_bingo::server::chat;
 use horizon_bingo::server::commands::{Command, chat_shortcut, parse, requires_op};
 use horizon_bingo::server::game::GameOptions;
 use horizon_bingo::server::host::ServerHost;
+use horizon_bingo::server::lobby_scene;
 use horizon_bingo::server::items::{ItemIds, NO_ICONS_NOTE, missing_names_warning};
 use horizon_bingo::server::map_render::{DirtyRect, FileIcons, IconSource, Overlays};
 use horizon_bingo::server::menu::{self, Menus, Outcome, Page, View};
@@ -210,6 +211,7 @@ fn with_session<T>(f: impl FnOnce(&mut Session) -> T) -> T {
 /// A new server (a world opens): the old game and its players belong to the previous world.
 pub fn server_about_to_start() {
     *SESSION.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    super::lobby_scene::server_about_to_start();
     LOBBY_TO_OPEN.store(true, Ordering::Relaxed);
     LOBBY_FILES_DONE.store(false, Ordering::Relaxed);
     CHAT_VOTES
@@ -460,6 +462,17 @@ impl ServerHost for ServerAdapter<'_> {
         }
         if !subtitle.render().is_empty() {
             tell_player(&mut *self.host, player, translated(subtitle));
+        }
+    }
+
+    fn show_title(&mut self, player: u128, title: &Line, subtitle: &Line, color: Option<&str>) {
+        // The title is the `/title` command (the API has no title call), run with the tick's other console commands.
+        let Some(name) = online_name(&*self.host, player) else {
+            log(&format!("bingo: title for {player:032x} not shown"));
+            return;
+        };
+        for line in lobby_scene::title_commands(&name, title, subtitle, color) {
+            self.command(&line);
         }
     }
 
@@ -941,6 +954,7 @@ pub fn server_tick(host: &mut dyn mod_api::ServerHost, phase: ServerTickPhase) {
     guarded("bingo chat votes", || run_chat_votes(&mut *host));
     guarded("bingo team chat", || run_team_chat(&mut *host));
     guarded("bingo sidebar", || update_sidebar(&mut *host));
+    guarded("bingo lobby clicks", || super::lobby_scene::tick(&mut *host));
     // Outside the session's lock: a console command may run hooks that reach the session again.
     guarded("bingo console commands", || run_queued_commands(&mut *host));
 }
@@ -1214,7 +1228,7 @@ fn menu_items(
 }
 
 /// `bingo menu`: opens the lobby menu on its root page for the player.
-fn open_lobby_menu(host: &mut dyn mod_api::ServerHost, uuid: u128) {
+pub(crate) fn open_lobby_menu(host: &mut dyn mod_api::ServerHost, uuid: u128) {
     let (rules, pregame, operator) = menu_view(&*host, uuid);
     let items = menu_items(&*host, &Page::Root, &rules, pregame, operator);
     // `CloseFirst` is vanilla's default: a new menu closes the old screen first.
@@ -1292,7 +1306,11 @@ pub fn menu_clicked(
         pregame,
         operator,
     };
-    match menu::click(&page, slot, &view) {
+    let outcome = menu::click(&page, slot, &view);
+    if !matches!(outcome, Outcome::Nothing) {
+        ServerAdapter { host: &mut *host }.play_sound(uuid, lobby_scene::SOUND_BUTTON);
+    }
+    match outcome {
         Outcome::Nothing => {}
         Outcome::Show(next) => {
             show_lobby_page(host, uuid, window, next);

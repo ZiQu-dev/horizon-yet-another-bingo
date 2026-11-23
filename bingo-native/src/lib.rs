@@ -14,7 +14,7 @@ use mod_api::{
     RegisterCommandsEvent, Registrar, RegistrationContext, RunModCommandEvent, ScreenKeyPressedPreEvent,
     ScreenMouseButtonPressedPreEvent, ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent,
     ScreenMouseScrolledPreEvent, ScreenRenderPostEvent, ServerAboutToStartEvent, ServerChatEvent, ServerHost, ServerTickEvent,
-    EntityRef, HudMode, Identifier, ItemKey, LevelsResetEvent, SoundPlay, Text,
+    EntityRef, HostSide, RightClickBlockEvent, HudMode, Identifier, ItemKey, LevelsResetEvent, SoundPlay, Text,
 };
 use std::{
     collections::HashMap,
@@ -23,6 +23,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 
+mod lobby_scene;
 mod server;
 mod title_button;
 
@@ -841,6 +842,17 @@ impl Hooks for Mod {
 
     fn menu_clicked(&self, host: &mut dyn ServerHost, event: &mut MenuClickedEvent) {
         server::menu_clicked(host, event.uuid, event.window, event.slot, event.mode);
+    }
+
+    /// A right click on the lobby's menu signs or a team pad (server side, main hand): opens the menu or joins the team.
+    fn right_click_block(&self, host: HostSide<'_>, event: &mut RightClickBlockEvent<'_>) -> Flow {
+        if !matches!(host, HostSide::Server(_)) {
+            return Flow::Continue;
+        }
+        let mut result = *event.cancellation_result;
+        let flow = lobby_scene::right_click_block(event.click, &mut result);
+        *event.cancellation_result = result;
+        flow
     }
 
     fn menu_closed(&self, _host: &mut dyn ServerHost, event: &mut MenuClosedEvent) {
