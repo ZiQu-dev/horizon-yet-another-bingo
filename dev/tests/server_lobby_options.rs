@@ -238,12 +238,14 @@ fn the_auto_shuffle_deals_every_player_into_the_chosen_teams_at_the_start() {
     assert_eq!(run(&mut s, &mut host, Some(ALICE), "start"), "Starting the game...");
 
     let adds: Vec<&String> = host.commands.iter().filter(|c| c.starts_with("team add ")).collect();
-    assert_eq!(adds, [&"team add bingo_red".to_string(), &"team add bingo_blue".to_string()]);
+    assert_eq!(adds.len(), 2, "{adds:?}");
     let joins: Vec<&String> = host.commands.iter().filter(|c| c.starts_with("team join ")).collect();
     assert_eq!(joins.len(), 4, "{joins:?}");
-    let red = joins.iter().filter(|c| c.starts_with("team join bingo_red ")).count();
-    let blue = joins.iter().filter(|c| c.starts_with("team join bingo_blue ")).count();
-    assert_eq!((red, blue), (2, 2), "{joins:?}");
+    for add in adds {
+        let team = add.strip_prefix("team add ").unwrap();
+        let on_team = joins.iter().filter(|c| c.starts_with(&format!("team join {team} "))).count();
+        assert_eq!(on_team, 2, "{joins:?}");
+    }
 }
 
 #[test]

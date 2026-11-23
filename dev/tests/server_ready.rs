@@ -13,7 +13,7 @@ const D: u128 = 4;
 
 /// The mod's start rule: more than one player online (`players.size > 1`), so `min_players` is 2.
 fn timer(timer_secs: i32) -> ReadyTimer {
-    ReadyTimer::new(ReadyOptions { timer_secs, min_players: 2 })
+    ReadyTimer::new(ReadyOptions { timer_secs, min_players: 2, waits_for_first_vote: true })
 }
 
 /// Calls `tick` for call numbers `from..=to` and returns the numbers of the calls that reported the end.
@@ -85,7 +85,7 @@ fn offline_players_are_not_counted_as_ready() {
 
 #[test]
 fn timer_needs_min_players_online() {
-    let mut t = ReadyTimer::new(ReadyOptions { timer_secs: 10, min_players: 2 });
+    let mut t = ReadyTimer::new(ReadyOptions { timer_secs: 10, min_players: 2, waits_for_first_vote: true });
     t.set_ready(A, true);
     assert!(run(&mut t, &[A], true, 1, 10).is_empty());
     assert!(!t.update_packet(A, &[A], "lobby", GameStatus::Pregame).is_running);

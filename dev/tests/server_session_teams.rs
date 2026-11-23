@@ -345,7 +345,7 @@ fn ignore_warnings_with_nobody_on_a_team_is_nobody_to_play() {
 }
 
 #[test]
-fn shuffleteams_deals_the_players_round_robin_and_leaves_spectators_out() {
+fn shuffleteams_deals_the_players_to_distinct_teams_and_leaves_spectators_out() {
     let mut host = FakeHost::default();
     let mut session = Session::new(options(7, 0, None));
     lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob"), (CAROL, "Carol")], &[]);
@@ -361,7 +361,11 @@ fn shuffleteams_deals_the_players_round_robin_and_leaves_spectators_out() {
     assert_eq!(commands.iter().filter(|c| c.starts_with("team add")).count(), 2);
     let joined: Vec<&str> = commands.iter().filter_map(|c| c.strip_prefix("team join ")).collect();
     assert_eq!(joined.len(), 2);
-    assert!(joined.iter().any(|j| j.starts_with("bingo_red ")) && joined.iter().any(|j| j.starts_with("bingo_blue ")));
+    // Two random presets (as in the original), one player on each.
+    let mut teams: Vec<&str> = joined.iter().map(|j| j.split(' ').next().unwrap()).collect();
+    teams.sort_unstable();
+    teams.dedup();
+    assert_eq!(teams.len(), 2);
     let mut names: Vec<&str> = joined.iter().map(|j| j.rsplit(' ').next().unwrap()).collect();
     names.sort_unstable();
     assert_eq!(names, ["Alice", "Bob"], "every player who is not a spectator is on a team");
@@ -370,12 +374,12 @@ fn shuffleteams_deals_the_players_round_robin_and_leaves_spectators_out() {
 #[test]
 fn shuffleteams_clears_the_ready_flag_only_of_players_whose_team_changed() {
     let mut host = FakeHost::default();
-    let mut session = Session::new(options(7, 3, None));
+    let mut session = Session::new(options(5, 3, None));
     lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "blue")]);
     session.on_packet(&mut host, ALICE, "set_ready", &READY_V1);
     host.take();
 
-    // One team: everyone goes to red. Alice stays on red, so she keeps her ready flag; Bob moves, so his goes.
+    // One team, drawn at random: seed 5 draws red, so everyone goes to red. Alice stays on red, so she keeps her ready flag; Bob moves, so his goes.
     assert_eq!(run(&mut session, &mut host, None, "shuffleteams 1"), "Teams have been shuffled!");
     let sent = host.take();
     assert!(ready_of(&only(&sent, ALICE, "ready_timer_update_v2")).is_ready);

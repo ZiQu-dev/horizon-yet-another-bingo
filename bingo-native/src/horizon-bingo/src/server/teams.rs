@@ -102,12 +102,20 @@ impl Teams {
     }
 
     /// Clears every team assignment, then deals `players` (spectators skipped, repeats counted once) into `n` teams:
-    /// they are shuffled by Fisher-Yates and dealt round-robin to the first `n` presets. Spectators stay spectators.
+    /// random presets are picked and the players, shuffled by Fisher-Yates, are dealt in chunks of the minimum team size as `TeamService.shuffleTeams` does. Spectators stay spectators.
+    // Deliberate difference: the original makes temporary teams (`temp_bingo_<i>`) beyond its presets; this port's teams
+    // are indexes into the fixed `PRESETS` table, so more than eight is refused.
     pub fn shuffle(&mut self, players: &[u128], n: usize, rng: &mut Rng) -> Result<(), String> {
         if !(1..=PRESETS.len()).contains(&n) {
             return Err(format!("Team count must be between 1 and {}, not {n}.", PRESETS.len()));
         }
         self.assigned.clear();
+
+        // TeamService.shuffleTeams: the presets are shuffled and the first `n` taken (the original's stable sort by
+        // existing team size has no effect, as the teams were just cleared).
+        let mut presets: Vec<usize> = (0..PRESETS.len()).collect();
+        shuffle_slice(&mut presets, rng);
+        presets.truncate(n);
 
         let mut order: Vec<u128> = Vec::new();
         for &player in players {
@@ -115,12 +123,21 @@ impl Teams {
                 order.push(player);
             }
         }
-        for i in (1..order.len()).rev() {
-            let j = rng.next_below(i + 1);
-            order.swap(i, j);
-        }
-        for (k, player) in order.into_iter().enumerate() {
-            self.assigned.push((player, k % n));
+        shuffle_slice(&mut order, rng);
+
+        // Chunks of floor(players / n) (at least 1): a full chunk goes whole to team `chunk % n`; a short last chunk is
+        // dealt one by one from team 0.
+        let min = (order.len() / n).max(1);
+        for (i, chunk) in order.chunks(min).enumerate() {
+            if chunk.len() == min {
+                for &player in chunk {
+                    self.assigned.push((player, presets[i % n]));
+                }
+            } else {
+                for (k, &player) in chunk.iter().enumerate() {
+                    self.assigned.push((player, presets[k % n]));
+                }
+            }
         }
         Ok(())
     }
@@ -173,4 +190,11 @@ impl Teams {
 fn preset_index(team: &str) -> Option<usize> {
     let found = preset(team)?;
     PRESETS.iter().position(|p| p == found)
+}
+
+fn shuffle_slice<T>(items: &mut [T], rng: &mut Rng) {
+    for i in (1..items.len()).rev() {
+        let j = rng.next_below(i + 1);
+        items.swap(i, j);
+    }
 }
