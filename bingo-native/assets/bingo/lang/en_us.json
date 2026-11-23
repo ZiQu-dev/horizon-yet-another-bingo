@@ -566,5 +566,10 @@
   "bingo.native.start_failed_some_not_moved": "The game did not start: the worlds could not be reset. Some players could not be sent back to the lobby yet; they are not in it.",
   "bingo.native.countdown_number": "%s",
   "bingo.native.lobby_menu_hint": "Right click to open the menu",
-  "bingo.native.lobby_menu_start": "START"
+  "bingo.native.lobby_menu_start": "START",
+  "bingo.native.lobby_panel_title": "BINGO",
+  "bingo.native.lobby_panel_players": "Players",
+  "bingo.native.lobby_panel_teams": "Teams",
+  "bingo.native.lobby_panel_settings": "Settings",
+  "bingo.native.lobby_panel_reroll": "Re-roll Card"
 }

@@ -1,9 +1,10 @@
-//! The lobby's in-world parts on a running server: the text displays over the menu signs and the team pads, and the right
+//! The lobby's in-world parts on a running server: the button panel's text displays and the team pads, and the right
 //! clicks on them. What a click means and the command lines are `horizon-bingo`'s `server::lobby_scene`; this file runs them
 //! against the mod API. The click hook only queues the click, and the next server tick runs it, so the menu and the team
 //! change never start inside the game's own click handling.
 use super::guarded;
 use super::server;
+use horizon_bingo::server::menu;
 use horizon_bingo::server::lobby_scene::{self, Click, LOBBY_LEVEL};
 use mod_api::{BlockClick, Flow, Hand, InteractionResult, LevelDimension, LogicalSide, ServerHost};
 use std::sync::{
@@ -42,7 +43,7 @@ pub fn right_click_block(click: &BlockClick<'_>, result: &mut InteractionResult)
     if !matches!(&click.dimension, LevelDimension::Custom(key) if key.to_string() == LOBBY_LEVEL) {
         return Flow::Continue;
     }
-    let Some(action) = lobby_scene::click_at(click.pos) else {
+    let Some(action) = lobby_scene::click_at(click.pos, click.hit.point) else {
         return Flow::Continue;
     };
     let mut clicks = CLICKS.lock().unwrap_or_else(PoisonError::into_inner);
@@ -59,6 +60,8 @@ pub fn tick(host: &mut dyn ServerHost) {
     for (player, action) in clicks {
         match action {
             Click::Menu => server::open_lobby_menu(host, player),
+            Click::Start => server::panel_slot(host, player, menu::ROOT_START_SLOT),
+            Click::Reroll => server::panel_slot(host, player, menu::ROOT_REROLL_SLOT),
             Click::Join(team) => {
                 let _ = server::perform_command(host, player, &format!("join {team}"));
             }

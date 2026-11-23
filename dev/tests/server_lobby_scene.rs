@@ -3,7 +3,7 @@
 //! written out by hand from the original's lobby POIs (`lobby_poi.json.gz`) and `CountdownService`.
 use horizon_bingo::server::game::GameOptions;
 use horizon_bingo::server::host::ServerHost;
-use horizon_bingo::server::lobby_scene::{self, Click};
+use horizon_bingo::server::lobby_scene::{self, Click, Tile};
 use horizon_bingo::server::ready::ReadyOptions;
 use horizon_bingo::server::session::{Session, SessionOptions};
 use horizon_bingo::server::texts::{self, Line};
@@ -59,33 +59,76 @@ fn session(countdown_secs: i32) -> (Session, FakeHost) {
 #[test]
 fn the_pad_block_and_the_carpet_above_it_join_that_pads_team_and_a_block_beside_does_not() {
     // The `team` POI of the blue pad is (16, 23, -9).
-    assert_eq!(lobby_scene::click_at([16, 23, -9]), Some(Click::Join("bingo_blue")));
-    assert_eq!(lobby_scene::click_at([16, 24, -9]), Some(Click::Join("bingo_blue")));
-    assert_eq!(lobby_scene::click_at([17, 23, -9]), None);
-    assert_eq!(lobby_scene::click_at([16, 25, -9]), None);
-    assert_eq!(lobby_scene::click_at([-17, 24, 14]), Some(Click::Join("bingo_red")));
+    let at = [16.5, 24.0, -8.5];
+    assert_eq!(lobby_scene::click_at([16, 23, -9], at), Some(Click::Join("bingo_blue")));
+    assert_eq!(lobby_scene::click_at([16, 24, -9], at), Some(Click::Join("bingo_blue")));
+    assert_eq!(lobby_scene::click_at([17, 23, -9], at), None);
+    assert_eq!(lobby_scene::click_at([16, 25, -9], at), None);
+    assert_eq!(lobby_scene::click_at([-17, 24, 14], at), Some(Click::Join("bingo_red")));
 }
 
 #[test]
-fn the_three_signs_of_the_menu_spot_open_the_menu_and_blocks_around_them_do_not() {
-    assert_eq!(lobby_scene::click_at([0, 17, -5]), Some(Click::Menu));
-    assert_eq!(lobby_scene::click_at([-1, 19, -6]), Some(Click::Menu));
-    assert_eq!(lobby_scene::click_at([1, 18, -4]), Some(Click::Menu));
-    assert_eq!(lobby_scene::click_at([2, 18, -5]), None);
-    assert_eq!(lobby_scene::click_at([0, 20, -5]), None);
-    assert_eq!(lobby_scene::click_at([0, 17, -3]), None);
+fn a_wall_click_on_the_start_tile_starts_and_on_the_reroll_tile_rerolls_whichever_wall_block_the_ray_ends_on() {
+    // The ray ends on the wall's south face (z -4), whatever block of the wall that is.
+    assert_eq!(lobby_scene::click_at([2, 18, -5], [2.0, 18.0, -4.0]), Some(Click::Start));
+    assert_eq!(lobby_scene::click_at([1, 19, -5], [1.5, 19.1, -4.0]), Some(Click::Start));
+    assert_eq!(lobby_scene::click_at([-1, 17, -5], [-0.9, 17.3, -4.0]), Some(Click::Reroll));
 }
 
 #[test]
-fn the_scene_summons_the_menu_text_and_two_displays_per_pad_at_the_originals_heights() {
+fn wall_clicks_on_other_tiles_or_between_tiles_open_the_menu() {
+    assert_eq!(lobby_scene::click_at([-2, 18, -5], [-1.5, 18.1, -4.0]), Some(Click::Menu), "settings");
+    assert_eq!(lobby_scene::click_at([-2, 18, -5], [-1.5, 18.8, -4.0]), Some(Click::Menu), "teams");
+    assert_eq!(lobby_scene::click_at([0, 19, -5], [0.5, 19.6, -4.0]), Some(Click::Menu), "title");
+    assert_eq!(lobby_scene::click_at([0, 18, -5], [0.99, 18.0, -4.0]), Some(Click::Menu), "the gap between the columns");
+    assert_eq!(lobby_scene::click_at([3, 20, -5], [3.5, 20.5, -4.0]), Some(Click::Menu), "off every tile");
+}
+
+#[test]
+fn only_the_walls_row_of_the_panel_is_clickable() {
+    let on_start = [2.0, 18.0, -4.0];
+    assert_eq!(lobby_scene::click_at([-2, 17, -5], on_start), Some(Click::Start));
+    assert_eq!(lobby_scene::click_at([3, 20, -5], on_start), Some(Click::Start));
+    assert_eq!(lobby_scene::click_at([4, 18, -5], on_start), None);
+    assert_eq!(lobby_scene::click_at([-3, 18, -5], on_start), None);
+    assert_eq!(lobby_scene::click_at([0, 21, -5], on_start), None);
+    assert_eq!(lobby_scene::click_at([0, 17, -4], on_start), None);
+    assert_eq!(lobby_scene::click_at([0, 17, -6], on_start), None);
+}
+
+#[test]
+fn the_tile_under_a_point_has_its_edges_on_the_top_and_right_and_none_outside_the_panel() {
+    assert_eq!(lobby_scene::tile_at(1.05, 17.05), Some(Tile::Start));
+    assert_eq!(lobby_scene::tile_at(2.99, 19.19), Some(Tile::Start));
+    assert_eq!(lobby_scene::tile_at(2.0, 19.25), None, "the gap above start");
+    assert_eq!(lobby_scene::tile_at(2.0, 19.5), Some(Tile::Players));
+    assert_eq!(lobby_scene::tile_at(3.0, 18.0), None);
+    assert_eq!(lobby_scene::tile_at(-2.01, 18.0), None);
+    assert_eq!(lobby_scene::tile_at(-1.0, 20.0), None);
+}
+
+#[test]
+fn the_scene_summons_one_display_per_tile_and_two_per_pad() {
     let commands = lobby_scene::summon_commands();
-    assert_eq!(commands.len(), 1 + 2 * 8);
+    assert_eq!(commands.len(), 6 + 2 * 8);
     assert!(commands.iter().all(|c| c.starts_with("execute in bingo:lobby run summon minecraft:text_display ")));
     assert!(commands.iter().all(|c| c.contains("Tags:[\"bingo_lobby_ui\"]")));
-    // The blue pad (16, 23, -9): its name at 1.5 above the block, `Click to join!` at 1.0, both over the block's middle.
-    assert!(commands.iter().any(|c| c.contains(" 16.5 24.5 -8.5 ") && c.contains("\"bingo.team.blue\"") && c.contains("color:\"blue\"")));
-    assert!(commands.iter().any(|c| c.contains(" 16.5 24 -8.5 ") && c.contains("\"bingo.lobby.click_to_join\"")));
-    assert!(commands[0].contains(" 0.5 20.5 -4.5 ") && commands[0].contains("bold:true") && commands[0].contains("color:\"green\""));
+    // The tiles are fixed, translucent, in front of the wall (z -3.9), centred on their rectangle's x: the start tile's is 2.025.
+    let tiles = &commands[..6];
+    assert!(tiles.iter().all(|c| c.contains("billboard:\"fixed\"") && c.contains(" -3.9 {") && !c.contains("background:0,")));
+    assert!(tiles.iter().any(|c| c.contains(" 2.025 17.05 -3.9 ") && c.contains("\"bingo.native.lobby_menu_start\"")));
+    assert!(tiles.iter().any(|c| c.contains(" -0.525 17.05 -3.9 ") && c.contains("\"bingo.native.lobby_panel_reroll\"")));
+}
+
+#[test]
+fn a_pad_has_its_name_in_brackets_in_the_team_colour_and_click_to_join_in_grey_at_scale_one() {
+    let commands = lobby_scene::summon_commands();
+    // The blue pad (16, 23, -9): its name 1.4 above the block, `Click to join!` 1.1, both over the block's middle.
+    let name = commands.iter().find(|c| c.contains(" 16.5 24.4 -8.5 ")).unwrap();
+    assert!(name.contains("text:\"[") && name.contains("\"bingo.team.blue\"") && name.contains("color:\"blue\"") && name.contains("text:\"]\""));
+    assert!(name.contains("scale:[1.000f,1.000f,1f]") && name.contains("billboard:\"center\""));
+    let join = commands.iter().find(|c| c.contains(" 16.5 24.1 -8.5 ")).unwrap();
+    assert!(join.contains("\"bingo.lobby.click_to_join\"") && join.contains("color:\"gray\"") && join.contains("scale:[1.000f,1.000f,1f]"));
     assert_eq!(
         lobby_scene::clear_command(),
         "execute in bingo:lobby run kill @e[type=minecraft:text_display,tag=bingo_lobby_ui]"

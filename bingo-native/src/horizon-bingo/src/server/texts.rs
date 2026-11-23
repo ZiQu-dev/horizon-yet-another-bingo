@@ -256,6 +256,31 @@ pub fn lobby_menu_start() -> Line {
     Line::new("bingo.native.lobby_menu_start", "START", &[])
 }
 
+/// `BINGO`, the title tile of the lobby's in-world panel.
+pub fn lobby_panel_title() -> Line {
+    Line::new("bingo.native.lobby_panel_title", "BINGO", &[])
+}
+
+/// `Players`, the info tile of the panel.
+pub fn lobby_panel_players() -> Line {
+    Line::new("bingo.native.lobby_panel_players", "Players", &[])
+}
+
+/// `Teams`, the panel tile that opens the menu.
+pub fn lobby_panel_teams() -> Line {
+    Line::new("bingo.native.lobby_panel_teams", "Teams", &[])
+}
+
+/// `Settings`, the panel tile that opens the menu.
+pub fn lobby_panel_settings() -> Line {
+    Line::new("bingo.native.lobby_panel_settings", "Settings", &[])
+}
+
+/// `Re-roll Card`, the panel tile that rerolls the card.
+pub fn lobby_panel_reroll() -> Line {
+    Line::new("bingo.native.lobby_panel_reroll", "Re-roll Card", &[])
+}
+
 /// `You cannot ready up without joining a team! (use '%s' if you want to spectate)` (`CommandReadyNotOnATeam`).
 pub fn ready_not_on_team(spectate_command: &str) -> Line {
     Line::new(

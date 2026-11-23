@@ -1229,8 +1229,13 @@ fn menu_items(
 
 /// `bingo menu`: opens the lobby menu on its root page for the player.
 pub(crate) fn open_lobby_menu(host: &mut dyn mod_api::ServerHost, uuid: u128) {
+    open_lobby_page(host, uuid, Page::Root);
+}
+
+/// Opens the lobby menu on `page` for the player.
+fn open_lobby_page(host: &mut dyn mod_api::ServerHost, uuid: u128, page: Page) {
     let (rules, pregame, operator) = menu_view(&*host, uuid);
-    let items = menu_items(&*host, &Page::Root, &rules, pregame, operator);
+    let items = menu_items(&*host, &page, &rules, pregame, operator);
     // `CloseFirst` is vanilla's default: a new menu closes the old screen first.
     match host
         .open_menu(
@@ -1246,12 +1251,41 @@ pub(crate) fn open_lobby_menu(host: &mut dyn mod_api::ServerHost, uuid: u128) {
         Some(window) => LOBBY_MENUS
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .open(uuid, window, Page::Root),
+            .open(uuid, window, page),
         None => tell_player(
             host,
             uuid,
             Text::literal("The menu could not be opened.".to_string()),
         ),
+    }
+}
+
+/// A click on the lobby panel's start or reroll tile: what a click on that slot of the menu's root page does, with no menu
+/// open. A refused start opens the menu on its warnings page, which offers the start anyway.
+pub(crate) fn panel_slot(host: &mut dyn mod_api::ServerHost, uuid: u128, slot: usize) {
+    let (rules, pregame, operator) = menu_view(&*host, uuid);
+    let view = View {
+        rules: &rules,
+        pregame,
+        operator,
+    };
+    match menu::click(&Page::Root, slot, &view) {
+        Outcome::Tell(text) => tell_player(host, uuid, Text::literal(text)),
+        Outcome::Run(line) => {
+            ServerAdapter { host: &mut *host }.play_sound(uuid, lobby_scene::SOUND_BUTTON);
+            let reply = guarded("bingo panel command", || {
+                with_session(|s| {
+                    s.command(&mut ServerAdapter { host: &mut *host }, Some(uuid), &line)
+                })
+            })
+            .unwrap_or_default();
+            if menu::start_refused(&line, &reply) {
+                open_lobby_page(host, uuid, Page::Warnings(reply));
+            } else if !reply.is_empty() {
+                tell_player(host, uuid, Text::literal(reply));
+            }
+        }
+        _ => {}
     }
 }
 

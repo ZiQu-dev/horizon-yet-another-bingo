@@ -26,6 +26,9 @@ pub const SLOTS: usize = ROWS as usize * 9;
 pub const BACK_SLOT: usize = 27;
 /// The close button, on every page.
 pub const CLOSE_SLOT: usize = 35;
+/// The root page's reroll button and its start button: the in-world panel runs these two as a click on the slot.
+pub const ROOT_REROLL_SLOT: usize = 10;
+pub const ROOT_START_SLOT: usize = 22;
 /// The spawn distances the Features page offers, in chunks.
 pub const SPAWN_DISTANCES: [u32; 4] = [10, 25, 50, 100];
 /// The reply of a successful `start`, as the session gives it.
@@ -518,7 +521,7 @@ fn root(view: &View) -> Vec<(usize, Slot)> {
             ),
         ),
         at(
-            10,
+            ROOT_REROLL_SLOT,
             button(
                 view,
                 "minecraft:ender_pearl",
@@ -547,7 +550,7 @@ fn root(view: &View) -> Vec<(usize, Slot)> {
     let mut start_lore = vec!["Starts the round, as bingo start does.".to_string()];
     start_lore.extend(gate(view));
     out.push(at(
-        22,
+        ROOT_START_SLOT,
         (
             0,
             slot(
