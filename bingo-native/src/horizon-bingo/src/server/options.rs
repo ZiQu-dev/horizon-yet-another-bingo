@@ -50,6 +50,8 @@ pub enum Toggle {
     AutoShuffle,
     /// `objectives`: the advanced squares of the original's tier lists go on the cards. Pregame only, like the others.
     Objectives,
+    /// `showPreviewCard`: players on no team get the lobby's preview card (on by default).
+    PreviewCard,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +89,8 @@ pub struct Options {
     /// The lobby's tutorial book, given to each player once in the lobby (`lobby_tutorial_book`, in `options.json` only
     /// when off). On by default, as the original's `lobbyTutorialBook`. `infobook.rs`.
     pub lobby_tutorial_book: bool,
+    /// Whether the lobby shows the preview card (`showPreviewCard`, on by default); `options preview_card`.
+    pub preview_card: bool,
 }
 
 impl Default for Options {
@@ -111,6 +115,7 @@ impl Default for Options {
             kit: Kit::default(),
             objectives: false,
             lobby_tutorial_book: true,
+            preview_card: true,
         }
     }
 }
@@ -124,6 +129,7 @@ impl Options {
             Toggle::NightVision => self.night_vision = on,
             Toggle::AutoShuffle => self.team_auto_shuffle = on,
             Toggle::Objectives => self.objectives = on,
+            Toggle::PreviewCard => self.preview_card = on,
         }
     }
 }
