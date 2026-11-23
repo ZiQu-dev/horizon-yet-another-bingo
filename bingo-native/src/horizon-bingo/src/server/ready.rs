@@ -36,11 +36,13 @@ pub struct ReadyOptions {
     /// Fewest players online for the timer to run. The mod's `players.size > 1` (`ReadyService.kt:74`), so 2: a lone
     /// player cannot start a countdown.
     pub min_players: usize,
+    /// `startWhenReadyWaitsForFirstVote` (false by default): when true the countdown starts only once someone is ready.
+    pub waits_for_first_vote: bool,
 }
 
 impl Default for ReadyOptions {
     fn default() -> Self {
-        Self { timer_secs: 600, min_players: 2 }
+        Self { timer_secs: 600, min_players: 2, waits_for_first_vote: false }
     }
 }
 
@@ -107,7 +109,7 @@ impl ReadyTimer {
     /// Returns `true` exactly on the tick the countdown reaches zero. The timer then stops and resets, so the
     /// caller can start the game or the next vote.
     ///
-    /// The timer runs when `eligible`, at least `min_players` are online, and someone online is ready. It stops
+    /// The timer runs when `eligible`, at least `min_players` are online, and, if `waits_for_first_vote`, someone online is ready. It stops
     /// (and resets) when `eligible` or the player count stops holding, as `ReadyService.tick` does.
     ///
     /// Tick timeline: the tick that starts the countdown sets `elapsed` to 0 and does not count. Each later tick
@@ -130,7 +132,7 @@ impl ReadyTimer {
             return false;
         }
 
-        if !self.cancelled && conditions_hold && self.ready_count(online) >= 1 {
+        if !self.cancelled && conditions_hold && (!self.options.waits_for_first_vote || self.ready_count(online) >= 1) {
             self.running = true;
             self.elapsed_ms = 0;
         }
