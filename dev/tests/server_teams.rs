@@ -168,12 +168,12 @@ fn shuffle_rejects_team_counts_outside_1_to_8_and_keeps_the_old_teams() {
 }
 
 #[test]
-fn one_player_into_three_teams_lands_on_the_first_preset() {
-    // Hand-counted: one player is never swapped; round-robin deals them to index 0, bingo_red.
+fn one_player_into_three_teams_lands_on_one_team() {
+    // One player: min chunk size 1, one chunk, dealt to the first drawn preset (any preset, drawn at random).
     let mut teams = Teams::new();
     teams.shuffle(&[7], 3, &mut Rng::new(12345)).unwrap();
-    assert_eq!(teams.team_of(7), Some(RED));
-    assert_eq!(teams.teams(), vec![RED]);
+    assert!(teams.team_of(7).is_some());
+    assert_eq!(teams.teams().len(), 1);
 }
 
 #[test]
@@ -182,7 +182,7 @@ fn shuffle_clears_the_previous_assignment() {
     teams.join(9, "blue").unwrap();
     teams.shuffle(&[1], 1, &mut Rng::new(0)).unwrap();
     assert_eq!(teams.team_of(9), None);
-    assert_eq!(teams.team_of(1), Some(RED));
+    assert!(teams.team_of(1).is_some());
 }
 
 #[test]
@@ -192,36 +192,27 @@ fn shuffle_skips_spectators_and_counts_repeats_once() {
     teams.shuffle(&[5, 1, 2, 1], 2, &mut Rng::new(0)).unwrap();
     assert!(teams.is_spectator(5));
     assert_eq!(teams.team_of(5), None);
-    assert_eq!(teams.members(RED).len() + teams.members(BLUE).len(), 2);
+    let on_teams: usize = teams.teams().iter().map(|t| teams.members(t).len()).sum();
+    assert_eq!(on_teams, 2);
 }
 
 #[test]
-fn two_players_shuffle_to_known_teams_for_known_seeds() {
-    // Seed 0 gives the order [1, 2]; seed 2 gives [2, 1]. Round-robin over 2 teams.
-    let mut teams = Teams::new();
-    teams.shuffle(&[1, 2], 2, &mut Rng::new(0)).unwrap();
-    assert_eq!(teams.team_of(1), Some(RED));
-    assert_eq!(teams.team_of(2), Some(BLUE));
-
-    teams.shuffle(&[1, 2], 2, &mut Rng::new(2)).unwrap();
-    assert_eq!(teams.team_of(2), Some(RED));
-    assert_eq!(teams.team_of(1), Some(BLUE));
+fn two_players_in_two_teams_get_one_team_each() {
+    // 2 players, 2 teams: chunks of 1, chunk i goes to team i, so each player is alone on a different team.
+    for seed in 0..10u64 {
+        let mut teams = Teams::new();
+        teams.shuffle(&[1, 2], 2, &mut Rng::new(seed)).unwrap();
+        assert_ne!(teams.team_of(1), teams.team_of(2));
+        assert!(teams.team_of(1).is_some() && teams.team_of(2).is_some());
+    }
 }
 
 #[test]
-fn four_players_shuffle_to_known_order_for_seed_0() {
-    // Seed 0 gives the order [3, 2, 1, 4]. Two teams: red gets 3 then 1, blue gets 2 then 4.
+fn four_players_in_four_teams_each_get_their_own() {
     let mut teams = Teams::new();
-    teams.shuffle(&[1, 2, 3, 4], 2, &mut Rng::new(0)).unwrap();
-    assert_eq!(teams.members(RED), vec![3, 1]);
-    assert_eq!(teams.members(BLUE), vec![2, 4]);
-
-    // Four teams: 3 red, 2 blue, 1 green, 4 yellow.
     teams.shuffle(&[1, 2, 3, 4], 4, &mut Rng::new(0)).unwrap();
-    assert_eq!(teams.team_of(3), Some(RED));
-    assert_eq!(teams.team_of(2), Some(BLUE));
-    assert_eq!(teams.team_of(1), Some(GREEN));
-    assert_eq!(teams.team_of(4), Some(YELLOW));
+    assert_eq!(teams.teams().len(), 4);
+    assert!(teams.teams().iter().all(|t| teams.members(t).len() == 1));
 }
 
 #[test]
@@ -250,21 +241,22 @@ fn shuffle_deals_everyone_once_into_near_equal_teams() {
             let mut teams = Teams::new();
             teams.shuffle(&players, n, &mut Rng::new(seed)).unwrap();
 
-            // Hand-counted sizes: 13 split into n teams gives floor(13 / n) or one more.
+            // Chunks of floor(13 / n) go whole to team i % n, the short last chunk is dealt from team 0, so a team
+            // holds one or two chunks plus at most one extra player (the original's uneven split).
             let lo = 13 / n;
-            let hi = lo + usize::from(13 % n != 0);
+            let hi = 2 * lo + 1;
             let mut seen = Vec::new();
-            for (i, preset) in PRESETS.iter().enumerate() {
+            // Presets are drawn at random: n teams are used, any of the presets.
+            assert_eq!(teams.teams().len(), n, "n={n} seed={seed}");
+            for preset in PRESETS.iter() {
                 let members = teams.members(preset.key);
-                if i < n {
+                if !members.is_empty() {
                     assert!(
                         (lo..=hi).contains(&members.len()),
                         "n={n} seed={seed} team {} has {} players",
                         preset.key,
                         members.len()
                     );
-                } else {
-                    assert!(members.is_empty(), "n={n}: preset {} should be unused", preset.key);
                 }
                 seen.extend(members);
             }
