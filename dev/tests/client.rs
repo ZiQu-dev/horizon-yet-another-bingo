@@ -1826,3 +1826,36 @@ fn a_tile_under_the_mouse_shows_its_styled_tooltip_at_the_mouse_also_after_a_cli
         );
     }
 }
+
+/// `ClientCardRenderer.draw`: with the chat open, the tile of the HUD card under the mouse shows its tooltip (the
+/// original's `isMouseOver` needs a ChatScreen); with the chat closed it does not.
+#[test]
+fn a_tile_of_the_hud_card_shows_its_tooltip_when_the_chat_is_open() {
+    let mut client = client_with_card();
+    let mut host = playing_host();
+    for _ in 0..30 {
+        client.on_tick(&mut host);
+    }
+    let mut first = playing_host();
+    client.draw(&mut first);
+    let card = first.sprites.iter().find(|(_, d)| d[2] == 122.0 && d[3] == 132.0).expect("the HUD card").1;
+    // tile (0, 0): 11 px in and 21 px down, 20 px a tile; the mouse at its middle
+    let mouse = (card[0] as i32 + 21, card[1] as i32 + 31);
+    let mut closed = playing_host();
+    closed.mouse = mouse;
+    client.draw(&mut closed);
+    assert!(closed.tile_tips.is_empty(), "no tooltip without the chat");
+    let mut open = playing_host();
+    open.mouse = mouse;
+    open.chat = true;
+    client.draw(&mut open);
+    assert_eq!(open.tile_tips.len(), 1, "one tooltip over the tile");
+    assert_eq!(open.tile_tips[0].1, mouse);
+    assert_eq!(open.tile_tips[0].0.len(), 2, "the name, then tier, list and id");
+    // between two tiles' grid: the card's frame, not a tile
+    let mut frame = playing_host();
+    frame.mouse = (card[0] as i32 + 2, card[1] as i32 + 2);
+    frame.chat = true;
+    client.draw(&mut frame);
+    assert!(frame.tile_tips.is_empty(), "the card's border is no tile");
+}

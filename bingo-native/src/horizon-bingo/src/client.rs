@@ -852,6 +852,24 @@ impl BingoClient {
                 }
             }
         }
+        // `ClientCardRenderer.draw`: with the chat open (`isMouseOver` needs a ChatScreen), the tile of the HUD card under the
+        // mouse shows its tooltip, as in the card screen. Drawn after everything else, so it is on top.
+        if shown.card && host.chat_open() {
+            let mouse = host.cursor();
+            let width = |s: &str| host.text_width(s);
+            let hovered = self.state.selected_card().and_then(|(_, card)| {
+                let index = crate::screen_cards::tile_at(card_x, card_y, scale, mouse)?;
+                let tile = card.tiles.get(index)?;
+                let lines = crate::screen_cards::tile_tooltip_lines(tile, &lang, &width);
+                if lines.is_empty() {
+                    return None;
+                }
+                Some((crate::screen_cards::tile_tooltip_texts(tile, &lang, &width), lines))
+            });
+            if let Some((texts, lines)) = hovered {
+                host.draw_tooltip_text(&texts, &lines, mouse.0, mouse.1);
+            }
+        }
         self.dynamic_atlas = dynamic;
         self.assets = Some(assets);
     }

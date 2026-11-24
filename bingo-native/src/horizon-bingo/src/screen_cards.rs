@@ -378,7 +378,7 @@ fn place(draws: Vec<Draw>, x: f32, y: f32, scale: f32) -> Vec<Draw> {
 
 /// `ClientCardRenderer.getItem`: the tile under the mouse in a card at (x, y), or None. The card's x and y are
 /// truncated first, as the original's `getItem(x.toInt(), y.toInt(), ...)` calls do.
-fn tile_at(x: f32, y: f32, scale: f32, mouse: (i32, i32)) -> Option<usize> {
+pub(crate) fn tile_at(x: f32, y: f32, scale: f32, mouse: (i32, i32)) -> Option<usize> {
     let start_x = (x as i32) as f32 + 11.0 * scale;
     let start_y = (y as i32) as f32 + 21.0 * scale;
     let dx = mouse.0 as f32 - start_x;
