@@ -68,102 +68,120 @@ fn the_pad_block_and_the_carpet_above_it_join_that_pads_team_and_a_block_beside_
     assert_eq!(lobby_scene::click_at([-17, 24, 14], at), Some(Click::Join("bingo_red")));
 }
 
-// The panel's layout, written out by hand: five columns (x -2..-0.5, -0.44..0.76, 0.82..1.82, 1.88..2.98, 3.04..4.0) and six
-// rows whose tiles are 0.36 high and 0.42 apart from y 19.5 down: row 0 is 19.14..19.5, row 1 18.72..19.08, row 2
-// 18.30..18.66, row 3 17.88..18.24, row 4 17.46..17.82 and row 5 17.04..17.40. The Game Mode tiles are two rows high.
+// The panel's layout, copied by hand from `docs/original-ledger/panel-dump.md`: each tile's centre (x, y) relative to the menu
+// block (0, 17, -5), its width and height, and what a right click on it does. Add 17 to y for the world.
+const TILE_TABLE: [((f64, f64), (f64, f64), Option<Click>); 33] = [
+    ((-3.55, 1.65), (2.5, 0.3), None),
+    ((-4.2, 1.05), (1.2, 0.7), Some(Click::Panel(PanelAction::Mode(PanelMode::Lockout)))),
+    ((-2.9, 1.05), (1.2, 0.7), Some(Click::Panel(PanelAction::Mode(PanelMode::Inventory)))),
+    ((-4.2, 0.25), (1.2, 0.7), Some(Click::Panel(PanelAction::Mode(PanelMode::HiddenItems)))),
+    ((-2.9, 0.25), (1.2, 0.7), Some(Click::Panel(PanelAction::Mode(PanelMode::ConsumeItems)))),
+    ((-3.55, -0.4), (2.5, 0.4), Some(Click::Open(PanelPage::Features))),
+    ((-1.2, 1.65), (2.0, 0.3), None),
+    ((-2.05, 1.25), (0.3, 0.3), Some(Click::Panel(PanelAction::GoalFewer))),
+    ((-1.2, 1.25), (1.2, 0.3), None),
+    ((-0.35, 1.25), (0.3, 0.3), Some(Click::Panel(PanelAction::GoalMore))),
+    ((-1.2, 0.85), (2.0, 0.3), Some(Click::Panel(PanelAction::GoalKind))),
+    ((-1.2, 0.45), (2.0, 0.3), None),
+    ((-2.05, 0.05), (0.3, 0.3), Some(Click::Panel(PanelAction::TimeFewer))),
+    ((-1.2, 0.05), (1.2, 0.3), None),
+    ((-0.35, 0.05), (0.3, 0.3), Some(Click::Panel(PanelAction::TimeMore))),
+    ((-1.2, -0.4), (2.0, 0.4), Some(Click::Open(PanelPage::Goal))),
+    ((0.7, 1.65), (1.6, 0.3), None),
+    ((0.7, 1.25), (1.6, 0.3), Some(Click::Panel(PanelAction::Difficulty(0)))),
+    ((0.7, 0.85), (1.6, 0.3), Some(Click::Panel(PanelAction::Difficulty(1)))),
+    ((0.7, 0.45), (1.6, 0.3), Some(Click::Panel(PanelAction::Difficulty(2)))),
+    ((0.7, 0.05), (1.6, 0.3), Some(Click::Panel(PanelAction::Difficulty(3)))),
+    ((0.7, -0.4), (1.6, 0.4), Some(Click::Open(PanelPage::Items))),
+    ((2.6, 1.65), (2.0, 0.3), None),
+    ((2.6, 1.25), (2.0, 0.3), Some(Click::AutoShuffle)),
+    ((1.75, 0.85), (0.3, 0.3), Some(Click::TeamsFewer)),
+    ((2.6, 0.85), (1.2, 0.3), None),
+    ((3.45, 0.85), (0.3, 0.3), Some(Click::TeamsMore)),
+    ((2.6, 0.45), (2.0, 0.3), Some(Click::Shuffle)),
+    ((2.6, -0.4), (2.0, 0.4), Some(Click::Reroll)),
+    ((4.75, 1.65), (2.1, 0.3), None),
+    ((4.75, 1.25), (2.1, 0.3), None),
+    ((4.75, 0.45), (2.1, 1.1), Some(Click::Start)),
+    ((4.75, -0.4), (2.1, 0.4), Some(Click::ResetDefaults)),
+];
+
+/// A right click whose ray ends on the wall block behind the panel at world `(x, y)`, on the wall's face z -5.
 fn hit(x: f64, y: f64) -> Option<Click> {
-    lobby_scene::click_at([0, 18, -5], [x, y, -4.0])
+    lobby_scene::click_at([x.floor() as i32, y.floor() as i32, -6], [x, y, -5.0])
+}
+
+fn near(a: f64, b: f64) -> bool {
+    (a - b).abs() < 1e-9
 }
 
 #[test]
-fn every_tile_of_the_grid_maps_to_its_click_at_its_middle() {
-    let panel = |action| Some(Click::Panel(action));
-    // Game Mode: four icon tiles, two rows high, and Features under them.
-    assert_eq!(hit(-1.64, 18.69), panel(PanelAction::Mode(PanelMode::Lockout)));
-    assert_eq!(hit(-0.86, 18.69), panel(PanelAction::Mode(PanelMode::Inventory)));
-    assert_eq!(hit(-1.64, 17.85), panel(PanelAction::Mode(PanelMode::HiddenItems)));
-    assert_eq!(hit(-0.86, 17.85), panel(PanelAction::Mode(PanelMode::ConsumeItems)));
-    assert_eq!(hit(-1.25, 17.22), Some(Click::Open(PanelPage::Features)));
-    // Goal: `-` value `+`, the Lines/Items switch, the time limit's `-` value `+`, More...
-    assert_eq!(hit(-0.32, 18.90), panel(PanelAction::GoalFewer));
-    assert_eq!(hit(0.16, 18.90), None, "the goal value only shows");
-    assert_eq!(hit(0.64, 18.90), panel(PanelAction::GoalMore));
-    assert_eq!(hit(0.16, 18.48), panel(PanelAction::GoalKind));
-    assert_eq!(hit(-0.32, 17.64), panel(PanelAction::TimeFewer));
-    assert_eq!(hit(0.16, 17.64), None, "the time value only shows");
-    assert_eq!(hit(0.64, 17.64), panel(PanelAction::TimeMore));
-    assert_eq!(hit(0.16, 17.22), Some(Click::Open(PanelPage::Goal)));
-    // Difficulty: four presets and Customize.
-    assert_eq!(hit(1.32, 18.90), panel(PanelAction::Difficulty(0)));
-    assert_eq!(hit(1.32, 18.48), panel(PanelAction::Difficulty(1)));
-    assert_eq!(hit(1.32, 18.06), panel(PanelAction::Difficulty(2)));
-    assert_eq!(hit(1.32, 17.64), panel(PanelAction::Difficulty(3)));
-    assert_eq!(hit(1.32, 17.22), Some(Click::Open(PanelPage::Items)));
-    // Shufflificator: auto shuffle, `-` count `+`, Shuffle!, a gap row, Re-roll Card.
-    assert_eq!(hit(2.43, 18.90), Some(Click::AutoShuffle));
-    assert_eq!(hit(2.00, 18.48), Some(Click::TeamsFewer));
-    assert_eq!(hit(2.43, 18.48), None, "the team count only shows");
-    assert_eq!(hit(2.86, 18.48), Some(Click::TeamsMore));
-    assert_eq!(hit(2.43, 18.06), Some(Click::Shuffle));
-    assert_eq!(hit(2.43, 17.64), None, "the empty row under Shuffle!");
-    assert_eq!(hit(2.43, 17.22), Some(Click::Reroll));
-    // The start column: best time and players show, START is three rows high, Reset Defaults under it.
-    assert_eq!(hit(3.52, 19.32), None);
-    assert_eq!(hit(3.52, 18.90), None);
-    assert_eq!(hit(3.52, 18.66 - 0.01), Some(Click::Start), "the top of START");
-    assert_eq!(hit(3.52, 17.46), Some(Click::Start), "the bottom of START");
-    assert_eq!(hit(3.52, 17.22), Some(Click::ResetDefaults));
-    // Headers show.
-    assert_eq!(hit(-1.25, 19.32), None);
-    assert_eq!(hit(1.32, 19.32), None);
-    assert_eq!(hit(0.16, 18.0 + 0.0), None, "the time header row");
+fn the_tile_table_has_the_dumps_numbers_for_eight_spot_checked_tiles() {
+    assert_eq!(lobby_scene::TILES.len(), 33);
+    let rect_of = |tile: Tile| lobby_scene::TILES.iter().find(|(t, _)| *t == tile).unwrap().1;
+    // (tile, centre x, centre y rel POI, width, height) as written in the dump's tables.
+    let spots = [
+        (Tile::HeaderMode, -3.55, 1.65, 2.5, 0.3),
+        (Tile::Mode(PanelMode::Lockout), -4.2, 1.05, 1.2, 0.7),
+        (Tile::Features, -3.55, -0.4, 2.5, 0.4),
+        (Tile::GoalMore, -0.35, 1.25, 0.3, 0.3),
+        (Tile::TimeValue, -1.2, 0.05, 1.2, 0.3),
+        (Tile::Difficulty(3), 0.7, 0.05, 1.6, 0.3),
+        (Tile::Shuffle, 2.6, 0.45, 2.0, 0.3),
+        (Tile::Start, 4.75, 0.45, 2.1, 1.1),
+    ];
+    for (tile, cx, cy, w, h) in spots {
+        let [x0, y0, x1, y1] = rect_of(tile);
+        assert!(near(x0, cx - w / 2.0) && near(x1, cx + w / 2.0), "{tile:?} x {x0}..{x1}");
+        assert!(near(y0, 17.0 + cy - h / 2.0) && near(y1, 17.0 + cy + h / 2.0), "{tile:?} y {y0}..{y1}");
+    }
 }
 
 #[test]
-fn a_click_between_tiles_or_off_the_panel_does_nothing_and_the_edges_belong_to_the_right_and_the_top() {
-    assert_eq!(hit(-0.47, 18.9), None, "the gap between the first two columns");
-    assert_eq!(hit(-1.25, 18.69), None, "the gap between the two mode tiles");
-    assert_eq!(hit(1.32, 18.69), None, "the gap between two difficulty rows");
-    assert_eq!(hit(4.0, 18.0), None, "x 4 is past the panel");
-    assert_eq!(lobby_scene::click_at([3, 18, -5], [3.9, 20.0, -4.0]), None, "above the panel");
-    assert_eq!(lobby_scene::tile_at(-2.0, 18.5), Some(Tile::Mode(PanelMode::Lockout)), "the left edge is in the tile");
-    assert_eq!(lobby_scene::tile_at(-1.28, 18.5), None, "the right edge is not");
-    assert_eq!(lobby_scene::tile_at(-1.22, 18.5), Some(Tile::Mode(PanelMode::Inventory)));
-    assert_eq!(lobby_scene::tile_at(3.04, 18.0), Some(Tile::Start));
+fn every_tile_of_the_dump_maps_to_its_click_at_its_middle_and_nothing_just_outside_it() {
+    for ((cx, cy), (w, h), click) in TILE_TABLE {
+        let y = 17.0 + cy;
+        assert_eq!(hit(cx, y), click, "centre ({cx}, {cy})");
+        // The tiles are 0.1 apart, so a point 0.02 outside a side is in no tile.
+        for (x, y) in [(cx - w / 2.0 - 0.02, y), (cx + w / 2.0 + 0.02, y), (cx, y - h / 2.0 - 0.02), (cx, y + h / 2.0 + 0.02)] {
+            assert_eq!(hit(x, y), None, "outside ({cx}, {cy}) at ({x}, {y})");
+        }
+        // Just inside the corners is still the tile.
+        assert_eq!(hit(cx - w / 2.0 + 0.01, y - h / 2.0 + 0.01), click, "bottom left corner ({cx}, {cy})");
+        assert_eq!(hit(cx + w / 2.0 - 0.01, y + h / 2.0 - 0.01), click, "top right corner ({cx}, {cy})");
+    }
+    // Every tile of the table is in the code's table once.
+    for ((cx, cy), _, _) in TILE_TABLE {
+        let at = |(_, r): &(Tile, [f64; 4])| r[0] < cx && cx < r[2] && r[1] < 17.0 + cy && 17.0 + cy < r[3];
+        assert_eq!(lobby_scene::TILES.iter().filter(|t| at(t)).count(), 1, "({cx}, {cy})");
+    }
 }
 
 #[test]
-fn only_the_wall_behind_the_panel_is_clickable() {
-    let on_start = [3.52, 18.0, -4.0];
-    // The wall's blocks are x -2..3 and y 16..21; the ray ends on whichever of them is behind the tile.
-    assert_eq!(lobby_scene::click_at([3, 18, -5], on_start), Some(Click::Start));
-    assert_eq!(lobby_scene::click_at([-2, 17, -5], on_start), Some(Click::Start));
-    assert_eq!(lobby_scene::click_at([4, 18, -5], on_start), None);
-    assert_eq!(lobby_scene::click_at([-3, 18, -5], on_start), None);
-    assert_eq!(lobby_scene::click_at([0, 22, -5], on_start), None);
-    assert_eq!(lobby_scene::click_at([2, 18, -6], on_start), Some(Click::Start));
+fn the_edges_of_a_tile_belong_to_the_tile_above_and_to_the_right() {
+    // Lockout is x -4.8..-3.6, y 17.7..18.4.
+    assert_eq!(lobby_scene::tile_at(-4.8, 17.7), Some(Tile::Mode(PanelMode::Lockout)), "the bottom left corner is in");
+    assert_eq!(lobby_scene::tile_at(-3.6, 18.0), None, "the right edge is not");
+    assert_eq!(lobby_scene::tile_at(-4.0, 18.4), None, "the top edge is not");
+    assert_eq!(lobby_scene::tile_at(-5.0, 18.0), None, "left of the panel");
+    assert_eq!(lobby_scene::tile_at(5.8, 17.5), None, "right of the panel (x 5.8 is the end)");
+    assert_eq!(lobby_scene::tile_at(5.79, 18.65), Some(Tile::BestTime));
+}
+
+#[test]
+fn only_the_wall_blocks_behind_the_panel_are_clickable() {
+    let on_start = [4.75, 17.45, -5.0];
+    // The wall covers x -5..5 and y 16..21 at z -7..-5: whichever block the ray ends on there maps the hit's x and y.
+    assert_eq!(lobby_scene::click_at([4, 17, -6], on_start), Some(Click::Start));
+    assert_eq!(lobby_scene::click_at([-5, 16, -6], on_start), Some(Click::Start));
+    assert_eq!(lobby_scene::click_at([5, 21, -7], on_start), Some(Click::Start));
+    assert_eq!(lobby_scene::click_at([2, 17, -5], on_start), Some(Click::Start));
+    assert_eq!(lobby_scene::click_at([6, 17, -6], on_start), None);
+    assert_eq!(lobby_scene::click_at([-6, 17, -6], on_start), None);
+    assert_eq!(lobby_scene::click_at([0, 22, -6], on_start), None);
+    assert_eq!(lobby_scene::click_at([0, 15, -6], on_start), None);
     assert_eq!(lobby_scene::click_at([0, 17, -4], on_start), None);
     assert_eq!(lobby_scene::click_at([0, 17, -8], on_start), None);
-}
-
-#[test]
-fn the_panel_is_six_blocks_wide_about_two_and_a_half_high_and_its_tiles_never_overlap() {
-    assert_eq!(lobby_scene::TILES.len(), 33);
-    let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
-    for (i, (a, ra)) in lobby_scene::TILES.iter().enumerate() {
-        x0 = x0.min(ra[0]);
-        y0 = y0.min(ra[1]);
-        x1 = x1.max(ra[2]);
-        y1 = y1.max(ra[3]);
-        for (b, rb) in &lobby_scene::TILES[i + 1..] {
-            let apart = ra[2] <= rb[0] || rb[2] <= ra[0] || ra[3] <= rb[1] || rb[3] <= ra[1];
-            assert!(apart, "{a:?} overlaps {b:?}");
-        }
-        // The middle of every tile maps back to it.
-        assert_eq!(lobby_scene::tile_at((ra[0] + ra[2]) / 2.0, (ra[1] + ra[3]) / 2.0), Some(*a));
-    }
-    assert!((x0 - -2.0).abs() < 1e-9 && (x1 - 4.0).abs() < 1e-9, "x {x0}..{x1}");
-    assert!((y0 - 17.04).abs() < 1e-9 && (y1 - 19.5).abs() < 1e-9, "y {y0}..{y1}");
 }
 
 #[test]
@@ -217,53 +235,145 @@ fn the_buttons_that_are_slots_of_the_menus_root_page_go_through_those_slots() {
     assert_eq!(lobby_scene::root_slot(Click::Open(PanelPage::Goal)), None);
 }
 
-/// The position a summon command puts its display at.
+const HEADER_BLOCK: &str = "execute in bingo:lobby run summon minecraft:block_display -4.800 18.500 -5.001 \
+{Tags:[\"bingo_lobby_ui\",\"bingo_lobby_tile_headermode\"],Rotation:[0f,0f],billboard:\"fixed\",\
+block_state:{Name:\"minecraft:lime_concrete\"},brightness:{sky:3,block:0},view_range:1f,\
+transformation:{left_rotation:[0f,0f,0f,1f],right_rotation:[0f,0f,0f,1f],translation:[0f,0f,0f],scale:[2.5f,0.3f,0.05f]}}";
+const HEADER_LABEL: &str = "execute in bingo:lobby run summon minecraft:text_display -3.550 18.550 -4.950 \
+{Tags:[\"bingo_lobby_ui\",\"bingo_lobby_tile_headermode\"],Rotation:[0f,0f],billboard:\"fixed\",alignment:\"center\",\
+background:0,default_background:0b,shadow:false,see_through:false,line_width:200,view_range:1f,\
+transformation:{left_rotation:[0f,0f,0f,1f],right_rotation:[0f,0f,0f,1f],translation:[0f,0f,0f],scale:[0.7f,0.7f,0.7f]},\
+text:{translate:\"bingo.options.game_mode\",fallback:\"Game Mode\",color:\"#99FF99\"}}";
+
+/// The summon commands of the panel's tiles (the pads' are last), for a state.
+fn tile_commands(state: &PanelState) -> Vec<String> {
+    let mut commands = lobby_scene::summon_commands(state);
+    commands.truncate(commands.len() - 16);
+    commands
+}
+
+/// The commands of the entities whose tags include the tile's `tag`.
+fn of_tile<'a>(commands: &'a [String], tag: &str) -> Vec<&'a String> {
+    commands.iter().filter(|c| c.contains(&format!("\"{tag}\""))).collect()
+}
+
+/// The three numbers after the entity type of a summon command.
 fn pos_of(command: &str) -> [f64; 3] {
-    let rest = command.split("minecraft:text_display ").nth(1).unwrap();
-    let mut numbers = rest.split(' ').take(3).map(|n| n.parse::<f64>().unwrap());
+    let rest = command.split("summon minecraft:").nth(1).unwrap().split(' ').skip(1);
+    let mut numbers = rest.take(3).map(|n| n.parse::<f64>().unwrap());
     [numbers.next().unwrap(), numbers.next().unwrap(), numbers.next().unwrap()]
 }
 
-/// The `[x, y]` scale of a summon command.
-fn scale_of(command: &str) -> [f64; 2] {
-    let rest = command.split("scale:[").nth(1).unwrap();
-    let mut numbers = rest.split(|c| c == ',' || c == ']').take(2).map(|n| n.trim_end_matches('f').parse::<f64>().unwrap());
-    [numbers.next().unwrap(), numbers.next().unwrap()]
+/// What follows `key` in a command up to the next `,` or `}` or `]`.
+fn field<'a>(command: &'a str, key: &str) -> &'a str {
+    let rest = command.split(key).nth(1).unwrap_or_else(|| panic!("{key} in {command}"));
+    rest.split(|c| c == ',' || c == '}' || c == ']').next().unwrap()
 }
 
 #[test]
-fn the_scene_summons_one_small_display_per_tile_on_the_panel_plane_and_two_per_pad() {
+fn the_scene_summons_the_dumps_entities_blocks_texts_and_two_labels_per_pad() {
     let commands = lobby_scene::summon_commands(&PanelState::default());
-    assert_eq!(commands.len(), 33 + 2 * 8);
-    assert!(commands.iter().all(|c| c.starts_with("execute in bingo:lobby run summon minecraft:text_display ")));
+    // 33 tile blocks and 61 texts on the panel, like the original's 94; two texts for each of the 8 pads.
+    assert_eq!(commands.iter().filter(|c| c.contains("minecraft:block_display")).count(), 33);
+    assert_eq!(commands.iter().filter(|c| c.contains("minecraft:text_display")).count(), 61 + 16);
+    assert_eq!(commands.len(), 94 + 16);
+    assert!(commands.iter().all(|c| c.starts_with("execute in bingo:lobby run summon minecraft:")));
     assert!(commands.iter().all(|c| c.contains("Tags:[\"bingo_lobby_ui\"")));
-    let tiles = &commands[..33];
-    // Every tile is fixed, translucent, in front of the wall (z -3.9), at its rectangle's bottom middle, with text that is
-    // small: a scale the same both ways (about a half) except START, which is drawn at about one.
-    for (command, (tile, rect)) in tiles.iter().zip(lobby_scene::TILES) {
-        assert!(command.contains("billboard:\"fixed\"") && !command.contains("background:0,"), "{tile:?}");
-        let pos = pos_of(command);
-        assert!((pos[0] - (rect[0] + rect[2]) / 2.0).abs() < 1e-9 && (pos[1] - rect[1]).abs() < 1e-9 && pos[2] == -3.9, "{tile:?} {pos:?}");
-        let [sx, sy] = scale_of(command);
-        assert!((sx - sy).abs() < 1e-6, "{tile:?} is stretched");
-        let (low, high) = if tile == Tile::Start { (0.85, 1.2) } else { (0.2, 0.6) };
-        assert!(sx >= low && sx <= high, "{tile:?} text scale {sx}");
-    }
-    // Start's display stands on x 3.52 (the middle of 3.04..4.0) at y 17.46, the bottom of its three rows.
-    let start = tiles.iter().find(|c| c.contains("\"bingo.native.lobby_menu_start\"")).unwrap();
-    let pos = pos_of(start);
-    assert!((pos[0] - 3.52).abs() < 1e-9 && (pos[1] - 17.46).abs() < 1e-9);
-    // The headers are green on dark green; the default difficulty (easy) is the light chosen tile with black text.
-    let header = tiles.iter().find(|c| c.contains("\"bingo.options.game_mode\"")).unwrap();
-    assert!(header.contains("color:\"#99FF99\"") && header.contains(&format!("background:{},", 0xB00E_2A12u32 as i32)));
-    let easy = tiles.iter().find(|c| c.contains("\"bingo.card_difficulty.easy\"")).unwrap();
-    assert!(easy.contains("color:\"#000000\"") && easy.contains(&format!("background:{},", 0xE0C4_C8C8u32 as i32)));
-    let medium = tiles.iter().find(|c| c.contains("\"bingo.card_difficulty.medium\"")).unwrap();
-    assert!(medium.contains("color:\"#A8A8A8\"") && medium.contains(&format!("background:{},", 0xA026_2B2Bu32 as i32)));
-    // The five green headers of the original's columns.
-    for key in ["bingo.options.game_mode", "bingo.options.goal", "bingo.options.time_limit", "bingo.options.card_difficulty", "bingo.options.teams"] {
-        assert!(tiles.iter().any(|c| c.contains(&format!("\"{key}\"")) && c.contains("color:\"#99FF99\"")), "{key}");
-    }
+    // Every panel entity also carries its tile's tag; the pads' do not.
+    assert!(commands[..94].iter().all(|c| c.contains("\"bingo_lobby_tile_")));
+    assert!(commands[94..].iter().all(|c| !c.contains("bingo_lobby_tile_")));
+}
+
+#[test]
+fn a_header_tile_is_a_lime_block_at_sky_3_and_pale_green_text() {
+    let commands = tile_commands(&PanelState::default());
+    assert_eq!(commands[0], HEADER_BLOCK);
+    assert_eq!(commands[1], HEADER_LABEL);
+}
+
+#[test]
+fn a_stepper_and_a_value_tile_are_white_and_gray_and_the_value_text_has_a_shadow() {
+    let commands = tile_commands(&PanelState::default());
+    // The goal's `-`: 0.3 square at x -2.2..-1.9, y 18.1..18.4, white at sky 15, black text with line width 12.
+    let minus = of_tile(&commands, "bingo_lobby_tile_goalfewer");
+    assert_eq!(minus.len(), 2);
+    assert!(minus[0].contains(" -2.200 18.100 -5.001 ") && minus[0].contains("minecraft:white_concrete") && minus[0].contains("sky:15,block:0"));
+    assert!(minus[0].contains("scale:[0.3f,0.3f,0.05f]"));
+    assert!(minus[1].contains(" -2.050 18.150 -4.950 ") && field(minus[1], "line_width:") == "12" && field(minus[1], "shadow:") == "false");
+    assert!(minus[1].contains("text:{color:\"black\",extra:[\"-\"],text:\"\"}"));
+    // The value: gray at sky 14, `1 line` in the original's key, white (no colour), with a shadow, line width 200.
+    let value = of_tile(&commands, "bingo_lobby_tile_goalvalue");
+    assert!(value[0].contains("minecraft:gray_concrete") && value[0].contains("sky:14,block:0") && value[0].contains("scale:[1.2f,0.3f,0.05f]"));
+    assert!(value[1].contains("text:{translate:\"bingo.game.line_count_1\",fallback:\"1 line\"}"));
+    assert_eq!(field(value[1], "shadow:"), "true");
+    assert_eq!(field(value[1], "line_width:"), "200");
+    // The time value, the team count, the players and the best time use the dump's texts.
+    let text_of = |tag: &str| of_tile(&commands, tag).last().unwrap().split_once("},text:").unwrap().1.to_owned();
+    assert_eq!(text_of("bingo_lobby_tile_timevalue"), "{translate:\"bingo.options.time_limit_off\",fallback:\"Off\"}}");
+    assert_eq!(text_of("bingo_lobby_tile_teams"), "{translate:\"bingo.game.team_count_3\",fallback:\"3 teams\"}}");
+    assert_eq!(
+        text_of("bingo_lobby_tile_players"),
+        "{translate:\"bingo.options.player_count\",fallback:\"Players: %s\",with:[{color:\"green\",text:\"0 / 8\"}],color:\"#99FF99\"}}"
+    );
+    assert_eq!(
+        text_of("bingo_lobby_tile_besttime"),
+        "{translate:\"bingo.stats.best_time\",fallback:\"Best time: %s\",\
+         with:[{translate:\"bingo.stats.best_time.not_set\",fallback:\"[Not Set]\",color:\"gray\"}],color:\"#99FF99\"}}"
+    );
+}
+
+#[test]
+fn a_toggle_is_a_gray_tile_with_a_hollow_diamond_and_an_empty_filled_one_until_it_is_on() {
+    let off = tile_commands(&PanelState::default());
+    // Easy is the chosen difficulty: white, sky 15, black text, hollow diamond in black and the filled dark green one.
+    let easy = of_tile(&off, "bingo_lobby_tile_difficulty_0");
+    assert_eq!(easy.len(), 4);
+    assert!(easy[0].contains(" -0.100 18.100 -5.001 ") && easy[0].contains("minecraft:white_concrete") && easy[0].contains("sky:15,block:0"));
+    assert!(easy[1].contains(" 0.050 18.150 -4.945 ") && easy[1].contains("text:{color:\"black\",text:\"\u{25C7}\"}"));
+    assert!(easy[2].contains(" 0.050 18.150 -4.950 ") && easy[2].contains("text:{color:\"dark_green\",text:\"\u{25C6}\"}"));
+    assert!(easy[3].contains(" 0.700 18.150 -4.950 ") && field(easy[3], "line_width:") == "68");
+    assert!(easy[3].contains("text:{color:\"black\",extra:[{translate:\"bingo.card_difficulty.easy\",fallback:\"Easy\"}],text:\"\"}"));
+    // Medium is off: gray, sky 14, gray text, and the filled diamond's text is empty.
+    let medium = of_tile(&off, "bingo_lobby_tile_difficulty_1");
+    assert!(medium[0].contains("minecraft:gray_concrete") && medium[0].contains("sky:14,block:0"));
+    assert!(medium[1].contains("text:{color:\"gray\",text:\"\u{25C7}\"}"));
+    assert!(medium[2].contains("text:{color:\"dark_green\",text:\"\"}"));
+    assert!(medium[3].contains("text:{color:\"gray\",extra:["));
+}
+
+#[test]
+fn a_mode_tile_has_a_big_icon_a_small_caption_and_the_toggles_diamonds() {
+    let commands = tile_commands(&PanelState::default());
+    let lockout = of_tile(&commands, "bingo_lobby_tile_mode_lockout");
+    assert_eq!(lockout.len(), 5);
+    assert!(lockout[0].contains(" -4.800 17.700 -5.001 ") && lockout[0].contains("scale:[1.2f,0.7f,0.05f]"));
+    assert!(lockout[1].contains(" -4.650 17.950 -4.945 "));
+    assert!(lockout[2].contains(" -4.650 17.950 -4.950 "));
+    // The icon: scale 1.6 at y 17.9; the caption: scale 0.4 at y 17.8 with line width 78.
+    assert!(lockout[3].contains(" -4.200 17.900 -4.950 ") && lockout[3].contains("scale:[1.6f,1.6f,1.6f]"));
+    assert!(lockout[3].contains("text:{color:\"gray\",text:\"\u{1F512}\"}"));
+    assert!(lockout[4].contains(" -4.200 17.800 -4.950 ") && lockout[4].contains("scale:[0.4f,0.4f,0.4f]") && field(lockout[4], "line_width:") == "78");
+    assert!(lockout[4].contains("extra:[{translate:\"bingo.options.mode_lockout\",fallback:\"Lockout\"}]"));
+}
+
+#[test]
+fn a_button_has_its_corner_glyph_and_the_alt_ones_are_darker() {
+    let commands = tile_commands(&PanelState::default());
+    // Features: 2.5 x 0.4 at y -0.6, sky 8, the `...` glyph at x -4.65, line width 107.
+    let features = of_tile(&commands, "bingo_lobby_tile_features");
+    assert_eq!(features.len(), 3);
+    assert!(features[0].contains("sky:8,block:0") && features[0].contains(" -4.800 16.400 -5.001 "));
+    assert!(features[1].contains(" -4.650 16.500 -4.945 ") && features[1].contains("text:{color:\"gray\",text:\"\u{22EF}\"}"));
+    assert!(features[2].contains(" -3.550 16.500 -4.950 ") && field(features[2], "line_width:") == "107");
+    // START has no glyph: a 2.1 x 1.1 block and its label 0.45 above the block's bottom.
+    let start = of_tile(&commands, "bingo_lobby_tile_start");
+    assert_eq!(start.len(), 2);
+    assert!(start[0].contains("scale:[2.1f,1.1f,0.05f]") && start[0].contains("sky:8,block:0"));
+    assert!(start[1].contains(" 4.750 17.350 -4.950 ") && field(start[1], "line_width:") == "90");
+    // Shuffle! is a plain button at sky 14 with no glyph.
+    let shuffle = of_tile(&commands, "bingo_lobby_tile_shuffle");
+    assert_eq!(shuffle.len(), 2);
+    assert!(shuffle[0].contains("sky:14,block:0"));
 }
 
 #[test]
@@ -280,76 +390,122 @@ fn the_live_tiles_show_the_rules() {
         players: 2,
         max_players: 8,
     };
-    let commands = lobby_scene::summon_commands(&state);
-    let find = |key: &str| commands[..33].iter().find(|c| c.contains(&format!("\"{key}\""))).unwrap_or_else(|| panic!("{key}"));
-    assert!(find("bingo.game.line_count").contains("with:[\"3\"]"), "the goal");
-    assert!(find("bingo.native.lobby_panel_time_value").contains("with:[\"1h 30m\"]"), "the time limit");
-    assert!(find("bingo.game.team_count").contains("with:[\"5\"]"), "the team count");
-    assert!(find("bingo.options.player_count").contains("with:[\"2 / 8\"]"), "the players");
-    assert!(find("bingo.native.lobby_panel_goal_lines").contains("Lines"));
-    let light = format!("background:{},", 0xE0C4_C8C8u32 as i32);
-    // Chosen tiles are light and carry the filled marker; the others are dark with the hollow one.
-    for (key, on) in [
-        ("bingo.card_difficulty.easy", false),
-        ("bingo.card_difficulty.hard", true),
-        ("bingo.options.mode_lockout", true),
-        ("bingo.options.mode_inventory", false),
-        ("bingo.options.mode_hidden_items", true),
-        ("bingo.options.mode_consume_items", false),
-        ("bingo.options.teams_shuffle_auto", true),
+    let commands = tile_commands(&state);
+    let label = |tag: &str| of_tile(&commands, tag).last().unwrap().to_string();
+    assert!(label("bingo_lobby_tile_goalvalue").contains("translate:\"bingo.game.line_count_3\",fallback:\"3 lines\""));
+    assert!(label("bingo_lobby_tile_timevalue").contains("with:[\"1h 30m\"]"));
+    assert!(label("bingo_lobby_tile_teams").contains("translate:\"bingo.game.team_count_5\",fallback:\"5 teams\""));
+    assert!(label("bingo_lobby_tile_players").contains("text:\"2 / 8\""));
+    assert!(label("bingo_lobby_tile_goalkind").contains("fallback:\"Lines\""));
+    // A goal of ten lines has no numbered key: the generic one takes the number.
+    let ten = tile_commands(&PanelState { goal: Goal::Lines(10), ..state });
+    assert!(of_tile(&ten, "bingo_lobby_tile_goalvalue")[1].contains("translate:\"bingo.game.line_count\",fallback:\"%s lines\",with:[\"10\"]"));
+    for (tag, on) in [
+        ("bingo_lobby_tile_difficulty_0", false),
+        ("bingo_lobby_tile_difficulty_2", true),
+        ("bingo_lobby_tile_mode_lockout", true),
+        ("bingo_lobby_tile_mode_inventory", false),
+        ("bingo_lobby_tile_mode_hiddenitems", true),
+        ("bingo_lobby_tile_mode_consumeitems", false),
+        ("bingo_lobby_tile_autoshuffle", true),
     ] {
-        let command = find(key);
-        assert_eq!(command.contains(&light), on, "{key}");
-        assert_eq!(command.contains("\u{25C6} "), on, "{key} filled marker");
-        assert_eq!(command.contains("\u{25C7} "), !on, "{key} hollow marker");
+        let tile = of_tile(&commands, tag);
+        assert_eq!(tile[0].contains("minecraft:white_concrete"), on, "{tag} block");
+        assert_eq!(tile[2].contains("text:\"\u{25C6}\""), on, "{tag} filled diamond");
+        assert_eq!(tile[1].contains("color:\"black\""), on, "{tag} ink");
     }
-    let off = lobby_scene::summon_commands(&PanelState::default());
-    assert!(off.iter().any(|c| c.contains("\"bingo.options.time_limit_off\"")), "off shows Off");
-    assert!(off.iter().any(|c| c.contains("\"bingo.game.line_count_1\"")), "one line shows 1 line");
 }
 
 #[test]
-fn a_refresh_replaces_only_the_tiles_whose_look_changed_by_their_tag() {
+fn a_refresh_rewrites_only_the_tiles_whose_state_changed_by_their_tag() {
     let old = PanelState::default();
     let new = PanelState { goal: Goal::Lines(2), difficulty: Some(1), players: 2, ..old };
     let commands = lobby_scene::refresh_commands(&old, &new);
-    // The goal value, the two difficulty tiles that swap their look, and the player count: a kill and a summon each.
-    assert_eq!(commands.len(), 8);
-    let kills: Vec<&String> = commands.iter().step_by(2).collect();
+    let kills: Vec<&String> = commands.iter().filter(|c| c.contains(" run kill ")).collect();
     assert_eq!(
         kills,
         [
-            "execute in bingo:lobby run kill @e[type=minecraft:text_display,tag=bingo_lobby_tile_goalvalue]",
-            "execute in bingo:lobby run kill @e[type=minecraft:text_display,tag=bingo_lobby_tile_difficulty_0]",
-            "execute in bingo:lobby run kill @e[type=minecraft:text_display,tag=bingo_lobby_tile_difficulty_1]",
-            "execute in bingo:lobby run kill @e[type=minecraft:text_display,tag=bingo_lobby_tile_players]",
+            "execute in bingo:lobby run kill @e[type=!minecraft:player,tag=bingo_lobby_tile_goalvalue]",
+            "execute in bingo:lobby run kill @e[type=!minecraft:player,tag=bingo_lobby_tile_difficulty_0]",
+            "execute in bingo:lobby run kill @e[type=!minecraft:player,tag=bingo_lobby_tile_difficulty_1]",
+            "execute in bingo:lobby run kill @e[type=!minecraft:player,tag=bingo_lobby_tile_players]",
         ]
     );
-    assert!(commands[1].contains("Tags:[\"bingo_lobby_ui\",\"bingo_lobby_tile_goalvalue\"]") && commands[1].contains("with:[\"2\"]"));
-    assert!(commands[7].contains("with:[\"2 / 8\"]"));
-    // A refreshed panel matches a fresh one for those tiles, and an unchanged state refreshes nothing.
-    let full = lobby_scene::summon_commands(&new);
-    assert!(commands.iter().skip(1).step_by(2).all(|c| full.contains(c)));
+    // The goal value is a kill, a block and a label; each difficulty tile a kill and four entities; the players like the goal.
+    assert_eq!(commands.len(), 3 + 5 + 5 + 3);
+    assert!(commands[2].contains("translate:\"bingo.game.line_count_2\",fallback:\"2 lines\""));
+    // The old difficulty (easy) is gray now and the new one white.
+    assert!(commands[4].contains("minecraft:gray_concrete") && commands[9].contains("minecraft:white_concrete"));
+    // The rewritten commands are the ones a fresh panel makes, and an unchanged state rewrites nothing.
+    let fresh = lobby_scene::summon_commands(&new);
+    assert!(commands.iter().filter(|c| !c.contains(" run kill ")).all(|c| fresh.contains(c)));
     assert!(lobby_scene::refresh_commands(&new, &new).is_empty());
-    // Toggling a mode changes that tile only.
+    // A mode toggle rewrites that tile alone: its kill, block, two diamonds, icon and caption.
     let toggled = lobby_scene::refresh_commands(&old, &PanelState { mode: Mode::Inventory, ..old });
-    assert_eq!(toggled.len(), 2);
+    assert_eq!(toggled.len(), 6);
     assert!(toggled[0].ends_with("tag=bingo_lobby_tile_mode_inventory]"));
+    // The goal kind and the team count change their own tiles.
+    let kind = lobby_scene::refresh_commands(&old, &PanelState { goal: Goal::Items(1), ..old });
+    assert!(kind.iter().any(|c| c.ends_with("tag=bingo_lobby_tile_goalkind]")));
+    assert!(kind.iter().any(|c| c.ends_with("tag=bingo_lobby_tile_goalvalue]")));
+    let teams = lobby_scene::refresh_commands(&old, &PanelState { teams: 4, ..old });
+    assert_eq!(teams.len(), 3);
+    assert!(teams[2].contains("bingo.game.team_count_4"));
 }
 
 #[test]
-fn a_pad_has_its_name_in_brackets_in_the_team_colour_and_click_to_join_in_grey_at_scale_one() {
+fn a_pad_has_its_bracketed_name_and_click_to_join_as_vertical_billboards() {
     let commands = lobby_scene::summon_commands(&PanelState::default());
-    // The blue pad (16, 23, -9): its name 1.4 above the block, `Click to join!` 1.1, both over the block's middle.
-    let name = commands.iter().find(|c| c.contains(" 16.5 24.4 -8.5 ")).unwrap();
-    assert!(name.contains("text:\"[") && name.contains("\"bingo.team.blue\"") && name.contains("color:\"blue\"") && name.contains("text:\"]\""));
-    assert!(name.contains("scale:[1.000f,1.000f,1f]") && name.contains("billboard:\"center\""));
-    let join = commands.iter().find(|c| c.contains(" 16.5 24.1 -8.5 ")).unwrap();
-    assert!(join.contains("\"bingo.lobby.click_to_join\"") && join.contains("color:\"gray\"") && join.contains("scale:[1.000f,1.000f,1f]"));
-    assert_eq!(
-        lobby_scene::clear_command(),
-        "execute in bingo:lobby run kill @e[type=minecraft:text_display,tag=bingo_lobby_ui]"
-    );
+    // The blue pad (16, 23, -9): the name 1.5 above the block, `Click to join!` 1.0, both over the block's middle.
+    let name = commands.iter().find(|c| c.contains(" 16.500 24.500 -8.500 ")).unwrap();
+    assert!(name.contains("billboard:\"vertical\"") && name.contains("alignment:\"center\"") && name.contains("background:0,"));
+    assert!(name.contains("shadow:true") && name.contains("line_width:200") && name.contains("scale:[1f,1f,1f]"));
+    assert!(name.contains(
+        "text:{translate:\"chat.square_brackets\",fallback:\"[%s]\",with:[{color:\"blue\",extra:[\"\u{1F30A} \",\
+         {translate:\"bingo.team.name\",fallback:\"%s Team\",with:[{translate:\"bingo.team.blue\",fallback:\"Blue\"}]}],text:\"\"}]}"
+    ));
+    let join = commands.iter().find(|c| c.contains(" 16.500 24.000 -8.500 ")).unwrap();
+    assert!(join.contains("billboard:\"vertical\"") && join.contains("shadow:false") && join.contains(&format!("background:{},", 0x4000_0000)));
+    assert!(join.contains("text:{translate:\"bingo.lobby.click_to_join\",fallback:\"Click to join!\"}"));
+    // The gold pad is the orange team with the mushroom (the dump's `[mushroom Orange Team]`), the gray one the rock.
+    assert!(commands.iter().any(|c| c.contains(" -16.500 25.500 -3.500 ") && c.contains("color:\"gold\"") && c.contains("\u{1F344} ") && c.contains("bingo.team.orange")));
+    assert!(commands.iter().any(|c| c.contains(" -1.500 22.500 18.500 ") && c.contains("\u{1FAA8} ") && c.contains("bingo.team.gray")));
+    // The kill takes blocks, texts and interactions by the scene's tag.
+    assert_eq!(lobby_scene::clear_command(), "execute in bingo:lobby run kill @e[type=!minecraft:player,tag=bingo_lobby_ui]");
+}
+
+#[test]
+fn the_panels_entities_match_the_original_dump_in_place_size_and_brightness() {
+    // The dump is read from the repository's docs; a checkout without it skips the comparison.
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/original-ledger/panel-dump.json");
+    let Ok(raw) = std::fs::read_to_string(path) else { return };
+    let dump: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let r3 = |v: f64| (v * 1000.0).round() as i64;
+    // (type, position and scale x in thousandths, then the text's line width or the block's sky) of every menu entity.
+    type Key = (String, [i64; 3], i64, i64);
+    let mut original: Vec<Key> = Vec::new();
+    for e in dump.as_array().unwrap().iter().filter(|e| e["_group"] == "menu" && e["type"] != "minecraft:interaction") {
+        let pos: Vec<f64> = e["Pos"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+        let scale = e["transformation"]["scale"][0].as_f64().unwrap();
+        let extra = if e["type"] == "minecraft:block_display" { e["brightness"]["sky"].as_i64().unwrap() } else { e["line_width"].as_i64().unwrap() };
+        original.push((e["type"].as_str().unwrap().to_owned(), [r3(pos[0]), r3(pos[1]), r3(pos[2])], r3(scale), extra));
+    }
+    let mut ours: Vec<Key> = tile_commands(&PanelState { players: 1, ..PanelState::default() })
+        .iter()
+        .map(|c| {
+            let kind = if c.contains("block_display") { "minecraft:block_display" } else { "minecraft:text_display" };
+            let p = pos_of(c);
+            let scale: f64 = field(c, "scale:[").trim_end_matches('f').parse().unwrap();
+            let extra = if kind == "minecraft:block_display" { field(c, "sky:").parse().unwrap() } else { field(c, "line_width:").parse().unwrap() };
+            (kind.to_owned(), [r3(p[0]), r3(p[1]), r3(p[2])], r3(scale), extra)
+        })
+        .collect();
+    original.sort();
+    ours.sort();
+    assert_eq!(ours.len(), original.len());
+    for (a, b) in ours.iter().zip(&original) {
+        assert_eq!(a, b);
+    }
 }
 
 #[test]
