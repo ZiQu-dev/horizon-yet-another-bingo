@@ -211,6 +211,8 @@ fn with_session<T>(f: impl FnOnce(&mut Session) -> T) -> T {
 /// A new server (a world opens): the old game and its players belong to the previous world.
 pub fn server_about_to_start() {
     *SESSION.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    // The new world may carry the old sidebar objective in its save: forget what was shown, so the first update sweeps it.
+    *SIDEBAR.lock().unwrap_or_else(PoisonError::into_inner) = Shown::new();
     super::lobby_scene::server_about_to_start();
     LOBBY_TO_OPEN.store(true, Ordering::Relaxed);
     LOBBY_FILES_DONE.store(false, Ordering::Relaxed);

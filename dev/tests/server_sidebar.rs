@@ -287,6 +287,7 @@ fn a_new_sidebar_is_added_then_each_row_is_written_with_its_score() {
     assert_eq!(
         host.commands,
         [
+            "scoreboard objectives remove bingo_sidebar",
             r#"scoreboard objectives add bingo_sidebar dummy {"translate":"bingo.scoreboard.name","fallback":"Minecraft Bingo"}"#,
             "scoreboard objectives modify bingo_sidebar numberformat blank",
             "scoreboard objectives setdisplay sidebar bingo_sidebar",
@@ -369,6 +370,24 @@ fn taking_the_sidebar_away_clears_it_once() {
 
     shown.update(&mut host, None);
     assert!(host.commands.is_empty(), "nothing shown, nothing to take away");
+}
+
+#[test]
+fn a_leftover_objective_from_the_save_is_removed_before_the_first_sidebar_and_only_once() {
+    let mut host = FakeHost::default();
+    let mut shown = Shown::new();
+    shown.update(&mut host, Some(vec![Row::default()]));
+    assert_eq!(host.commands.first().map(String::as_str), Some("scoreboard objectives remove bingo_sidebar"));
+    assert_eq!(host.commands.iter().filter(|c| c.contains("objectives remove")).count(), 1);
+
+    // Nothing to show yet: the first update still sweeps the save's objective.
+    let mut host = FakeHost::default();
+    let mut shown = Shown::new();
+    shown.update(&mut host, None);
+    assert_eq!(host.commands, ["scoreboard objectives remove bingo_sidebar"]);
+    host.commands.clear();
+    shown.update(&mut host, None);
+    assert!(host.commands.is_empty());
 }
 
 #[test]

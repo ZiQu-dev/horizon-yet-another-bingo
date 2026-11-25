@@ -19,6 +19,7 @@
 
 use std::collections::HashSet;
 
+use super::commands::VoteChoice;
 use super::texts;
 use crate::buf::encode;
 use crate::game::{GameState, GameStatus};
@@ -230,6 +231,58 @@ impl ReadyTimer {
         self.running = false;
         self.elapsed_ms = 0;
         self.cancelled = false;
+    }
+}
+
+/// `VoteType.id` of each postgame vote. The original draws them at random on every start; the clients only echo them, so
+/// fixed ones do the same.
+pub fn vote_id(choice: VoteChoice) -> u128 {
+    match choice {
+        VoteChoice::NextRound => 0x7f3a_91c2_0b54_4d1e_8a6f_2c0d_5e91_b301,
+        VoteChoice::KeepPlaying => 0x7f3a_91c2_0b54_4d1e_8a6f_2c0d_5e91_b302,
+        VoteChoice::ReturnToLobby => 0x7f3a_91c2_0b54_4d1e_8a6f_2c0d_5e91_b303,
+    }
+}
+
+/// The vote an option id of `set_ready_v2` stands for.
+pub fn vote_for_id(id: u128) -> Option<VoteChoice> {
+    [VoteChoice::NextRound, VoteChoice::KeepPlaying, VoteChoice::ReturnToLobby]
+        .into_iter()
+        .find(|&choice| vote_id(choice) == id)
+}
+
+/// The postgame `ready_timer_update_v2` for one viewer (`ReadyController.createVoteOptions`, `currentVote`): the options
+/// Next Round, Keep Playing and Return to Lobby with their votes, the default vote pending (the original's `AUTO`
+/// picks the next round), and no timer. `votes` are the players' votes so far. The sneak-ready key stays off
+/// (`can_send_ready` false): this port has no postgame countdown for it to speed up.
+pub fn postgame_packet(
+    viewer: u128,
+    votes: &std::collections::BTreeMap<u128, VoteChoice>,
+    online: usize,
+) -> ReadyUpdatePacket {
+    let option = |choice: VoteChoice, line: texts::Line| crate::ready_update::VoteOption {
+        id: vote_id(choice),
+        title: line.text(),
+        votes: votes.values().filter(|&&vote| vote == choice).count() as i32,
+        is_selected: votes.get(&viewer) == Some(&choice),
+    };
+    ReadyUpdatePacket {
+        is_running: false,
+        is_ready: votes.contains_key(&viewer),
+        state: GameState { identifier: "postgame".to_owned(), status: GameStatus::Postgame },
+        remaining_millis: 0,
+        total_millis: 0,
+        ready_players: votes.len() as i32,
+        total_players: online as i32,
+        title: Some(Text::empty()),
+        subtitle: None,
+        can_send_ready: false,
+        vote_options: vec![
+            option(VoteChoice::NextRound, texts::next_round()),
+            option(VoteChoice::KeepPlaying, texts::keep_playing()),
+            option(VoteChoice::ReturnToLobby, texts::return_to_lobby()),
+        ],
+        vote_pending: Some(vote_id(VoteChoice::NextRound)),
     }
 }
 

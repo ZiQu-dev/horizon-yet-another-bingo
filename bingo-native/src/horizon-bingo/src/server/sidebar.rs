@@ -693,18 +693,28 @@ fn holder(index: usize) -> String {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Shown {
     active: bool,
+    /// Whether the objective an earlier run left in the world's save has been removed.
+    swept: bool,
     rows: Vec<Row>,
 }
 
 impl Shown {
     pub const fn new() -> Self {
-        Self { active: false, rows: Vec::new() }
+        Self { active: false, swept: false, rows: Vec::new() }
     }
 
     /// Makes the server's sidebar show `rows` (`None` takes it away). Only what changed is sent: a new sidebar is added and
     /// shown first; a row's text is sent when it changes, and its score when the score does. The score of row `i` is
     /// `MAX_ROWS - i`, so the top row is the highest and the scores do not move when the rows change.
+    ///
+    /// The objective is saved in the world, so a server that starts on a world an earlier run left behind still holds that
+    /// run's rows. The first update removes the objective (removing it also clears its display slot) before anything else,
+    /// so no row this state did not make survives: it would otherwise show an old header next to the new lines.
     pub fn update(&mut self, host: &mut dyn ServerHost, rows: Option<Vec<Row>>) {
+        if !self.swept {
+            host.command(&format!("scoreboard objectives remove {OBJECTIVE}"));
+            self.swept = true;
+        }
         let Some(mut rows) = rows else {
             if self.active {
                 host.command("scoreboard objectives setdisplay sidebar");
