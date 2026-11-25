@@ -201,18 +201,22 @@ pub fn click(page: &Page, slot: usize, view: &View) -> Outcome {
         Action::None => Outcome::Nothing,
         Action::Open(next) => Outcome::Show(next),
         Action::Close => Outcome::Close,
-        Action::Run(line) => {
-            let operator_only = parse(&line).is_ok_and(|command| requires_op(&command));
-            if !operator_only {
-                Outcome::Run(line)
-            } else if !view.operator {
-                Outcome::Tell(NOT_OPERATOR.to_string())
-            } else if !view.pregame {
-                Outcome::Tell(ROUND_STARTED.to_string())
-            } else {
-                Outcome::Run(line)
-            }
-        }
+        Action::Run(line) => gate_command(line, view),
+    }
+}
+
+/// What running the command `line` means for this viewer: an operator's command is refused for anyone else, and once the
+/// round has started. The chest's slots and the in-world panel's tiles both go through this.
+pub fn gate_command(line: String, view: &View) -> Outcome {
+    let operator_only = parse(&line).is_ok_and(|command| requires_op(&command));
+    if !operator_only {
+        Outcome::Run(line)
+    } else if !view.operator {
+        Outcome::Tell(NOT_OPERATOR.to_string())
+    } else if !view.pregame {
+        Outcome::Tell(ROUND_STARTED.to_string())
+    } else {
+        Outcome::Run(line)
     }
 }
 

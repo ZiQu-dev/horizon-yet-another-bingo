@@ -1002,6 +1002,11 @@ impl Session {
         &self.rules
     }
 
+    /// The time limit in whole minutes, if one is set (`timelimit`), for the lobby panel's tile.
+    pub fn time_limit_minutes(&self) -> Option<u32> {
+        self.game.time_limit_secs().map(|secs| u32::try_from(secs / 60).unwrap_or(0))
+    }
+
     /// Whether the player's client runs the card HUD: it sent its settings in this session, after it registered the mod's
     /// channels, and has not left since. The original's `supportsCardHud`. A client without the mod has no HUD, and so
     /// does a player whose settings were only saved by an earlier session.

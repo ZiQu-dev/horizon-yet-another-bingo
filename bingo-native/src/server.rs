@@ -5,6 +5,7 @@ use super::{MOD_ID, guarded, log};
 use horizon_bingo::lobby_world;
 use horizon_bingo::server::chat;
 use horizon_bingo::server::commands::{Command, chat_shortcut, parse, requires_op};
+use horizon_bingo::server::difficulty;
 use horizon_bingo::server::game::GameOptions;
 use horizon_bingo::server::host::ServerHost;
 use horizon_bingo::server::lobby_scene;
@@ -1270,13 +1271,28 @@ fn open_lobby_page(host: &mut dyn mod_api::ServerHost, uuid: u128, page: Page) {
     }
 }
 
-/// A click on the lobby panel's start or reroll tile: what a click on that slot of the menu's root page does, with no menu
-/// open. A refused start opens the menu on its warnings page, which offers the start anyway.
-/// What the lobby panel's live tiles show now: the session's auto shuffle rule and team count.
-pub(crate) fn panel_state() -> lobby_scene::PanelState {
-    with_session(|s| lobby_scene::PanelState { auto_shuffle: s.rules().team_auto_shuffle, teams: s.rules().team_count })
+/// What the lobby panel's live tiles show now: the rules the tiles read, and the players online out of `max_players`.
+pub(crate) fn panel_state(players: usize, max_players: u32) -> lobby_scene::PanelState {
+    with_session(|s| {
+        let rules = s.rules();
+        lobby_scene::PanelState {
+            auto_shuffle: rules.team_auto_shuffle,
+            teams: rules.team_count,
+            goal: rules.goal,
+            time_limit: s.time_limit_minutes(),
+            difficulty: difficulty::PRESETS.iter().position(|(_, counts)| *counts == rules.tier_counts),
+            mode: rules.mode,
+            hidden_items: rules.hidden_consume.hidden_items,
+            consume_items: rules.hidden_consume.consume_items,
+            players,
+            max_players,
+        }
+    })
 }
 
+/// A click on a slot of the menu's root page from the lobby panel (start, reroll, auto shuffle, the team count, shuffle,
+/// reset defaults): what a click on that slot does, with no menu open. A refused start opens the menu on its warnings
+/// page, which offers the start anyway.
 pub(crate) fn panel_slot(host: &mut dyn mod_api::ServerHost, uuid: u128, slot: usize) {
     let (rules, pregame, operator) = menu_view(&*host, uuid);
     let view = View {
@@ -1284,7 +1300,39 @@ pub(crate) fn panel_slot(host: &mut dyn mod_api::ServerHost, uuid: u128, slot: u
         pregame,
         operator,
     };
-    match menu::click(&Page::Root, slot, &view) {
+    let outcome = menu::click(&Page::Root, slot, &view);
+    run_panel_outcome(host, uuid, outcome);
+}
+
+/// A click on a rule tile of the lobby panel: the command line (from the rules as they are) goes through the same gate as
+/// a chest slot's command, so only an operator before the round changes a rule.
+pub(crate) fn panel_command(host: &mut dyn mod_api::ServerHost, uuid: u128, line: String) {
+    let (rules, pregame, operator) = menu_view(&*host, uuid);
+    let view = View {
+        rules: &rules,
+        pregame,
+        operator,
+    };
+    let outcome = menu::gate_command(line, &view);
+    run_panel_outcome(host, uuid, outcome);
+}
+
+/// A tile that opens a page of the chest menu (features, goal and end, items and difficulty).
+pub(crate) fn open_panel_page(host: &mut dyn mod_api::ServerHost, uuid: u128, page: lobby_scene::PanelPage) {
+    open_lobby_page(
+        host,
+        uuid,
+        match page {
+            lobby_scene::PanelPage::Features => Page::Features,
+            lobby_scene::PanelPage::Goal => Page::Goal,
+            lobby_scene::PanelPage::Items => Page::Items,
+        },
+    );
+}
+
+/// Carries out what a panel click means: a refusal is told to the clicker, a command is run (with the button's click).
+fn run_panel_outcome(host: &mut dyn mod_api::ServerHost, uuid: u128, outcome: Outcome) {
+    match outcome {
         Outcome::Tell(text) => tell_player(host, uuid, Text::literal(text)),
         Outcome::Run(line) => {
             ServerAdapter { host: &mut *host }.play_sound(uuid, lobby_scene::SOUND_BUTTON);

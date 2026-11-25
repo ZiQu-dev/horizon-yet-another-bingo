@@ -4,6 +4,7 @@
 //! the English, as vanilla does. Replies to a command are plain English for now.
 //!
 //! The keys are `bingo.native.*`, so the original mod's own `bingo.*` keys keep their meaning.
+use super::options::Goal;
 
 /// A line with a translation key: the English template and the arguments that fill its `%s` places.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -308,6 +309,137 @@ pub fn lobby_panel_shuffle() -> Line {
 /// `Reset Defaults`, the panel tile that puts every rule back (the original's key).
 pub fn lobby_panel_reset_defaults() -> Line {
     Line::new("bingo.options.reset_defaults", "Reset Defaults", &[])
+}
+
+/// `Game Mode`, the header of the panel's first column (the original's key).
+pub fn lobby_panel_game_mode() -> Line {
+    Line::new("bingo.options.game_mode", "Game Mode", &[])
+}
+
+/// A game mode tile's label: `Lockout`, `Inventory`, `Hidden Items`, `Consume Items` (the original's keys).
+pub fn lobby_panel_mode(mode: PanelMode) -> Line {
+    match mode {
+        PanelMode::Lockout => Line::new("bingo.options.mode_lockout", "Lockout", &[]),
+        PanelMode::Inventory => Line::new("bingo.options.mode_inventory", "Inventory", &[]),
+        PanelMode::HiddenItems => Line::new("bingo.options.mode_hidden_items", "Hidden Items", &[]),
+        PanelMode::ConsumeItems => Line::new("bingo.options.mode_consume_items", "Consume Items", &[]),
+    }
+}
+
+/// The four game mode tiles of the panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelMode {
+    Lockout,
+    Inventory,
+    HiddenItems,
+    ConsumeItems,
+}
+
+/// `Features`, the panel tile that opens the features page.
+pub fn lobby_panel_features() -> Line {
+    Line::new("bingo.options.features", "Features", &[])
+}
+
+/// `Goal`, the header of the goal column.
+pub fn lobby_panel_goal() -> Line {
+    Line::new("bingo.options.goal", "Goal", &[])
+}
+
+/// The goal as the value tile shows it: `1 line`, `3 lines`, `5 items`, `Full Card`.
+pub fn lobby_panel_goal_value(goal: Goal) -> Line {
+    match goal {
+        Goal::Lines(1) => Line::new("bingo.game.line_count_1", "1 line", &[]),
+        Goal::Lines(n) => {
+            let n = n.to_string();
+            Line::new("bingo.game.line_count", "%s lines", &[n.as_str()])
+        }
+        Goal::Items(1) => Line::new("bingo.game.item_count_1", "1 item", &[]),
+        Goal::Items(n) => {
+            let n = n.to_string();
+            Line::new("bingo.game.item_count", "%s items", &[n.as_str()])
+        }
+        Goal::FullCard => Line::new("bingo.goal.full_card", "Full Card", &[]),
+    }
+}
+
+/// `Lines` or `Items`, the tile that switches the goal between the two.
+pub fn lobby_panel_goal_kind(goal: Goal) -> Line {
+    match goal {
+        Goal::Lines(_) => Line::new("bingo.native.lobby_panel_goal_lines", "Lines", &[]),
+        Goal::Items(_) | Goal::FullCard => Line::new("bingo.native.lobby_panel_goal_items", "Items", &[]),
+    }
+}
+
+/// `More...`, the tile that opens the goal page.
+pub fn lobby_panel_more() -> Line {
+    Line::new("bingo.options.more", "More...", &[])
+}
+
+/// `Time Limit`, the header over the time limit input.
+pub fn lobby_panel_time_limit() -> Line {
+    Line::new("bingo.options.time_limit", "Time Limit", &[])
+}
+
+/// The time limit as the value tile shows it: `Off`, or hours and minutes as the original writes them (`1h 30m`).
+pub fn lobby_panel_time_value(minutes: Option<u32>) -> Line {
+    match minutes {
+        None | Some(0) => Line::new("bingo.options.time_limit_off", "Off", &[]),
+        Some(minutes) => {
+            let text = format!("{}h {:02}m", minutes / 60, minutes % 60);
+            Line::new("bingo.native.lobby_panel_time_value", "%s", &[text.as_str()])
+        }
+    }
+}
+
+/// `Difficulty`, the header of the difficulty column.
+pub fn lobby_panel_difficulty() -> Line {
+    Line::new("bingo.options.card_difficulty", "Difficulty", &[])
+}
+
+/// The name of one of the four difficulty presets the panel shows (`Easy`, `Medium`, `Hard`, `Extreme`).
+pub fn lobby_panel_difficulty_name(index: usize) -> Line {
+    match index {
+        0 => Line::new("bingo.card_difficulty.easy", "Easy", &[]),
+        1 => Line::new("bingo.card_difficulty.medium", "Medium", &[]),
+        2 => Line::new("bingo.card_difficulty.hard", "Hard", &[]),
+        _ => Line::new("bingo.card_difficulty.extreme", "Extreme", &[]),
+    }
+}
+
+/// `Customize`, the tile that opens the items page.
+pub fn lobby_panel_customize() -> Line {
+    Line::new("bingo.options.customize", "Customize", &[])
+}
+
+/// `Shufflificator`, the header of the teams column.
+pub fn lobby_panel_teams_header() -> Line {
+    Line::new("bingo.options.teams", "Shufflificator", &[])
+}
+
+/// `Auto Shuffle`, the toggle's label (its state is the tile's look).
+pub fn lobby_panel_auto_shuffle_label() -> Line {
+    Line::new("bingo.options.teams_shuffle_auto", "Auto Shuffle", &[])
+}
+
+/// `Shuffle!`, the tile that shuffles the teams now.
+pub fn lobby_panel_shuffle_now() -> Line {
+    Line::new("bingo.options.teams_shuffle", "Shuffle!", &[])
+}
+
+/// `Re-roll Card` with the original's key.
+pub fn lobby_panel_reroll_card() -> Line {
+    Line::new("bingo.options.reroll_card", "Re-roll Card", &[])
+}
+
+/// `Best time: [Not Set]`: the panel has no best time lookup yet, so it always reads not set.
+pub fn lobby_panel_best_time_not_set() -> Line {
+    Line::new("bingo.stats.best_time", "Best time: %s", &["[Not Set]"])
+}
+
+/// `Players: N / M`, live.
+pub fn lobby_panel_player_count(players: usize, max: u32) -> Line {
+    let both = format!("{players} / {max}");
+    Line::new("bingo.options.player_count", "Players: %s", &[both.as_str()])
 }
 
 /// `You cannot ready up without joining a team! (use '%s' if you want to spectate)` (`CommandReadyNotOnATeam`).

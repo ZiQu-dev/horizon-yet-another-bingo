@@ -3,8 +3,17 @@
 //! clicked block means what, and the command lines to run. The adapter (`bingo-native/src/lobby_scene.rs`) runs them.
 //!
 //! The spots are the original's lobby POIs (`lobby_poi.json.gz`): `menu` at (0, 17, -5) and one `team` entry per pad.
+//!
+//! The panel is laid out like the original's `createRootPage`: five columns of small tiles, six rows high. Game Mode (four
+//! icon-sized mode tiles over Features), Goal (lines or items with `-` and `+`, the time limit with `-` and `+`, More),
+//! Difficulty (four presets, Customize), Shufflificator (auto shuffle, team count with `-` and `+`, Shuffle!, Re-roll
+//! Card) and the start column (best time, players, a tall START, Reset Defaults). Every tile is one text display; the
+//! tile that is on or chosen shows a light background with dark text, the others a dark one, and the headers are green.
+use super::difficulty;
+use super::menu;
+use super::options::{Goal, Mode, DEFAULT_TEAM_COUNT};
 use super::teams::{preset, PRESETS};
-use super::texts::{self, Line};
+use super::texts::{self, Line, PanelMode};
 
 /// The tag every text display of the lobby carries, so the scene can be removed and made again without duplicates.
 pub const UI_TAG: &str = "bingo_lobby_ui";
@@ -13,22 +22,40 @@ pub const LOBBY_LEVEL: &str = "bingo:lobby";
 
 /// The block of the menu spot (POI `menu`, yaw 0): the panel hangs in front of the wall around it.
 pub const MENU_POS: [i32; 3] = [0, 17, -5];
-/// The wall blocks a click counts on, inclusive: x -2..3, y 17..20 on the wall's row z -5 (the three oak wall signs and the
-/// stone around them). The panel's tiles stand in front of this wall, so a click ray ends on one of these blocks.
+/// The wall blocks a click counts on, inclusive: x -2..3 (the blocks span x -2 to 4), y 16..21 on the wall's row z -5 (the
+/// three oak wall signs and the stone around them). The panel's tiles stand in front of this wall, so a click ray ends on
+/// one of these blocks.
 const WALL_MIN: [i32; 3] = [-2, 16, -7];
 const WALL_MAX: [i32; 3] = [3, 21, -5];
 /// The panel's plane: displays stand just in front of the wall's south face (z -4), where the signs hang.
 pub const PANEL_Z: f64 = -3.9;
-/// The rotation `[yaw, pitch]` of the panel's displays. Entity yaw 0 faces south (+z) and a text display's readable side is
-/// its front, so 0 should read from a player standing south of the wall. Flip to `[180.0, 0.0]` if a live test shows mirrored
-/// or missing text.
+/// The rotation `[yaw, pitch]` of the panel's displays. Entity yaw 0 faces south (+z): a live test showed the text reads
+/// correctly from a player standing south of the wall with 0.
 pub const PANEL_ROTATION: [f32; 2] = [0.0, 0.0];
 
 /// A tile of the panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tile {
-    Title,
-    Players,
+    /// The green header over a column.
+    HeaderMode,
+    Mode(PanelMode),
+    Features,
+    HeaderGoal,
+    GoalFewer,
+    GoalValue,
+    GoalMore,
+    /// `Lines` / `Items`: switches the goal between the two.
+    GoalKind,
+    HeaderTime,
+    TimeFewer,
+    TimeValue,
+    TimeMore,
+    More,
+    HeaderDifficulty,
+    /// One of the four presets (0 easy .. 3 extreme).
+    Difficulty(usize),
+    Customize,
+    HeaderTeams,
     /// Auto shuffle's toggle.
     AutoShuffle,
     /// One team fewer, the `-` beside the count.
@@ -38,49 +65,121 @@ pub enum Tile {
     /// One team more, the `+` beside the count.
     TeamsMore,
     Shuffle,
-    Settings,
     Reroll,
-    ResetDefaults,
+    BestTime,
+    Players,
     Start,
+    ResetDefaults,
 }
 
-/// The tiles and their rectangles `[x0, y0, x1, y1]` in world coordinates on the panel plane, 5 blocks wide (x -2..3) and
-/// 3.9 high (y 17.03..20.95). The summon commands and the click mapping both read this table. Left column, top to bottom:
-/// title, auto shuffle, the team count row (`-`, `N teams`, `+`), shuffle, reroll, settings, reset defaults; right column:
-/// players, and the tall start tile.
-pub const TILES: [(Tile, [f64; 4]); 11] = [
-    (Tile::Title, [-2.0, 20.45, 0.95, 20.95]),
-    (Tile::AutoShuffle, [-2.0, 19.88, 0.95, 20.38]),
-    (Tile::TeamsFewer, [-2.0, 19.31, -1.25, 19.81]),
-    (Tile::Teams, [-1.20, 19.31, 0.15, 19.81]),
-    (Tile::TeamsMore, [0.20, 19.31, 0.95, 19.81]),
-    (Tile::Shuffle, [-2.0, 18.74, 0.95, 19.24]),
-    (Tile::Reroll, [-2.0, 18.17, 0.95, 18.67]),
-    (Tile::Settings, [-2.0, 17.60, 0.95, 18.10]),
-    (Tile::ResetDefaults, [-2.0, 17.03, 0.95, 17.53]),
-    (Tile::Players, [1.05, 20.45, 3.0, 20.95]),
-    (Tile::Start, [1.05, 17.03, 3.0, 20.38]),
-];
+/// The five columns `[x0, x1]` of the panel (6 blocks wide, x -2..4, with 0.06 between them).
+const COLUMNS: [[f64; 2]; 5] = [[-2.0, -0.5], [-0.44, 0.76], [0.82, 1.82], [1.88, 2.98], [3.04, 4.0]];
+/// The top of row 0, the height of a tile of one row, and the distance between two rows (a 0.06 gap).
+const ROW_TOP: f64 = 19.5;
+const ROW_HEIGHT: f64 = 0.36;
+const ROW_PITCH: f64 = 0.42;
 
-/// The tag of the display of a tile that shows a number or a state, so it alone can be made again when that changes.
-pub fn tile_tag(tile: Tile) -> Option<&'static str> {
-    match tile {
-        Tile::AutoShuffle => Some("bingo_lobby_tile_auto_shuffle"),
-        Tile::Teams => Some("bingo_lobby_tile_team_count"),
-        _ => None,
+/// The rectangle `[x0, y0, x1, y1]` from column span `[x0, x1]` and rows `first..=last` (a tile can be several rows high).
+const fn cell(x: [f64; 2], first: usize, last: usize) -> [f64; 4] {
+    [x[0], ROW_TOP - ROW_PITCH * last as f64 - ROW_HEIGHT, x[1], ROW_TOP - ROW_PITCH * first as f64]
+}
+
+/// Splits a column span in two halves with a 0.06 gap (the Game Mode column's two icon tiles).
+const fn half(x: [f64; 2], right: bool) -> [f64; 2] {
+    let mid = (x[0] + x[1]) / 2.0;
+    if right { [mid + 0.03, x[1]] } else { [x[0], mid - 0.03] }
+}
+
+/// The `-` / value / `+` split of a column span: square steppers `step` wide at both ends.
+const fn stepper(x: [f64; 2], part: usize, step: f64) -> [f64; 2] {
+    match part {
+        0 => [x[0], x[0] + step],
+        1 => [x[0] + step + 0.06, x[1] - step - 0.06],
+        _ => [x[1] - step, x[1]],
     }
 }
 
-/// What the panel's live tiles show: the auto shuffle rule and the team count.
+/// The tiles and their rectangles `[x0, y0, x1, y1]` in world coordinates on the panel plane, 6 blocks wide (x -2..4) and
+/// 2.46 high (y 17.04..19.5). The summon commands and the click mapping both read this table.
+pub const TILES: [(Tile, [f64; 4]); 33] = [
+    (Tile::HeaderMode, cell(COLUMNS[0], 0, 0)),
+    (Tile::Mode(PanelMode::Lockout), cell(half(COLUMNS[0], false), 1, 2)),
+    (Tile::Mode(PanelMode::Inventory), cell(half(COLUMNS[0], true), 1, 2)),
+    (Tile::Mode(PanelMode::HiddenItems), cell(half(COLUMNS[0], false), 3, 4)),
+    (Tile::Mode(PanelMode::ConsumeItems), cell(half(COLUMNS[0], true), 3, 4)),
+    (Tile::Features, cell(COLUMNS[0], 5, 5)),
+    (Tile::HeaderGoal, cell(COLUMNS[1], 0, 0)),
+    (Tile::GoalFewer, cell(stepper(COLUMNS[1], 0, 0.24), 1, 1)),
+    (Tile::GoalValue, cell(stepper(COLUMNS[1], 1, 0.24), 1, 1)),
+    (Tile::GoalMore, cell(stepper(COLUMNS[1], 2, 0.24), 1, 1)),
+    (Tile::GoalKind, cell(COLUMNS[1], 2, 2)),
+    (Tile::HeaderTime, cell(COLUMNS[1], 3, 3)),
+    (Tile::TimeFewer, cell(stepper(COLUMNS[1], 0, 0.24), 4, 4)),
+    (Tile::TimeValue, cell(stepper(COLUMNS[1], 1, 0.24), 4, 4)),
+    (Tile::TimeMore, cell(stepper(COLUMNS[1], 2, 0.24), 4, 4)),
+    (Tile::More, cell(COLUMNS[1], 5, 5)),
+    (Tile::HeaderDifficulty, cell(COLUMNS[2], 0, 0)),
+    (Tile::Difficulty(0), cell(COLUMNS[2], 1, 1)),
+    (Tile::Difficulty(1), cell(COLUMNS[2], 2, 2)),
+    (Tile::Difficulty(2), cell(COLUMNS[2], 3, 3)),
+    (Tile::Difficulty(3), cell(COLUMNS[2], 4, 4)),
+    (Tile::Customize, cell(COLUMNS[2], 5, 5)),
+    (Tile::HeaderTeams, cell(COLUMNS[3], 0, 0)),
+    (Tile::AutoShuffle, cell(COLUMNS[3], 1, 1)),
+    (Tile::TeamsFewer, cell(stepper(COLUMNS[3], 0, 0.24), 2, 2)),
+    (Tile::Teams, cell(stepper(COLUMNS[3], 1, 0.24), 2, 2)),
+    (Tile::TeamsMore, cell(stepper(COLUMNS[3], 2, 0.24), 2, 2)),
+    (Tile::Shuffle, cell(COLUMNS[3], 3, 3)),
+    (Tile::Reroll, cell(COLUMNS[3], 5, 5)),
+    (Tile::BestTime, cell(COLUMNS[4], 0, 0)),
+    (Tile::Players, cell(COLUMNS[4], 1, 1)),
+    (Tile::Start, cell(COLUMNS[4], 2, 4)),
+    (Tile::ResetDefaults, cell(COLUMNS[4], 5, 5)),
+];
+
+/// The tag of a tile's display, so it alone can be made again when what it shows changes: `bingo_lobby_tile_` and the
+/// tile's name in lower case (`bingo_lobby_tile_difficulty_2`).
+pub fn tile_tag(tile: Tile) -> String {
+    let name: String = format!("{tile:?}")
+        .chars()
+        .filter(|c| *c != ')')
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+        .collect();
+    format!("bingo_lobby_tile_{name}")
+}
+
+/// What the panel's live tiles show: the rules and the players that the tiles read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PanelState {
     pub auto_shuffle: bool,
     pub teams: usize,
+    pub goal: Goal,
+    /// The time limit in minutes, `None` when off.
+    pub time_limit: Option<u32>,
+    /// Which of the difficulty presets the card's tier counts equal (an index into `difficulty::PRESETS`), if any.
+    pub difficulty: Option<usize>,
+    pub mode: Mode,
+    pub hidden_items: bool,
+    pub consume_items: bool,
+    /// Players online and the most the server takes.
+    pub players: usize,
+    pub max_players: u32,
 }
 
 impl Default for PanelState {
     fn default() -> Self {
-        Self { auto_shuffle: false, teams: 2 }
+        Self {
+            auto_shuffle: false,
+            teams: DEFAULT_TEAM_COUNT,
+            goal: Goal::Lines(1),
+            time_limit: None,
+            difficulty: Some(0),
+            mode: Mode::Standard,
+            hidden_items: false,
+            consume_items: false,
+            players: 0,
+            max_players: 8,
+        }
     }
 }
 
@@ -104,11 +203,34 @@ pub const PADS: [(&str, [i32; 3]); 8] = [
     ("bingo_blue", [16, 23, -9]),
 ];
 
+/// A tile that changes a rule by a command that depends on what the rule is now (`panel_command` builds the line).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelAction {
+    GoalFewer,
+    GoalMore,
+    GoalKind,
+    TimeFewer,
+    TimeMore,
+    /// One of the four presets shown (0 easy .. 3 extreme).
+    Difficulty(usize),
+    Mode(PanelMode),
+}
+
+/// A page of the chest menu that a tile opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelPage {
+    Features,
+    Goal,
+    Items,
+}
+
 /// What a right click on a block of the lobby does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Click {
-    /// Opens the lobby menu on its root page (the settings tile, the team count tile, and a click on no tile).
-    Menu,
+    /// Opens a page of the chest menu: the tiles of the features the panel has no tile row for.
+    Open(PanelPage),
+    /// A rule tile: the command comes from the rule's current value, through the menu's own gate.
+    Panel(PanelAction),
     /// Starts the game, as the menu's start slot does.
     Start,
     /// Rerolls the card, as the menu's reroll slot does.
@@ -127,21 +249,108 @@ pub enum Click {
     Join(&'static str),
 }
 
+/// What a click on `tile` does, if it is a button: the headers and the value tiles only show.
+pub fn tile_click(tile: Tile) -> Option<Click> {
+    Some(match tile {
+        Tile::Mode(mode) => Click::Panel(PanelAction::Mode(mode)),
+        Tile::Features => Click::Open(PanelPage::Features),
+        Tile::GoalFewer => Click::Panel(PanelAction::GoalFewer),
+        Tile::GoalMore => Click::Panel(PanelAction::GoalMore),
+        Tile::GoalKind => Click::Panel(PanelAction::GoalKind),
+        Tile::TimeFewer => Click::Panel(PanelAction::TimeFewer),
+        Tile::TimeMore => Click::Panel(PanelAction::TimeMore),
+        Tile::More => Click::Open(PanelPage::Goal),
+        Tile::Difficulty(index) => Click::Panel(PanelAction::Difficulty(index)),
+        Tile::Customize => Click::Open(PanelPage::Items),
+        Tile::AutoShuffle => Click::AutoShuffle,
+        Tile::TeamsFewer => Click::TeamsFewer,
+        Tile::TeamsMore => Click::TeamsMore,
+        Tile::Shuffle => Click::Shuffle,
+        Tile::Reroll => Click::Reroll,
+        Tile::Start => Click::Start,
+        Tile::ResetDefaults => Click::ResetDefaults,
+        Tile::HeaderMode
+        | Tile::HeaderGoal
+        | Tile::GoalValue
+        | Tile::HeaderTime
+        | Tile::TimeValue
+        | Tile::HeaderDifficulty
+        | Tile::HeaderTeams
+        | Tile::Teams
+        | Tile::BestTime
+        | Tile::Players => return None,
+    })
+}
+
+/// The most lines and items a goal takes (`BingoGoal.MAX_LINES`, `MAX_ITEMS`), and the time limit's range and step in
+/// minutes (`Timer.kt`).
+const MAX_LINES: u32 = 11;
+const MAX_ITEMS: u32 = 25;
+const MAX_TIME: u32 = 360;
+const TIME_STEP: u32 = 15;
+/// The presets the panel shows: the original's first four (impossible is left to the chest).
+const PANEL_DIFFICULTIES: usize = 4;
+
+/// The command line a rule tile runs for the rules as they are now, or `None` when the click changes nothing (a goal
+/// already at its end, a time limit already off). The same line the chest menu would run, so the menu's gate decides who
+/// may click.
+pub fn panel_command(action: PanelAction, state: &PanelState) -> Option<String> {
+    let goal = |goal: Goal| match goal {
+        Goal::Lines(n) => format!("goal lines {n}"),
+        Goal::Items(n) if n >= MAX_ITEMS => "goal full_card".to_owned(),
+        Goal::Items(n) => format!("goal items {n}"),
+        Goal::FullCard => "goal full_card".to_owned(),
+    };
+    let time = |minutes: u32| if minutes == 0 { "timelimit off".to_owned() } else { format!("timelimit {minutes}") };
+    let minutes = state.time_limit.unwrap_or(0);
+    let on_off = |on: bool| if on { "off" } else { "on" };
+    match action {
+        PanelAction::GoalFewer => match state.goal {
+            Goal::Lines(n) if n > 1 => Some(goal(Goal::Lines(n - 1))),
+            Goal::Items(n) if n > 1 => Some(goal(Goal::Items(n - 1))),
+            Goal::FullCard => Some(goal(Goal::Items(MAX_ITEMS - 1))),
+            _ => None,
+        },
+        PanelAction::GoalMore => match state.goal {
+            Goal::Lines(n) if n < MAX_LINES => Some(goal(Goal::Lines(n + 1))),
+            Goal::Items(n) if n < MAX_ITEMS => Some(goal(Goal::Items(n + 1))),
+            _ => None,
+        },
+        PanelAction::GoalKind => Some(match state.goal {
+            Goal::Lines(n) => goal(Goal::Items(n)),
+            Goal::Items(n) => goal(Goal::Lines(n.min(MAX_LINES))),
+            Goal::FullCard => goal(Goal::Lines(MAX_LINES)),
+        }),
+        PanelAction::TimeFewer => (minutes > 0).then(|| time((minutes - 1) / TIME_STEP * TIME_STEP)),
+        PanelAction::TimeMore => (minutes < MAX_TIME).then(|| time((minutes / TIME_STEP + 1) * TIME_STEP)),
+        PanelAction::Difficulty(index) => difficulty::PRESETS.get(index).filter(|_| index < PANEL_DIFFICULTIES).map(|(name, _)| format!("difficulty {name}")),
+        PanelAction::Mode(PanelMode::Lockout) => Some(format!("mode lockout {}", on_off(state.mode == Mode::Lockout))),
+        PanelAction::Mode(PanelMode::Inventory) => Some(format!("mode inventory {}", on_off(state.mode == Mode::Inventory))),
+        PanelAction::Mode(PanelMode::HiddenItems) => Some(format!("mode hidden_items {}", on_off(state.hidden_items))),
+        PanelAction::Mode(PanelMode::ConsumeItems) => Some(format!("mode consume_items {}", on_off(state.consume_items))),
+    }
+}
+
+/// The root page's slot a button tile clicks, for the tiles that are a slot of the chest's root page.
+pub fn root_slot(click: Click) -> Option<usize> {
+    match click {
+        Click::Start => Some(menu::ROOT_START_SLOT),
+        Click::Reroll => Some(menu::ROOT_REROLL_SLOT),
+        Click::AutoShuffle => Some(menu::ROOT_AUTO_SHUFFLE_SLOT),
+        Click::TeamsFewer => Some(menu::ROOT_TEAMS_FEWER_SLOT),
+        Click::TeamsMore => Some(menu::ROOT_TEAMS_MORE_SLOT),
+        Click::Shuffle => Some(menu::ROOT_SHUFFLE_SLOT),
+        Click::ResetDefaults => Some(menu::ROOT_DEFAULTS_SLOT),
+        _ => None,
+    }
+}
+
 /// The action of a right click on the block `pos` whose hit point is `point` in the lobby: a block of the panel's wall
-/// means the tile under the hit's `x, y` (the ray ends on the wall behind the tiles), the menu when no tile is there; a pad's
-/// block or the block above it (its carpet) joins the pad's team. Any other block does nothing.
+/// means the tile under the hit's `x, y` (the ray ends on the wall behind the tiles), nothing when no tile is there or the
+/// tile only shows; a pad's block or the block above it (its carpet) joins the pad's team. Any other block does nothing.
 pub fn click_at(pos: [i32; 3], point: [f64; 3]) -> Option<Click> {
     if (0..3).all(|axis| (WALL_MIN[axis]..=WALL_MAX[axis]).contains(&pos[axis])) {
-        return Some(match tile_at(point[0], point[1]) {
-            Some(Tile::Start) => Click::Start,
-            Some(Tile::Reroll) => Click::Reroll,
-            Some(Tile::AutoShuffle) => Click::AutoShuffle,
-            Some(Tile::TeamsFewer) => Click::TeamsFewer,
-            Some(Tile::TeamsMore) => Click::TeamsMore,
-            Some(Tile::Shuffle) => Click::Shuffle,
-            Some(Tile::ResetDefaults) => Click::ResetDefaults,
-            Some(Tile::Teams | Tile::Settings | Tile::Title | Tile::Players) | None => Click::Menu,
-        });
+        return tile_at(point[0], point[1]).and_then(tile_click);
     }
     PADS.iter()
         .find(|(_, pad)| pos == *pad || pos == [pad[0], pad[1] + 1, pad[2]])
@@ -241,16 +450,31 @@ pub const SOUND_TEAM_CHANGED: &str = "minecraft:item.lodestone_compass.lock";
 /// A primed TNT, when the card is rerolled.
 pub const SOUND_REROLL: &str = "minecraft:entity.tnt.primed";
 
-/// A dark, translucent tile background (ARGB) and the green one of the info tiles.
-const BACKGROUND_DARK: u32 = 0xB020_2428;
-const BACKGROUND_GREEN: u32 = 0xB012_3A1A;
+/// The tile backgrounds (ARGB): a dark translucent tile, the light one of a tile that is on or chosen, the darker one of a
+/// value (the goal, the time, the team count), and the dark green header.
+const BACKGROUND_TILE: u32 = 0xA026_2B2B;
+const BACKGROUND_ACTIVE: u32 = 0xE0C4_C8C8;
+const BACKGROUND_VALUE: u32 = 0xB012_1616;
+const BACKGROUND_HEADER: u32 = 0xB00E_2A12;
+/// The text colours: gray on a dark tile, black on a light one, white on a value, the original's light green on a header.
+const TEXT_TILE: &str = "#A8A8A8";
+const TEXT_ACTIVE: &str = "#000000";
+const TEXT_VALUE: &str = "#FFFFFF";
+const TEXT_HEADER: &str = "#99FF99";
+/// The marker before the label of a tile that is a switch or one choice of several: filled dark green when on, hollow gray
+/// when off, as the original's icon corner.
+const MARKER_ON: &str = "\u{25C6} ";
+const MARKER_OFF: &str = "\u{25C7} ";
 /// A pad label's background.
 const BACKGROUND_LABEL: u32 = 0x8000_0000;
-/// The width of a panel tile's text against its height, so a long label fits its tile.
-const TEXT_ASPECT: f64 = 0.6;
-/// A text display's line height and a space's width, in pixels (40 pixels are a block at scale 1).
+/// The text scale a tile is drawn at: the original's tile text is vanilla size at about this scale in the world, which
+/// makes the panel's rows about as high as a line of text. START is drawn larger.
+const TEXT_SCALE: f64 = 0.5;
+const TEXT_SCALE_START: f64 = 1.0;
+/// A text display's line height in pixels (40 pixels are a block at scale 1).
 const LINE_PX: f64 = 9.0;
-const SPACE_PX: f64 = 4.0;
+/// The share of a tile's width its label may fill.
+const FILL: f64 = 0.92;
 
 /// The command for one text display in the lobby, at `pos`, with `text` (an SNBT component). `scale` is `[x, y]`; `billboard`
 /// is `fixed` (then `rotation` is its `[yaw, pitch]`) or `center` (faces the viewer).
@@ -273,21 +497,115 @@ fn summon_display(
     )
 }
 
-/// The width of a text in pixels, roughly: a space is 4, any other glyph 6.
+/// The width of one character in pixels, roughly as vanilla's font sets it (with its pixel of spacing).
+fn char_px(c: char) -> f64 {
+    match c {
+        ' ' => 4.0,
+        'i' | '.' | ',' | ':' | ';' | '!' | '|' | '\'' => 3.0,
+        'l' | 'I' | 't' => 4.0,
+        'f' | 'k' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | '"' | '*' => 5.0,
+        '@' | '~' => 7.0,
+        c if c.is_ascii() => 6.0,
+        _ => 9.0,
+    }
+}
+
+/// The width of a text in pixels, roughly.
 fn text_px(text: &str) -> f64 {
-    text.chars().map(|c| if c == ' ' { SPACE_PX } else { 6.0 }).sum()
+    text.chars().map(char_px).sum()
+}
+
+/// How a tile looks: its label, the colours, the marker (`Some(on)` for a switch) and the text scale it is drawn at.
+#[derive(Debug, Clone, PartialEq)]
+struct Look {
+    line: Line,
+    color: &'static str,
+    background: u32,
+    marker: Option<bool>,
+    scale: f64,
+}
+
+impl Look {
+    fn tile(line: Line) -> Self {
+        Self { line, color: TEXT_TILE, background: BACKGROUND_TILE, marker: None, scale: TEXT_SCALE }
+    }
+
+    fn value(line: Line) -> Self {
+        Self { line, color: TEXT_VALUE, background: BACKGROUND_VALUE, marker: None, scale: TEXT_SCALE }
+    }
+
+    fn header(line: Line) -> Self {
+        Self { line, color: TEXT_HEADER, background: BACKGROUND_HEADER, marker: None, scale: TEXT_SCALE }
+    }
+
+    /// A tile that is on or chosen: light with dark text, and a marker when `marked`.
+    fn choice(line: Line, on: bool, marked: bool) -> Self {
+        let marker = marked.then_some(on);
+        if on {
+            Self { line, color: TEXT_ACTIVE, background: BACKGROUND_ACTIVE, marker, scale: TEXT_SCALE }
+        } else {
+            Self { marker, ..Self::tile(line) }
+        }
+    }
+}
+
+/// The look of a tile for the panel's `state`.
+fn tile_look(tile: Tile, state: &PanelState) -> Look {
+    match tile {
+        Tile::HeaderMode => Look::header(texts::lobby_panel_game_mode()),
+        Tile::Mode(mode) => {
+            let on = match mode {
+                PanelMode::Lockout => state.mode == Mode::Lockout,
+                PanelMode::Inventory => state.mode == Mode::Inventory,
+                PanelMode::HiddenItems => state.hidden_items,
+                PanelMode::ConsumeItems => state.consume_items,
+            };
+            Look::choice(texts::lobby_panel_mode(mode), on, true)
+        }
+        Tile::Features => Look::tile(texts::lobby_panel_features()),
+        Tile::HeaderGoal => Look::header(texts::lobby_panel_goal()),
+        Tile::GoalFewer | Tile::TimeFewer | Tile::TeamsFewer => Look::tile(texts::lobby_panel_minus()),
+        Tile::GoalMore | Tile::TimeMore | Tile::TeamsMore => Look::tile(texts::lobby_panel_plus()),
+        Tile::GoalValue => Look::value(texts::lobby_panel_goal_value(state.goal)),
+        Tile::GoalKind => Look::tile(texts::lobby_panel_goal_kind(state.goal)),
+        Tile::HeaderTime => Look::header(texts::lobby_panel_time_limit()),
+        Tile::TimeValue => Look::value(texts::lobby_panel_time_value(state.time_limit)),
+        Tile::More => Look::tile(texts::lobby_panel_more()),
+        Tile::HeaderDifficulty => Look::header(texts::lobby_panel_difficulty()),
+        Tile::Difficulty(index) => Look::choice(texts::lobby_panel_difficulty_name(index), state.difficulty == Some(index), true),
+        Tile::Customize => Look::tile(texts::lobby_panel_customize()),
+        Tile::HeaderTeams => Look::header(texts::lobby_panel_teams_header()),
+        Tile::AutoShuffle => Look::choice(texts::lobby_panel_auto_shuffle_label(), state.auto_shuffle, true),
+        Tile::Teams => Look::value(texts::lobby_panel_team_count(state.teams)),
+        Tile::Shuffle => Look::tile(texts::lobby_panel_shuffle_now()),
+        Tile::Reroll => Look::tile(texts::lobby_panel_reroll_card()),
+        Tile::BestTime => Look::header(texts::lobby_panel_best_time_not_set()),
+        Tile::Players => Look::header(texts::lobby_panel_player_count(state.players, state.max_players)),
+        Tile::Start => Look { scale: TEXT_SCALE_START, ..Look::tile(texts::lobby_menu_start()) },
+        Tile::ResetDefaults => Look::tile(texts::lobby_panel_reset_defaults()),
+    }
 }
 
 /// One panel tile as a summon command: the label centred in `rect` on the panel plane. The label has blank lines above and
-/// below (`blank_lines` each) and spaces beside it, so the display's background about fills the rectangle; the scale makes
-/// the text block as high as the rectangle.
-fn tile_command(tile: Tile, rect: [f64; 4], line: &Line, color: &str, background: u32, blank_lines: usize) -> String {
+/// below and spaces beside it, so the display's background about fills the rectangle; the text scale is the look's, made
+/// smaller for a long label, and the display is scaled the same in both directions so the glyphs keep their shape.
+fn tile_command(tile: Tile, rect: [f64; 4], look: &Look) -> String {
     let (width, height) = (rect[2] - rect[0], rect[3] - rect[1]);
-    let lines = 1 + 2 * blank_lines;
-    let scale_y = height * 40.0 / (lines as f64 * LINE_PX + 2.0);
-    let scale_x = scale_y * TEXT_ASPECT;
-    let wanted_px = width * 40.0 / scale_x;
-    let pad = ((wanted_px - text_px(&line.render())) / (2.0 * SPACE_PX)).floor().max(0.0) as usize;
+    let marker = match look.marker {
+        Some(true) => MARKER_ON,
+        Some(false) => MARKER_OFF,
+        None => "",
+    };
+    let label_px = text_px(marker) + text_px(&look.line.render());
+    let wanted = look.scale.min(width * 40.0 * FILL / label_px);
+    // An odd number of lines puts the label's own line in the middle.
+    let mut lines = (height * 40.0 / (LINE_PX * wanted)).round().max(1.0) as usize;
+    if lines % 2 == 0 {
+        lines -= 1;
+    }
+    let blank_lines = lines / 2;
+    let scale = height * 40.0 / (lines as f64 * LINE_PX + 2.0);
+    let pad = ((width * 40.0 / scale - label_px) / (2.0 * char_px(' '))).floor().max(0.0) as usize;
     let spaces = literal(&" ".repeat(pad), None, false, true);
     let newlines = literal(&"\n".repeat(blank_lines), None, false, true);
     let mut parts = Vec::new();
@@ -295,7 +613,10 @@ fn tile_command(tile: Tile, rect: [f64; 4], line: &Line, color: &str, background
         parts.push(newlines.clone());
     }
     parts.push(spaces.clone());
-    parts.push(component(line, Some(color), false, true));
+    if let Some(on) = look.marker {
+        parts.push(literal(marker, Some(if on { "dark_green" } else { "gray" }), false, true));
+    }
+    parts.push(component(&look.line, Some(look.color), false, true));
     parts.push(spaces);
     if blank_lines > 0 {
         parts.push(newlines);
@@ -303,12 +624,12 @@ fn tile_command(tile: Tile, rect: [f64; 4], line: &Line, color: &str, background
     let text = object(true, &[("text", quoted("", true)), ("extra", format!("[{}]", parts.join(",")))]);
     summon_display(
         [(rect[0] + rect[2]) / 2.0, rect[1], PANEL_Z],
-        [scale_x, scale_y],
+        [scale, scale],
         "fixed",
         PANEL_ROTATION,
-        background,
+        look.background,
         &text,
-        tile_tag(tile),
+        Some(&tile_tag(tile)),
     )
 }
 
@@ -317,38 +638,19 @@ pub fn clear_command() -> String {
     format!("execute in {LOBBY_LEVEL} run kill @e[type=minecraft:text_display,tag={UI_TAG}]")
 }
 
-/// The look of a tile: its label, text colour, background and blank lines around the label, for the panel's `state`.
-fn tile_look(tile: Tile, state: PanelState) -> (Line, &'static str, u32, usize) {
-    match tile {
-        Tile::Title => (texts::lobby_panel_title(), "green", BACKGROUND_GREEN, 0),
-        Tile::Players => (texts::lobby_panel_players(), "green", BACKGROUND_GREEN, 0),
-        Tile::AutoShuffle if state.auto_shuffle => (texts::lobby_panel_auto_shuffle(true), "green", BACKGROUND_GREEN, 0),
-        Tile::AutoShuffle => (texts::lobby_panel_auto_shuffle(false), "white", BACKGROUND_DARK, 0),
-        Tile::TeamsFewer => (texts::lobby_panel_minus(), "white", BACKGROUND_DARK, 0),
-        Tile::Teams => (texts::lobby_panel_team_count(state.teams), "white", BACKGROUND_DARK, 0),
-        Tile::TeamsMore => (texts::lobby_panel_plus(), "white", BACKGROUND_DARK, 0),
-        Tile::Shuffle => (texts::lobby_panel_shuffle(), "white", BACKGROUND_DARK, 0),
-        Tile::Settings => (texts::lobby_panel_settings(), "white", BACKGROUND_DARK, 0),
-        Tile::Reroll => (texts::lobby_panel_reroll(), "white", BACKGROUND_DARK, 0),
-        Tile::ResetDefaults => (texts::lobby_panel_reset_defaults(), "white", BACKGROUND_DARK, 0),
-        Tile::Start => (texts::lobby_menu_start(), "white", BACKGROUND_DARK, 4),
-    }
-}
-
 /// The summon command of one tile for the panel's `state`.
-fn tile_summon(tile: Tile, rect: [f64; 4], state: PanelState) -> String {
-    let (line, color, background, blank) = tile_look(tile, state);
-    tile_command(tile, rect, &line, color, background, blank)
+fn tile_summon(tile: Tile, rect: [f64; 4], state: &PanelState) -> String {
+    tile_command(tile, rect, &tile_look(tile, state))
 }
 
-/// The commands that make the tiles with a number or a state (`tile_tag`) again for `state`: each old display is removed by
-/// its tag first, so running this twice leaves one display each. Cheap: two kills and two summons.
-pub fn refresh_commands(state: PanelState) -> Vec<String> {
+/// The commands that make again the tiles whose look differs between `old` and `new`: each old display is removed by its
+/// tag first, so running this twice leaves one display each. Nothing for a state that looks the same.
+pub fn refresh_commands(old: &PanelState, new: &PanelState) -> Vec<String> {
     let mut commands = Vec::new();
     for (tile, rect) in TILES {
-        if let Some(tag) = tile_tag(tile) {
-            commands.push(format!("execute in {LOBBY_LEVEL} run kill @e[type=minecraft:text_display,tag={tag}]"));
-            commands.push(tile_summon(tile, rect, state));
+        if tile_look(tile, old) != tile_look(tile, new) {
+            commands.push(format!("execute in {LOBBY_LEVEL} run kill @e[type=minecraft:text_display,tag={}]", tile_tag(tile)));
+            commands.push(tile_summon(tile, rect, new));
         }
     }
     commands
@@ -357,7 +659,7 @@ pub fn refresh_commands(state: PanelState) -> Vec<String> {
 /// The commands that summon the displays: one for each tile of the panel (its live tiles showing `state`) and, for each pad,
 /// the team's `[symbol name]` 1.4 blocks above the pad block and `Click to join!` 1.1 above it. `clear_command` is not
 /// among them.
-pub fn summon_commands(state: PanelState) -> Vec<String> {
+pub fn summon_commands(state: &PanelState) -> Vec<String> {
     let mut commands = Vec::new();
     for (tile, rect) in TILES {
         commands.push(tile_summon(tile, rect, state));
