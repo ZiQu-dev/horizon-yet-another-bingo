@@ -661,14 +661,13 @@ fn session_zero() -> (Session, FakeHost) {
 }
 
 #[test]
-fn the_maps_three_wall_signs_are_taken_off_the_panels_wall() {
-    // The signs are at (0, 17..19, -5), where the original's menu is anchored; they would hide the tiles.
+fn the_maps_wall_signs_are_taken_off_the_panels_wall_wherever_they_stand_in_the_column() {
+    // Signs of the map stand in the column x 0, z -5 where the original's menu is anchored; they would hide the tiles.
+    let commands = lobby_scene::sign_removal_commands();
+    assert_eq!(commands.len(), 7, "heights 15 to 21");
     assert_eq!(
-        lobby_scene::sign_removal_commands(),
-        vec![
-            "execute in bingo:lobby run setblock 0 17 -5 minecraft:air".to_owned(),
-            "execute in bingo:lobby run setblock 0 18 -5 minecraft:air".to_owned(),
-            "execute in bingo:lobby run setblock 0 19 -5 minecraft:air".to_owned(),
-        ]
+        commands[0],
+        "execute in bingo:lobby if block 0 15 -5 minecraft:oak_wall_sign run setblock 0 15 -5 minecraft:air"
     );
+    assert!(commands.iter().all(|c| c.contains("if block 0 ") && c.contains("minecraft:oak_wall_sign run setblock")));
 }
