@@ -4,7 +4,6 @@
 //! change never start inside the game's own click handling.
 use super::guarded;
 use super::server;
-use horizon_bingo::server::menu;
 use horizon_bingo::server::lobby_scene::{self, Click, PanelState, LOBBY_LEVEL};
 use mod_api::{BlockClick, Flow, Hand, InteractionResult, LevelDimension, LogicalSide, ServerHost};
 use std::sync::{
@@ -66,16 +65,21 @@ pub fn tick(host: &mut dyn ServerHost) {
     let clicks = std::mem::take(&mut *CLICKS.lock().unwrap_or_else(PoisonError::into_inner));
     for (player, action) in clicks {
         match action {
-            Click::Menu => server::open_lobby_menu(host, player),
-            Click::Start => server::panel_slot(host, player, menu::ROOT_START_SLOT),
-            Click::Reroll => server::panel_slot(host, player, menu::ROOT_REROLL_SLOT),
-            Click::AutoShuffle => server::panel_slot(host, player, menu::ROOT_AUTO_SHUFFLE_SLOT),
-            Click::TeamsFewer => server::panel_slot(host, player, menu::ROOT_TEAMS_FEWER_SLOT),
-            Click::TeamsMore => server::panel_slot(host, player, menu::ROOT_TEAMS_MORE_SLOT),
-            Click::Shuffle => server::panel_slot(host, player, menu::ROOT_SHUFFLE_SLOT),
-            Click::ResetDefaults => server::panel_slot(host, player, menu::ROOT_DEFAULTS_SLOT),
+            Click::Open(page) => server::open_panel_page(host, player, page),
+            Click::Panel(rule) => {
+                // The line comes from the rules as they are now; a click that changes nothing (a goal at its end) does nothing.
+                let state = panel_state(host);
+                if let Some(line) = lobby_scene::panel_command(rule, &state) {
+                    server::panel_command(host, player, line);
+                }
+            }
             Click::Join(team) => {
                 let _ = server::perform_command(host, player, &format!("join {team}"));
+            }
+            slot_click => {
+                if let Some(slot) = lobby_scene::root_slot(slot_click) {
+                    server::panel_slot(host, player, slot);
+                }
             }
         }
     }
@@ -104,8 +108,8 @@ fn build_scene(host: &mut dyn ServerHost) {
     }
     // Nothing to remove the first time: the kill fails then, which is fine.
     let _ = host.commands().run_command(&lobby_scene::clear_command());
-    let state = server::panel_state();
-    let all_made = lobby_scene::summon_commands(state)
+    let state = panel_state(host);
+    let all_made = lobby_scene::summon_commands(&state)
         .iter()
         .fold(true, |made, line| host.commands().run_command(line) && made);
     if all_made {
@@ -117,16 +121,24 @@ fn build_scene(host: &mut dyn ServerHost) {
     }
 }
 
-/// Makes the live tiles again when the rules they show changed (a panel click, the chest menu or a command), so the numbers
-/// are current. Only the two tagged tiles are replaced, and only when the state differs from what is shown.
+/// The panel's live state: the rules, and the players online out of the server's most (eight when the host does not say).
+fn panel_state(host: &dyn ServerHost) -> PanelState {
+    let players = host.players().server_players().len();
+    server::panel_state(players, host.max_players().unwrap_or(8))
+}
+
+/// Makes the live tiles again when what they show changed (a panel click, the chest menu, a command, a player joining or
+/// leaving), so the numbers are current. Only the tiles whose look differs from what is shown are replaced.
 fn refresh_tiles(host: &mut dyn ServerHost) {
     let mut shown = SHOWN.lock().unwrap_or_else(PoisonError::into_inner);
     let Some(old) = *shown else { return };
-    let state = server::panel_state();
+    let state = panel_state(&*host);
     if state == old {
         return;
     }
-    let all_made = lobby_scene::refresh_commands(state).iter().fold(true, |made, line| host.commands().run_command(line) && made);
+    let all_made = lobby_scene::refresh_commands(&old, &state)
+        .iter()
+        .fold(true, |made, line| host.commands().run_command(line) && made);
     if all_made {
         *shown = Some(state);
     }

@@ -573,5 +573,8 @@
   "bingo.native.lobby_panel_auto_shuffle_off": "Auto Shuffle: Off",
   "bingo.native.lobby_panel_minus": "-",
   "bingo.native.lobby_panel_plus": "+",
-  "bingo.native.lobby_panel_shuffle": "Shuffle"
+  "bingo.native.lobby_panel_shuffle": "Shuffle",
+  "bingo.native.lobby_panel_goal_lines": "Lines",
+  "bingo.native.lobby_panel_goal_items": "Items",
+  "bingo.native.lobby_panel_time_value": "%s"
 }

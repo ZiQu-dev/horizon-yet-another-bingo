@@ -1,6 +1,7 @@
 //! Every translation key the server's chat lines use has an English entry in the mod's `en_us.json`, the text a client
 //! shows when it has no translation. The lines are built from `texts`' own constructors, so a new line is checked as
 //! soon as it is added to the list below.
+use horizon_bingo::server::options::Goal;
 use horizon_bingo::server::texts::{self, Line};
 use serde_json::{Map, Value};
 
@@ -55,6 +56,36 @@ fn every_line() -> Vec<Line> {
         texts::lobby_panel_plus(),
         texts::lobby_panel_shuffle(),
         texts::lobby_panel_reset_defaults(),
+        texts::lobby_panel_game_mode(),
+        texts::lobby_panel_mode(texts::PanelMode::Lockout),
+        texts::lobby_panel_mode(texts::PanelMode::Inventory),
+        texts::lobby_panel_mode(texts::PanelMode::HiddenItems),
+        texts::lobby_panel_mode(texts::PanelMode::ConsumeItems),
+        texts::lobby_panel_features(),
+        texts::lobby_panel_goal(),
+        texts::lobby_panel_goal_value(Goal::Lines(1)),
+        texts::lobby_panel_goal_value(Goal::Lines(3)),
+        texts::lobby_panel_goal_value(Goal::Items(1)),
+        texts::lobby_panel_goal_value(Goal::Items(7)),
+        texts::lobby_panel_goal_value(Goal::FullCard),
+        texts::lobby_panel_goal_kind(Goal::Lines(1)),
+        texts::lobby_panel_goal_kind(Goal::Items(1)),
+        texts::lobby_panel_more(),
+        texts::lobby_panel_time_limit(),
+        texts::lobby_panel_time_value(None),
+        texts::lobby_panel_time_value(Some(90)),
+        texts::lobby_panel_difficulty(),
+        texts::lobby_panel_difficulty_name(0),
+        texts::lobby_panel_difficulty_name(1),
+        texts::lobby_panel_difficulty_name(2),
+        texts::lobby_panel_difficulty_name(3),
+        texts::lobby_panel_customize(),
+        texts::lobby_panel_teams_header(),
+        texts::lobby_panel_auto_shuffle_label(),
+        texts::lobby_panel_shuffle_now(),
+        texts::lobby_panel_reroll_card(),
+        texts::lobby_panel_best_time_not_set(),
+        texts::lobby_panel_player_count(2, 8),
         texts::ready_not_on_team("/spectator"),
         texts::start_title(),
         texts::start_subtitle(),
