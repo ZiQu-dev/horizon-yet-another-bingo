@@ -442,7 +442,7 @@ fn scroll_bar(out: &mut Vec<Draw>, area: &Area, total: i32, scroll: &CardsScroll
 pub fn tile_tooltip_lines(tile: &CardTile, lang: Lang<'_>, text_width: &dyn Fn(&str) -> i32) -> Vec<String> {
     let mut lines = Vec::new();
     if let Some(name) = &tile.name {
-        lines.push(flatten(name, lang));
+        lines.push(flatten(&tile_name(name, lang), lang));
     }
     for (i, lore) in tile.lore.iter().enumerate() {
         let flat = flatten(lore, lang);
@@ -456,12 +456,50 @@ pub fn tile_tooltip_lines(tile: &CardTile, lang: Lang<'_>, text_width: &dyn Fn(&
     lines
 }
 
+/// A tile name from this mod's server is `item.<ns>.<path>` with the id path as fallback, because the server cannot tell
+/// a block's item from another item; vanilla names a block's item `block.<ns>.<path>` (`BlockItem.getDescriptionId`).
+/// When the language has no `item.` entry but has the `block.` one, the name is that key, so it shows "Purple Wool
+/// Stairs" and not the raw id.
+pub fn tile_name(name: &crate::text::Text, lang: Lang<'_>) -> crate::text::Text {
+    use crate::nbt::Nbt;
+    let Nbt::Compound(entries) = &name.0 else { return name.clone() };
+    let Some(Nbt::String(key)) = name.0.get("translate") else { return name.clone() };
+    let Some(rest) = key.strip_prefix("item.") else { return name.clone() };
+    let block = format!("block.{rest}");
+    if lang(key).is_some() || lang(&block).is_none() {
+        return name.clone();
+    }
+    let entries = entries
+        .iter()
+        .map(|(k, v)| if k == "translate" { (k.clone(), Nbt::String(block.clone())) } else { (k.clone(), v.clone()) })
+        .collect();
+    crate::text::Text(Nbt::Compound(entries))
+}
+
+/// One line of the team-title tooltip: the player's head, a space and the name (`text.empty().append(head).append(" ")
+/// .append(name)`).
+pub fn player_line(player: &crate::display_cards::PlayerProfile) -> crate::text::Text {
+    use crate::nbt::Nbt;
+    let id = (0..4).rev().map(|i| (player.uuid >> (32 * i)) as u32 as i32).collect();
+    crate::text::Text(Nbt::compound(vec![
+        ("text", Nbt::string("")),
+        (
+            "extra",
+            Nbt::list(vec![
+                Nbt::compound(vec![("player", Nbt::compound(vec![("id", Nbt::IntArray(id))]))]),
+                Nbt::string(" "),
+                Nbt::string(&player.name),
+            ]),
+        ),
+    ]))
+}
+
 /// The tooltip lines of a tile as components: `tile_tooltip_lines`' lines, each kept as the original's styled text
 /// unless wrapping split it.
 pub fn tile_tooltip_texts(tile: &CardTile, lang: Lang<'_>, text_width: &dyn Fn(&str) -> i32) -> Vec<crate::text::Text> {
     let mut out = Vec::new();
     if let Some(name) = &tile.name {
-        out.push(name.clone());
+        out.push(tile_name(name, lang));
     }
     for (i, lore) in tile.lore.iter().enumerate() {
         if i + 1 >= tile.lore.len() {

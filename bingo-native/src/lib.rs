@@ -749,6 +749,12 @@ impl Hooks for Mod {
             return flow;
         }
         if !mod_screen_up(host) {
+            // `onAfterLeftClick` of the chat screen: a left click on the HUD card is noted, and the game keeps the click.
+            if event.button == 0 && chat_open(host) {
+                if let Some(gui) = last_gui() {
+                    guarded("hud press", || self.lock_client().hud_press(gui, mouse_of(host), true));
+                }
+            }
             return Flow::Continue;
         }
         if event.button == 0 {
