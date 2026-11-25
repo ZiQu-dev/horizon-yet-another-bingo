@@ -26,7 +26,7 @@ use super::multicard::{
 use super::objectives::{self, Runtime};
 use super::options::{EndWhen, Goal, Mode, Options};
 use super::prefs::{self, Setting};
-use super::ready::{encode_update_v2, ReadyOptions, ReadyTimer};
+use super::ready::{encode_update_v2, postgame_packet, vote_for_id, ReadyOptions, ReadyTimer};
 use super::stats::{self, Captures};
 use super::store::{self, HistoryEntry, HistoryPlayer, HistoryTeam};
 use super::scoring;
@@ -470,7 +470,10 @@ impl Session {
                 }
                 self.send_round(host, player.uuid);
             }
-            GameStatus::Postgame => self.send_game_over(host, player.uuid, true),
+            GameStatus::Postgame => {
+                self.send_game_over(host, player.uuid, true);
+                self.send_vote_updates(host);
+            }
             GameStatus::Starting => {}
         }
     }
@@ -970,14 +973,20 @@ impl Session {
             return;
         }
         let ready = match path {
-            "set_ready" => decode(data, SetReadyPacket::read_v1).map(|packet| packet.is_ready),
-            "set_ready_v2" => decode(data, SetReadyPacket::read_v2).map(|packet| packet.is_ready),
+            "set_ready" => decode(data, SetReadyPacket::read_v1),
+            "set_ready_v2" => decode(data, SetReadyPacket::read_v2),
             _ => return,
         };
-        let Ok(ready) = ready else { return };
+        let Ok(packet) = ready else { return };
+        let ready = packet.is_ready;
         if self.game.status() == GameStatus::Postgame {
             if ready {
-                self.vote(host, player, VoteChoice::NextRound);
+                // The option the button stands for; none (or one this server did not offer) is the pending default.
+                let choice = packet.option_id.and_then(vote_for_id).unwrap_or(VoteChoice::NextRound);
+                self.vote(host, player, choice);
+                if self.game.status() == GameStatus::Postgame {
+                    self.send_vote_updates(host);
+                }
             }
             return;
         }
@@ -1776,6 +1785,15 @@ impl Session {
         }
     }
 
+    /// The end screen's vote options to everyone online (Postgame): the primary button's text and the More list.
+    fn send_vote_updates(&self, host: &mut dyn ServerHost) {
+        let players = host.players();
+        for player in &players {
+            let packet = postgame_packet(player.uuid, &self.votes, players.len());
+            send(host, player.uuid, encode_update_v2(&packet));
+        }
+    }
+
     /// The ready screen to everyone online, from the ready timer.
     fn send_ready_updates(&self, host: &mut dyn ServerHost) {
         let players = host.players();
@@ -1879,6 +1897,7 @@ impl Session {
         for player in host.players() {
             self.send_game_over(host, player.uuid, false);
         }
+        self.send_vote_updates(host);
         // Postgame shows every square, so each team's card is sent again with nothing hidden.
         if self.rules.hidden_consume.hidden_items {
             for player in host.players() {

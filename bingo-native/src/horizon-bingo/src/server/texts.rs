@@ -336,6 +336,21 @@ pub fn bingo_reason() -> Line {
     Line::new("bingo.game.end.reason_bingo", "BINGO!", &[])
 }
 
+/// `Next Round`: the postgame vote that starts another round, and the end screen's primary button.
+pub fn next_round() -> Line {
+    Line::new("bingo.world.next_round", "Next Round", &[])
+}
+
+/// `Keep Playing`: the postgame vote that resumes the game.
+pub fn keep_playing() -> Line {
+    Line::new("bingo.world.keep_playing", "Keep Playing", &[])
+}
+
+/// `Return to Lobby`: the postgame vote that goes back to the lobby.
+pub fn return_to_lobby() -> Line {
+    Line::new("bingo.world.return_to_lobby", "Return to Lobby", &[])
+}
+
 /// `Out of time!`, the reason when the time limit ran out.
 pub fn out_of_time() -> Line {
     Line::new("bingo.game.end.reason_timer", "Out of time!", &[])

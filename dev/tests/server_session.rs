@@ -361,7 +361,7 @@ fn full_game_from_start_to_game_over() {
         assert!(!over.is_update, "the end screen opens");
         assert_eq!(over.scores, vec![ranking(0, "bingo_red", "Red", 5, 1, 1, "PT5S")]);
     }
-    assert_eq!(finish.len(), 8, "tiles, score, game status and end screen for each of 2 players");
+    assert_eq!(finish.len(), 10, "tiles, score, game status, end screen and the vote options for each of 2 players");
     assert!(run(&mut session, &mut host, None, "status").contains("Postgame"));
 
     // After the end, nothing more: ticks and further finds are silent and nothing is announced.
