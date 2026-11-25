@@ -124,7 +124,7 @@ fn build_scene(host: &mut dyn ServerHost) {
 /// The panel's live state: the rules, and the players online out of the server's most (eight when the host does not say).
 fn panel_state(host: &dyn ServerHost) -> PanelState {
     let players = host.players().server_players().len();
-    server::panel_state(players, host.max_players().unwrap_or(8))
+    server::panel_state(players, host.server_max_players().unwrap_or(8))
 }
 
 /// Makes the live tiles again when what they show changed (a panel click, the chest menu, a command, a player joining or
