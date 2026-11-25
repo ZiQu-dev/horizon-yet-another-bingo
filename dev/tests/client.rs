@@ -492,6 +492,13 @@ fn prepared_assets() -> std::path::PathBuf {
     };
     png("card_red", 122, 132);
     png("card_preview", 122, 132);
+    png("outline", 122, 132);
+    std::fs::create_dir_all(dir.join("vanilla_lang")).unwrap();
+    std::fs::write(
+        dir.join("vanilla_lang/en_us.json"),
+        r#"{"block.minecraft.purple_wool_stairs":"Purple Wool Stairs","item.minecraft.stick":"Stick"}"#,
+    )
+    .unwrap();
     std::fs::write(
         dir.join("card_colors.json"),
         r##"{"teams":{"red":{"textColor":"#ffe3a64b","outlineColor":"#ffff5555","cardTexture":"minecraft:bingo/card_red"}}}"##,
@@ -1854,8 +1861,141 @@ fn a_tile_of_the_hud_card_shows_its_tooltip_when_the_chat_is_open() {
     assert_eq!(open.tile_tips[0].0.len(), 2, "the name, then tier, list and id");
     // between two tiles' grid: the card's frame, not a tile
     let mut frame = playing_host();
-    frame.mouse = (card[0] as i32 + 2, card[1] as i32 + 2);
+    frame.mouse = (card[0] as i32 + 2, card[1] as i32 + 60);
     frame.chat = true;
     client.draw(&mut frame);
     assert!(frame.tile_tips.is_empty(), "the card's border is no tile");
+}
+
+/// The card's frame on the HUD (122 x 132 at scale 1) and a point inside it, from a first frame.
+fn hud_card_rect(client: &mut BingoClient) -> [f32; 4] {
+    let mut host = playing_host();
+    client.draw(&mut host);
+    host.sprites.iter().find(|(_, d)| d[2] == 122.0 && d[3] == 132.0).expect("the HUD card").1
+}
+
+/// `drawTooltip`'s first line is the item's localized name: a block's item is `block.<ns>.<path>` in vanilla
+/// (`BlockItem.getDescriptionId`), so the server's `item.` key becomes the `block.` one the language has; an item the
+/// language does have under `item.` keeps its key.
+#[test]
+fn a_tile_name_uses_the_block_key_when_only_the_block_has_a_name() {
+    use horizon_bingo::buf::decode;
+    use horizon_bingo::nbt::Nbt;
+    use horizon_bingo::update_card_tiles::CardTilesPacket;
+    let mut client = client_with_card();
+    let mut host = playing_host();
+    for _ in 0..30 {
+        client.on_tick(&mut host);
+    }
+    let name = |key: &str| horizon_bingo::text::Text(Nbt::compound(vec![("translate", Nbt::string(key)), ("fallback", Nbt::string("raw_id"))]));
+    let mut tiles = decode(&cap(include_str!("captures/update_card_tiles.hex")), CardTilesPacket::read).unwrap();
+    tiles.should_notify = false;
+    tiles.tiles[0].1.name = Some(name("item.minecraft.purple_wool_stairs"));
+    tiles.tiles[1].1.name = Some(name("item.minecraft.stick"));
+    client.on_packet(&id("update_card_tiles"), &encode(|w| tiles.write(w).unwrap()));
+    let card = hud_card_rect(&mut client);
+    for (column, expected) in [(0, "block.minecraft.purple_wool_stairs"), (1, "item.minecraft.stick")] {
+        let mut open = playing_host();
+        open.chat = true;
+        open.mouse = (card[0] as i32 + 21 + 20 * column, card[1] as i32 + 31);
+        client.draw(&mut open);
+        assert_eq!(open.tile_tips.len(), 1);
+        assert_eq!(open.tile_tips[0].0[0].0.get("translate"), Some(&Nbt::string(expected)));
+    }
+}
+
+/// `onAfterLeftClick` + `cardHudWasClicked`: a left click on the focused card in the chat opens the card screen on the
+/// next tick; a click beside it, or on a card at the bottom left, does not.
+#[test]
+fn a_left_click_on_the_hud_card_in_the_chat_opens_the_card_screen() {
+    use horizon_bingo::config::{CardAlignment, ClientConfig};
+    let mut client = client_with_card();
+    let mut host = playing_host();
+    for _ in 0..30 {
+        client.on_tick(&mut host);
+    }
+    let card = hud_card_rect(&mut client);
+    let inside = (card[0] as i32 + 60, card[1] as i32 + 60);
+    let mut chat = Fake { playing: false, chat: true, ..playing_host() };
+    client.hud_press((427, 240), (card[0] as i32 + 200, card[1] as i32 + 60), true);
+    client.on_tick(&mut chat);
+    assert_eq!(chat.opens, 0, "a click beside the card");
+    client.hud_press((427, 240), inside, false);
+    client.on_tick(&mut chat);
+    assert_eq!(chat.opens, 0, "no chat, no click on the HUD");
+    client.hud_press((427, 240), inside, true);
+    client.on_tick(&mut chat);
+    assert_eq!(chat.opens, 1, "a click on the card");
+    assert!(client.screen.is_open());
+
+    let mut client = client_with_card();
+    client.set_config(ClientConfig { card_alignment: CardAlignment::BottomLeft, ..ClientConfig::default() });
+    let mut host = playing_host();
+    for _ in 0..30 {
+        client.on_tick(&mut host);
+    }
+    let card = hud_card_rect(&mut client);
+    let mut chat = Fake { playing: false, chat: true, ..playing_host() };
+    client.hud_press((427, 240), (card[0] as i32 + 60, card[1] as i32 + 60), true);
+    client.on_tick(&mut chat);
+    assert_eq!(chat.opens, 0, "a card at the bottom left is never focused");
+}
+
+/// `ClientCardRenderer.draw`: the focused card gets `cardTextureOutline` over it, 122 x 132 at scale 1.
+#[test]
+fn the_hud_card_under_the_mouse_in_the_chat_is_outlined_unless_it_is_at_the_bottom_left() {
+    use horizon_bingo::config::{CardAlignment, ClientConfig};
+    let count = |client: &mut BingoClient, chat: bool, mouse: (i32, i32)| {
+        let mut host = playing_host();
+        host.chat = chat;
+        host.mouse = mouse;
+        client.draw(&mut host);
+        host.sprites.iter().filter(|(_, d)| d[2] == 122.0 && d[3] == 132.0).count()
+    };
+    let mut client = client_with_card();
+    let mut host = playing_host();
+    for _ in 0..30 {
+        client.on_tick(&mut host);
+    }
+    let card = hud_card_rect(&mut client);
+    let inside = (card[0] as i32 + 60, card[1] as i32 + 60);
+    assert_eq!(count(&mut client, false, inside), 1, "no outline without the chat");
+    assert_eq!(count(&mut client, true, (card[0] as i32 + 300, card[1] as i32 + 60)), 1, "mouse beside the card");
+    assert_eq!(count(&mut client, true, inside), 2, "the card and its outline");
+    client.set_config(ClientConfig { card_alignment: CardAlignment::BottomLeft, ..ClientConfig::default() });
+    let card = hud_card_rect(&mut client);
+    assert_eq!(count(&mut client, true, (card[0] as i32 + 60, card[1] as i32 + 60)), 1, "no outline at the bottom left");
+}
+
+/// `ClientCardRenderer.draw`: hovering the title (x within 70 percent of the width, y within the top 20 px) in the chat
+/// lists the team's players, each as head, space and name.
+#[test]
+fn hovering_the_hud_card_title_in_the_chat_lists_the_teams_players() {
+    use horizon_bingo::buf::decode;
+    use horizon_bingo::display_cards::{CardDisplayPacket, PlayerProfile};
+    let mut client = client_with_card();
+    let mut p = decode(&cap(include_str!("captures/display_cards.hex")), CardDisplayPacket::read).unwrap();
+    p.display[0].1.players = vec![PlayerProfile { uuid: 7, name: "Ada".into() }, PlayerProfile { uuid: 8, name: "Bob".into() }];
+    client.on_packet(&id("display_cards"), &encode(|w| p.write(w).unwrap()));
+    let mut host = playing_host();
+    for _ in 0..30 {
+        client.on_tick(&mut host);
+    }
+    let card = hud_card_rect(&mut client);
+    let tips = |client: &mut BingoClient, dx: i32, dy: i32, chat: bool| {
+        let mut host = playing_host();
+        host.chat = chat;
+        host.mouse = (card[0] as i32 + dx, card[1] as i32 + dy);
+        client.draw(&mut host);
+        host.tile_tips
+    };
+    let lang = |_: &str| None;
+    let over = tips(&mut client, 50, 10, true);
+    assert_eq!(over.len(), 1);
+    let lines: Vec<String> = over[0].0.iter().map(|t| horizon_bingo::text_plain::flatten(t, &lang)).collect();
+    assert_eq!(lines, ["   Ada", "   Bob"], "two spaces of head, a space, the name");
+    assert_eq!(horizon_bingo::text_plain::heads(&over[0].0[0]), [7]);
+    assert!(tips(&mut client, 50, 10, false).is_empty(), "no chat");
+    assert!(tips(&mut client, 90, 10, true).is_empty(), "past 70 percent of the width");
+    assert!(tips(&mut client, 5, 21, true).is_empty(), "below the title's 20 px (and left of the tiles)");
 }

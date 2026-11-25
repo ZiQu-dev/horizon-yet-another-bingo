@@ -102,6 +102,8 @@ pub struct BingoClient {
     open_key: String,
     /// The card key, the HUD toggle and sneak-ready, as the handler reads them each tick.
     hud_keys: HudKeys,
+    /// A left click landed on the focused HUD card in the chat (`cardHudWasClicked`'s source); `tick_screen` takes it.
+    hud_clicked: bool,
     /// `ClientConfig`: the host reads it from the config file (`set_config`); the HUD and the sounds follow it.
     config: ClientConfig,
     /// The settings screen changed the config: the host is told on the next tick (`Host::config_changed`).
@@ -421,18 +423,20 @@ impl BingoClient {
             self.open_settings(host);
         }
         // The card key, the HUD toggle and sneak-ready, as `BingoHudController` reads them each tick.
+        let clicked = std::mem::take(&mut self.hud_clicked);
         let input = KeyInput {
             open_card_down: host.key_down(&self.open_key),
             toggle_hud_down: host.key_down(&self.toggle_hud_key),
             sneak_down: host.sneaking(),
             chat_screen_open: host.chat_open(),
+            card_hud_clicked: clicked,
             ..KeyInput::default()
         };
         for action in self.hud_keys.tick(input, self.state.ready.as_ref()) {
             match action {
                 // `openCardScreen` when there is something to show, and no other screen is up.
                 KeyAction::OpenCard => {
-                    if host.is_playing_screen() && !self.mod_screen_open() && (!self.state.cards.is_empty() || self.state.game_over.is_some()) {
+                    if (host.is_playing_screen() || (clicked && host.chat_open())) && !self.mod_screen_open() && (!self.state.cards.is_empty() || self.state.game_over.is_some()) {
                         open = Some((EndScreenTab::Cards, true));
                     }
                 }
@@ -521,6 +525,27 @@ impl BingoClient {
                 }
             }
             _ => self.screen.render(&self.state, assets, atlas, host, gui, mouse),
+        }
+    }
+
+    /// `BingoHudController.isCardMouseOver`: the chat is open and the mouse is inside the HUD card's rectangle.
+    fn hud_card_mouse_over(&self, gui: (i32, i32), mouse: (i32, i32), chat_open: bool) -> bool {
+        let (x, y) = card_pos(&self.config, gui.0, gui.1);
+        let scale = card_scale(&self.config);
+        let (mx, my) = (mouse.0 as f32, mouse.1 as f32);
+        chat_open && mx >= x && mx <= x + CARD_WIDTH as f32 * scale && my >= y && my <= y + CARD_HEIGHT as f32 * scale
+    }
+
+    /// `isCardFocused`: hovered in the chat, and the card is not at the bottom left.
+    fn hud_card_focused(&self, gui: (i32, i32), mouse: (i32, i32), chat_open: bool) -> bool {
+        self.config.card_alignment != crate::config::CardAlignment::BottomLeft && self.hud_card_mouse_over(gui, mouse, chat_open)
+    }
+
+    /// A left click in a game screen that is not this mod's (`onAfterLeftClick` of the chat screen): over the focused
+    /// HUD card it latches, and the next tick with the chat open opens the card screen.
+    pub fn hud_press(&mut self, gui: (i32, i32), mouse: (i32, i32), chat_open: bool) {
+        if self.hud_card_focused(gui, mouse, chat_open) {
+            self.hud_clicked = true;
         }
     }
 
@@ -810,7 +835,12 @@ impl BingoClient {
             // Every team's outline is looked up with the card's own colour, as the original does.
             let outline = |team: &str| assets.team_colors(Some(team), formatting).outline;
             let view = CardView { card, colors: &colors, now_ms: now, show_outlines: self.config.card_team_outlines, team_outline: &outline, items: &assets, images: Some(&known), team_name, is_gui: false };
-            team_name_draws = Some(place_card(draw_card(&view), card_x, card_y, scale));
+            let mut draws = draw_card(&view);
+            // `ClientCardRenderer.draw`: the focused card (hovered in the chat, not at the bottom left) gets the outline.
+            if self.hud_card_focused(gui, host.cursor(), host.chat_open()) {
+                draws.push(Draw::Sprite { name: crate::screen_cards::OUTLINE_SPRITE.into(), x: 0.0, y: 0.0, w: CARD_WIDTH as f32, h: CARD_HEIGHT as f32 });
+            }
+            team_name_draws = Some(place_card(draws, card_x, card_y, scale));
         }
         if let Some(commands) = team_name_draws {
             // The team name has no shadow; nothing else on the card is text.
@@ -868,6 +898,24 @@ impl BingoClient {
             });
             if let Some((texts, lines)) = hovered {
                 host.draw_tooltip_text(&texts, &lines, mouse.0, mouse.1);
+            }
+        }
+        // The team's players, when the title is hovered: x within 70 percent of the width, y within the top 20 px.
+        if shown.card && host.chat_open() {
+            let mouse = host.cursor();
+            let (mx, my) = (mouse.0 as f32, mouse.1 as f32);
+            let over_title = mx >= card_x.trunc()
+                && mx < (card_x + CARD_WIDTH as f32 * 0.7 * scale).trunc() + 1.0
+                && my >= card_y.trunc()
+                && my < (card_y + 20.0 * scale).trunc() + 1.0;
+            if over_title {
+                if let Some((_, card)) = self.state.selected_card() {
+                    let texts: Vec<crate::text::Text> = card.display.players.iter().map(|p| crate::screen_cards::player_line(p)).collect();
+                    if !texts.is_empty() {
+                        let plain: Vec<String> = texts.iter().map(|t| flatten(t, &lang)).collect();
+                        host.draw_tooltip_text(&texts, &plain, mouse.0, mouse.1);
+                    }
+                }
             }
         }
         self.dynamic_atlas = dynamic;
