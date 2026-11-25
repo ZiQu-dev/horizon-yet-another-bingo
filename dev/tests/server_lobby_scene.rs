@@ -107,8 +107,9 @@ const TILE_TABLE: [((f64, f64), (f64, f64), Option<Click>); 33] = [
 ];
 
 /// A right click whose ray ends on the wall block behind the panel at world `(x, y)`, on the wall's face z -5.
+/// The action a click on the wall at (x, y) has; `None` for a click that is taken but does nothing (`Click::Nothing`).
 fn hit(x: f64, y: f64) -> Option<Click> {
-    lobby_scene::click_at([x.floor() as i32, y.floor() as i32, -6], [x, y, -5.0])
+    lobby_scene::click_at([x.floor() as i32, y.floor() as i32, -6], [x, y, -5.0]).filter(|click| *click != Click::Nothing)
 }
 
 fn near(a: f64, b: f64) -> bool {
@@ -670,4 +671,14 @@ fn the_maps_wall_signs_are_taken_off_the_panels_wall_wherever_they_stand_in_the_
         "execute in bingo:lobby if block 0 15 -5 minecraft:oak_wall_sign run setblock 0 15 -5 minecraft:air"
     );
     assert!(commands.iter().all(|c| c.contains("if block 0 ") && c.contains("minecraft:oak_wall_sign run setblock")));
+}
+
+#[test]
+fn a_click_on_the_panels_wall_that_hits_no_button_is_taken_so_the_held_book_is_not_used() {
+    // A header, a gap between tiles, and the wall beside the panel are all clicks on the wall: taken, no action.
+    let wall = |x: f64, y: f64| lobby_scene::click_at([x.floor() as i32, y.floor() as i32, -6], [x, y, -5.0]);
+    assert_eq!(wall(-3.55, 18.65), Some(Click::Nothing), "the Game Mode header");
+    assert_eq!(wall(-0.55, 18.25), Some(Click::Nothing), "the gap between the goal value and its plus");
+    // Outside the wall's blocks nothing is taken.
+    assert_eq!(lobby_scene::click_at([9, 18, -6], [9.5, 18.5, -5.0]), None);
 }

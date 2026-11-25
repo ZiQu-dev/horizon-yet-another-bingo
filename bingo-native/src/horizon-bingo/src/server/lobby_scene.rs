@@ -277,6 +277,9 @@ pub enum Click {
     ResetDefaults,
     /// Joins the team with this key (`bingo_red`).
     Join(&'static str),
+    /// A click on the panel's wall that hits no button (a header, a gap): nothing happens, but the click is taken so the
+    /// held item (the tutorial book) is not used on it.
+    Nothing,
 }
 
 /// What a click on `tile` does, if it is a button: the headers and the value tiles only show.
@@ -376,11 +379,11 @@ pub fn root_slot(click: Click) -> Option<usize> {
 }
 
 /// The action of a right click on the block `pos` whose hit point is `point` in the lobby: a block of the panel's wall
-/// means the tile under the hit's `x, y` (the ray ends on the wall behind the tiles), nothing when no tile is there or the
-/// tile only shows; a pad's block or the block above it (its carpet) joins the pad's team. Any other block does nothing.
+/// means the tile under the hit's `x, y` (the ray ends on the wall behind the tiles), `Nothing` (the click is taken) when no
+/// tile is there or the tile only shows; a pad's block or the block above it (its carpet) joins the pad's team. Any other block does nothing.
 pub fn click_at(pos: [i32; 3], point: [f64; 3]) -> Option<Click> {
     if (0..3).all(|axis| (WALL_MIN[axis]..=WALL_MAX[axis]).contains(&pos[axis])) {
-        return tile_at(point[0], point[1]).and_then(tile_click);
+        return Some(tile_at(point[0], point[1]).and_then(tile_click).unwrap_or(Click::Nothing));
     }
     PADS.iter()
         .find(|(_, pad)| pos == *pad || pos == [pad[0], pad[1] + 1, pad[2]])
