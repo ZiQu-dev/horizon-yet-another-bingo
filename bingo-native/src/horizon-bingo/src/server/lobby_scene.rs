@@ -729,6 +729,12 @@ pub fn clear_command() -> String {
     format!("execute in {LOBBY_LEVEL} run kill @e[type=!minecraft:player,tag={UI_TAG}]")
 }
 
+/// The commands that take the map's three oak wall signs off the panel's wall (the original removes them when it draws
+/// its menu): they would stand in front of the tiles. A block that is already air stays air.
+pub fn sign_removal_commands() -> Vec<String> {
+    (17..=19).map(|y| format!("execute in {LOBBY_LEVEL} run setblock 0 {y} -5 minecraft:air")).collect()
+}
+
 /// The command that removes the displays of one tile.
 fn clear_tile_command(tile: Tile) -> String {
     format!("execute in {LOBBY_LEVEL} run kill @e[type=!minecraft:player,tag={}]", tile_tag(tile))

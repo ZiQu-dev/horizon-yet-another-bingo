@@ -659,3 +659,16 @@ fn a_reset_during_the_countdown_releases_the_players_and_a_zero_countdown_holds_
 fn session_zero() -> (Session, FakeHost) {
     session(0)
 }
+
+#[test]
+fn the_maps_three_wall_signs_are_taken_off_the_panels_wall() {
+    // The signs are at (0, 17..19, -5), where the original's menu is anchored; they would hide the tiles.
+    assert_eq!(
+        lobby_scene::sign_removal_commands(),
+        vec![
+            "execute in bingo:lobby run setblock 0 17 -5 minecraft:air".to_owned(),
+            "execute in bingo:lobby run setblock 0 18 -5 minecraft:air".to_owned(),
+            "execute in bingo:lobby run setblock 0 19 -5 minecraft:air".to_owned(),
+        ]
+    );
+}

@@ -108,6 +108,10 @@ fn build_scene(host: &mut dyn ServerHost) {
     }
     // Nothing to remove the first time: the kill fails then, which is fine.
     let _ = host.commands().run_command(&lobby_scene::clear_command());
+    // The map's signs stand in front of the tiles: the original takes them away when it draws its menu.
+    for line in lobby_scene::sign_removal_commands() {
+        let _ = host.commands().run_command(&line);
+    }
     let state = panel_state(host);
     let all_made = lobby_scene::summon_commands(&state)
         .iter()
