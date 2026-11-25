@@ -259,24 +259,25 @@ fn full_game_from_start_to_game_over() {
             "team join bingo_red Alice",
             "team join bingo_red Bob",
             "gamemode adventure Alice",
-            "effect give Alice minecraft:slowness 3 255 true",
-            "effect give Alice minecraft:jump_boost 3 128 true",
+            "effect give Alice minecraft:slowness 9 255 true",
+            "effect give Alice minecraft:jump_boost 9 128 true",
             "gamemode adventure Bob",
-            "effect give Bob minecraft:slowness 3 255 true",
-            "effect give Bob minecraft:jump_boost 3 128 true",
+            "effect give Bob minecraft:slowness 9 255 true",
+            "effect give Bob minecraft:jump_boost 9 128 true",
         ]
     );
     let start = host.take();
     assert_eq!(count(&start, ALICE, "game_status"), 1);
     assert_eq!(count(&start, BOB, "game_status"), 1);
-    assert_eq!(count(&start, ALICE, "countdown"), 1);
-    assert_eq!(seconds_of(&only(&start, ALICE, "countdown")), 3);
-    assert_eq!(start.len(), 4);
+    // The original waits 100 ticks before its first number, so the start sends no countdown packet; the players are
+    // held for the delay and the countdown (5 s + 3 s, and a second over) from the start.
+    assert_eq!(count(&start, ALICE, "countdown"), 0);
+    assert_eq!(start.len(), 2);
     assert!(run(&mut session, &mut host, None, "status").contains("Starting"));
 
-    // Ticks 1 to 59: the countdown shows 2 at tick 20 and 1 at tick 40; the game is still Starting.
+    // Ticks 1 to 160: the countdown shows 3 at tick 101, 2 at tick 121 and 1 at tick 141; the game is still Starting.
     let mut countdown_values = Vec::new();
-    for _ in 0..59 {
+    for _ in 0..160 {
         session.tick(&mut host);
         for sent in host.take() {
             if sent.path == "countdown" && sent.player == ALICE {
@@ -284,9 +285,9 @@ fn full_game_from_start_to_game_over() {
             }
         }
     }
-    assert_eq!(countdown_values, vec![2, 1]);
+    assert_eq!(countdown_values, vec![3, 2, 1]);
 
-    // Tick 60 begins play: countdown 0, the game status, and the card for each player.
+    // Tick 161 begins play: countdown 0, the game status, and the card for each player.
     session.tick(&mut host);
     let begin = host.take();
     assert_eq!(seconds_of(&only(&begin, ALICE, "countdown")), 0);
@@ -622,11 +623,11 @@ fn time_limit_ends_the_game_with_no_winner_at_tick_1200() {
     host.online = vec![player(ALICE, "Alice")];
     run(&mut session, &mut host, Some(ALICE), "start");
 
-    // Play begins at once with the full 60 seconds.
+    // Play begins at once, but the original never sends the full limit: no timer packet until the first play tick.
     let begin = host.take();
-    assert_eq!(decode(&only(&begin, ALICE, "timer"), TimerPacket::read).unwrap().seconds_remaining, 60);
+    assert_eq!(count(&begin, ALICE, "timer"), 0);
 
-    // Ticks 1 to 1199: a timer packet at ticks 20, 40, ... 1180 (59 of them) and no end.
+    // Ticks 1 to 1199: a timer packet whenever the whole seconds left change, at ticks 1, 21, ... 1181: 59 down to 0.
     let mut timers = Vec::new();
     for _ in 0..1199 {
         session.tick(&mut host);
@@ -636,13 +637,13 @@ fn time_limit_ends_the_game_with_no_winner_at_tick_1200() {
             }
         }
     }
-    assert_eq!(timers, (1..=59).rev().collect::<Vec<i32>>());
+    assert_eq!(timers, (0..=59).rev().collect::<Vec<i32>>());
     assert!(host.take_broadcasts().is_empty());
 
-    // Tick 1200 is the end: timer 0, the game status Postgame, the end screen with no winner.
+    // Tick 1200 is the end (the timer already showed 0): the game status Postgame, the end screen with no winner.
     session.tick(&mut host);
     let end = host.take();
-    assert_eq!(decode(&only(&end, ALICE, "timer"), TimerPacket::read).unwrap().seconds_remaining, 0);
+    assert_eq!(count(&end, ALICE, "timer"), 0);
     assert_eq!(status_of(&only(&end, ALICE, "game_status")).ingame_duration, Some(JavaDuration { seconds: 60, nanos: 0 }));
     let over = decode(&only(&end, ALICE, "game_over_v2"), GameOverPacket::read_v2).unwrap();
     assert_eq!(over.winner, None);
@@ -668,7 +669,7 @@ fn commands_answer_with_text_and_report_errors_without_changing_the_game() {
 
     assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
     assert!(run(&mut session, &mut host, None, "status").contains("Starting"));
-    assert_eq!(count(&host.take(), ALICE, "countdown"), 1);
+    assert_eq!(count(&host.take(), ALICE, "countdown"), 0, "the first number waits for the start delay");
 
     let again = run(&mut session, &mut host, None, "start");
     assert!(!again.is_empty() && again != "Starting the game...", "a second start is an error: {again}");

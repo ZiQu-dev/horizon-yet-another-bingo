@@ -583,12 +583,12 @@ fn the_saved_game_is_written_when_play_begins_and_at_each_change_during_play() {
     let mut session = Session::new(options(7, 3, None));
     lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "blue")]);
     assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
-    // The countdown is not saved: 59 ticks in, nothing is written.
-    for _ in 0..59 {
+    // The countdown is not saved: 160 ticks in (100 of delay, 60 of numbers), nothing is written.
+    for _ in 0..160 {
         session.tick(&mut host);
     }
     assert!(!host.files.contains_key(STATE_FILE));
-    // Play begins at tick 60, and the game is saved with an empty card progress.
+    // Play begins at tick 161, and the game is saved with an empty card progress.
     session.tick(&mut host);
     let names = card_names(&mut host, ALICE);
     let begun = saved(&host).expect("saved at the start of play");

@@ -171,7 +171,7 @@ pub struct Session {
     await_rejoin: bool,
     /// The translatable reply of the last command, when its reply has a translation key (see [`Session::take_reply`]).
     reply: Option<Line>,
-    /// Whether the countdown step being dispatched is the first, made by the start itself (see `countdown_titles`).
+    /// Whether the events being dispatched come from the start itself (see `countdown_titles`).
     countdown_first: bool,
     /// The players are held still by the countdown's effects (`lobby_scene::freeze_commands`) and not yet released.
     frozen: bool,
@@ -1551,12 +1551,16 @@ impl Session {
 
     /// The game's own start: the gamerules, the teams on the server and the game itself. Runs at once, or once the
     /// lobby flow has the players in the new overworld.
+    ///
+    /// Delay versus world reset: the original also enters COUNTDOWN (and its 100 tick delay) after the loading state, so
+    /// the delay already runs in the new world here, as there. The reset itself is the engine's, not a delay we count.
     fn begin_game(&mut self, host: &mut dyn ServerHost) -> Result<(), String> {
         host.set_game_rule("pvp", self.rules.pvp);
         host.set_game_rule("keep_inventory", self.rules.keep_inventory);
         let players = host.players();
         self.add_teams_to_server(host, &players);
         let events = self.game.start().map_err(str::to_owned)?;
+        // With no countdown the start's 0 comes in these events; its title would only repeat the start title.
         self.countdown_first = true;
         self.dispatch(host, events);
         self.countdown_first = false;
@@ -1791,15 +1795,22 @@ impl Session {
             match event {
                 Event::StatusChanged(status) => {
                     send_all(host, self.game_status());
+                    if status == GameStatus::Starting {
+                        // Held for the whole start delay and the countdown (the original rides the players on bats
+                        // from entering COUNTDOWN, CountdownController.kt:55-93, 145-148), not only the numbers.
+                        let span = self.game.start_span_secs();
+                        if span > 0 {
+                            // A second over: the thaw at the 0 ends it.
+                            self.freeze_players(host, span + 1);
+                        }
+                    }
                     if status == GameStatus::Playing {
                         self.begin_round(host);
                     }
                 }
                 Event::Countdown { seconds } => {
                     send_all(host, wire::countdown(seconds));
-                    if self.countdown_first && seconds > 0 {
-                        self.freeze_players(host, seconds);
-                    } else if !self.countdown_first && seconds <= 0 {
+                    if seconds <= 0 {
                         self.thaw_players(host);
                     }
                     self.countdown_titles(host, seconds);
@@ -1841,11 +1852,11 @@ impl Session {
     }
 
     /// The titles of a countdown step (`CountdownService.sendCountdownPacket`): the number for each second left, and at zero
-    /// `BINGO` in the team's colour (white without a team) over `Game has started!`. The first step, which comes with the
-    /// start's own title (`announce_start`), shows nothing: the start title stays on screen for that second instead.
+    /// `BINGO` in the team's colour (white without a team) over `Game has started!`. The start's own title
+    /// (`announce_start`) goes out with the start; the first number follows after the start delay. With no countdown the 0
+    /// comes with the start and shows nothing, the start title stays instead.
     fn countdown_titles(&mut self, host: &mut dyn ServerHost, seconds: i32) {
-        let first = std::mem::take(&mut self.countdown_first);
-        if first {
+        if self.countdown_first {
             return;
         }
         for player in host.players() {

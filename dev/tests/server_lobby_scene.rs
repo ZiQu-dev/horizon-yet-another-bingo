@@ -209,7 +209,14 @@ fn a_start_with_a_three_second_countdown_titles_bingo_in_the_team_colour_then_2_
     let step = |host: &mut FakeHost| host.titles.drain(..).filter(|t| t.0 == ALICE).collect::<Vec<_>>();
     // The start itself: the starting title, in red for Alice.
     assert_eq!(step(&mut host), vec![(ALICE, "BINGO".to_owned(), "Game is starting!".to_owned(), Some("red".to_owned()))]);
+    // The first number waits 100 ticks (the original's start delay), then one a second.
     let mut seconds = Vec::new();
+    for _ in 0..100 {
+        session.tick(&mut host);
+    }
+    assert!(step(&mut host).is_empty(), "nothing is shown during the delay");
+    session.tick(&mut host);
+    seconds.extend(step(&mut host));
     for _ in 0..3 {
         for _ in 0..20 {
             session.tick(&mut host);
@@ -219,6 +226,7 @@ fn a_start_with_a_three_second_countdown_titles_bingo_in_the_team_colour_then_2_
     assert_eq!(
         seconds,
         vec![
+            (ALICE, "3".to_owned(), String::new(), None),
             (ALICE, "2".to_owned(), String::new(), None),
             (ALICE, "1".to_owned(), String::new(), None),
             (ALICE, "BINGO".to_owned(), "Game has started!".to_owned(), Some("red".to_owned())),
@@ -275,18 +283,19 @@ fn the_countdown_holds_team_players_for_its_length_and_lets_them_go_at_zero() {
     assert_eq!(
         effects(&host),
         vec![
-            "effect give Alice minecraft:slowness 5 255 true".to_owned(),
-            "effect give Alice minecraft:jump_boost 5 128 true".to_owned(),
-            "effect give Bob minecraft:slowness 5 255 true".to_owned(),
-            "effect give Bob minecraft:jump_boost 5 128 true".to_owned(),
+            "effect give Alice minecraft:slowness 11 255 true".to_owned(),
+            "effect give Alice minecraft:jump_boost 11 128 true".to_owned(),
+            "effect give Bob minecraft:slowness 11 255 true".to_owned(),
+            "effect give Bob minecraft:jump_boost 11 128 true".to_owned(),
         ]
     );
     host.commands.clear();
-    for _ in 0..4 * 20 {
+    // Held through the 100 tick delay and the 5 numbers: play begins on tick 201.
+    for _ in 0..200 {
         session.tick(&mut host);
     }
     assert_eq!(effects(&host), Vec::<String>::new(), "nothing is cleared before the countdown ends");
-    for _ in 0..20 {
+    for _ in 0..1 {
         session.tick(&mut host);
     }
     assert_eq!(

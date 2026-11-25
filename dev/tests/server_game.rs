@@ -37,28 +37,29 @@ fn new_game_is_pregame_and_silent_until_started() {
 }
 
 #[test]
-fn start_enters_starting_with_the_first_countdown_number() {
+fn start_enters_starting_and_waits_out_the_delay_before_the_first_number() {
     let mut game = Game::new(options(3, None));
     let events = game.start().unwrap();
-    assert_eq!(events, vec![status_changed(GameStatus::Starting), Event::Countdown { seconds: 3 }]);
+    assert_eq!(events, vec![status_changed(GameStatus::Starting)]);
     assert_eq!(game.status(), GameStatus::Starting);
 }
 
 #[test]
-fn three_second_countdown_ticks_down_at_20_40_60() {
+fn three_second_countdown_ticks_down_after_the_100_tick_delay() {
     let mut game = Game::new(options(3, None));
     game.start().unwrap();
 
-    // Nothing before the first full second: tick 19 is still silent and still Starting.
-    assert!(ticks(&mut game, 0, 19).is_empty());
+    // The 100 tick delay is silent; the number 3 comes on tick 101, then one a second (20 ticks) later.
+    assert!(ticks(&mut game, 0, 100).is_empty());
     assert_eq!(game.status(), GameStatus::Starting);
 
     assert_eq!(
-        ticks(&mut game, 19, 60),
+        ticks(&mut game, 100, 161),
         vec![
-            (20, vec![Event::Countdown { seconds: 2 }]),
-            (40, vec![Event::Countdown { seconds: 1 }]),
-            (60, vec![Event::Countdown { seconds: 0 }, status_changed(GameStatus::Playing)]),
+            (101, vec![Event::Countdown { seconds: 3 }]),
+            (121, vec![Event::Countdown { seconds: 2 }]),
+            (141, vec![Event::Countdown { seconds: 1 }]),
+            (161, vec![Event::Countdown { seconds: 0 }, status_changed(GameStatus::Playing)]),
         ]
     );
     assert_eq!(game.status(), GameStatus::Playing);
@@ -68,9 +69,9 @@ fn three_second_countdown_ticks_down_at_20_40_60() {
 fn countdown_stops_once_play_begins() {
     let mut game = Game::new(options(1, None));
     game.start().unwrap();
-    assert_eq!(ticks(&mut game, 0, 20).len(), 1);
+    assert_eq!(ticks(&mut game, 0, 121).len(), 2);
     assert_eq!(game.status(), GameStatus::Playing);
-    assert!(ticks(&mut game, 20, 120).is_empty());
+    assert!(ticks(&mut game, 121, 220).is_empty());
 }
 
 #[test]
@@ -102,8 +103,8 @@ fn start_outside_pregame_is_an_error_and_does_not_restart_the_countdown() {
     game.start().unwrap();
     assert!(game.start().is_err());
     assert_eq!(game.status(), GameStatus::Starting);
-    // Play still begins at tick 60, not 60 plus the refused start.
-    assert_eq!(ticks(&mut game, 0, 60).last().unwrap().0, 60);
+    // Play still begins at tick 161, not 161 plus the refused start.
+    assert_eq!(ticks(&mut game, 0, 161).last().unwrap().0, 161);
     assert_eq!(game.status(), GameStatus::Playing);
 
     assert!(game.start().is_err());
@@ -124,7 +125,7 @@ fn end_is_only_allowed_while_playing() {
     assert!(game.end(None).is_err());
     assert_eq!(game.status(), GameStatus::Starting);
 
-    ticks(&mut game, 0, 60);
+    ticks(&mut game, 0, 161);
     game.end(Some("red".to_string())).unwrap();
     assert!(game.end(None).is_err());
     assert_eq!(game.status(), GameStatus::Postgame);
@@ -182,21 +183,20 @@ fn two_second_limit_ends_after_exactly_40_playing_ticks() {
             status_changed(GameStatus::Starting),
             Event::Countdown { seconds: 0 },
             status_changed(GameStatus::Playing),
-            Event::Timer { seconds_remaining: 2 },
         ]
     );
 
-    // Tick 19 is silent; tick 20 is the first full second; tick 40 ends the game.
-    assert!(ticks(&mut game, 0, 19).is_empty());
+    // Play tick 1 already has time on the clock, so the first packet is 1, not 2; it changes to 0 on tick 21 (1950 ms
+    // left on tick 1, 950 ms on tick 21); tick 40 ends the game.
     assert_eq!(game.status(), GameStatus::Playing);
     assert_eq!(
-        ticks(&mut game, 19, 40),
+        ticks(&mut game, 0, 40),
         vec![
-            (20, vec![Event::Timer { seconds_remaining: 1 }]),
+            (1, vec![Event::Timer { seconds_remaining: 1 }]),
+            (21, vec![Event::Timer { seconds_remaining: 0 }]),
             (
                 40,
                 vec![
-                    Event::Timer { seconds_remaining: 0 },
                     status_changed(GameStatus::Postgame),
                     Event::Ended { winner: None },
                 ],
@@ -209,30 +209,23 @@ fn two_second_limit_ends_after_exactly_40_playing_ticks() {
 
 #[test]
 fn time_limit_counts_only_playing_ticks_not_countdown_ticks() {
-    // A one-second countdown, then a one-second limit. Play begins at tick 20 and ends 20 ticks later, at tick 40.
+    // A one-second countdown (after the 100 tick delay), then a one-second limit. Play begins at tick 121 and ends 20
+    // ticks of play later, at tick 141; the timer shows 0 from play tick 1.
     let mut game = Game::new(options(1, Some(1)));
-    assert_eq!(game.start().unwrap().len(), 2);
+    assert_eq!(game.start().unwrap().len(), 1);
     assert_eq!(
-        ticks(&mut game, 0, 20),
-        vec![(
-            20,
-            vec![
-                Event::Countdown { seconds: 0 },
-                status_changed(GameStatus::Playing),
-                Event::Timer { seconds_remaining: 1 },
-            ],
-        )]
+        ticks(&mut game, 0, 121),
+        vec![
+            (101, vec![Event::Countdown { seconds: 1 }]),
+            (121, vec![Event::Countdown { seconds: 0 }, status_changed(GameStatus::Playing)]),
+        ]
     );
     assert_eq!(
-        ticks(&mut game, 20, 60),
-        vec![(
-            40,
-            vec![
-                Event::Timer { seconds_remaining: 0 },
-                status_changed(GameStatus::Postgame),
-                Event::Ended { winner: None },
-            ],
-        )]
+        ticks(&mut game, 121, 200),
+        vec![
+            (122, vec![Event::Timer { seconds_remaining: 0 }]),
+            (141, vec![status_changed(GameStatus::Postgame), Event::Ended { winner: None }]),
+        ]
     );
 }
 
@@ -240,9 +233,12 @@ fn time_limit_counts_only_playing_ticks_not_countdown_ticks() {
 fn zero_limit_ends_on_the_first_playing_tick() {
     let mut game = Game::new(options(0, Some(0)));
     let start = game.start().unwrap();
-    assert!(start.contains(&Event::Timer { seconds_remaining: 0 }));
+    assert!(!start.iter().any(|e| matches!(e, Event::Timer { .. })));
     assert_eq!(game.status(), GameStatus::Playing);
-    assert_eq!(game.tick(), vec![status_changed(GameStatus::Postgame), Event::Ended { winner: None }]);
+    assert_eq!(
+        game.tick(),
+        vec![Event::Timer { seconds_remaining: 0 }, status_changed(GameStatus::Postgame), Event::Ended { winner: None }]
+    );
     assert_eq!(game.elapsed_ms(), 50);
 }
 
@@ -254,11 +250,11 @@ fn elapsed_and_remaining_start_at_zero_and_follow_playing_ticks() {
     assert_eq!(game.remaining_ms(), Some(2_000));
 
     // The countdown does not count against the limit.
-    ticks(&mut game, 0, 60);
+    ticks(&mut game, 0, 161);
     assert_eq!(game.elapsed_ms(), 0);
     assert_eq!(game.remaining_ms(), Some(2_000));
 
-    ticks(&mut game, 60, 67);
+    ticks(&mut game, 161, 168);
     assert_eq!(game.elapsed_ms(), 350);
     assert_eq!(game.remaining_ms(), Some(1_650));
 }
@@ -302,5 +298,8 @@ fn negative_time_limit_counts_as_zero() {
     let mut game = Game::new(options(0, Some(-3)));
     game.start().unwrap();
     assert_eq!(game.remaining_ms(), Some(0));
-    assert_eq!(game.tick(), vec![status_changed(GameStatus::Postgame), Event::Ended { winner: None }]);
+    assert_eq!(
+        game.tick(),
+        vec![Event::Timer { seconds_remaining: 0 }, status_changed(GameStatus::Postgame), Event::Ended { winner: None }]
+    );
 }

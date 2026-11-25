@@ -3,12 +3,17 @@
 //!
 //! Mirrors GameService.kt (start, end, reset), CountdownService.kt and CountdownController.kt (the countdown; the
 //! original sends a final 0 when the game starts, so this does too), and TimerCheck.kt and TimerPacketController.kt
-//! (the time limit and the timer packets, the first one sent when play starts).
+//! (the time limit and the timer packets).
 use crate::game::GameStatus;
 
 /// Server ticks per second. One call to [`Game::tick`] is one server tick.
 const TICKS_PER_SECOND: u64 = 20;
 const MS_PER_TICK: i64 = 1000 / TICKS_PER_SECOND as i64;
+
+/// Ticks between entering the countdown and its first number (`countdownDelayTicks`, BingoConfig.kt:74, default 100 =
+/// 5 s). The original counts it down on each tick and schedules the countdown on the tick that takes it below zero
+/// (CountdownController.kt:150-152), so the first number comes on tick `delay + 1`.
+pub const COUNTDOWN_DELAY_TICKS: u64 = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameOptions {
@@ -28,9 +33,9 @@ impl Default for GameOptions {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     StatusChanged(GameStatus),
-    /// Seconds left before play begins. Sent at start, then once per second, and 0 as play begins.
+    /// Seconds left before play begins. Sent once the start delay is over, then once per second, and 0 as play begins.
     Countdown { seconds: i32 },
-    /// Seconds left in the time limit. Sent as play begins, then once per second, and 0 at the end.
+    /// Whole seconds left in the time limit. Sent on the first play tick and whenever the value changes, so 0 at the end.
     Timer { seconds_remaining: i32 },
     /// The game is over. `winner` is `None` when the time limit ran out or nobody was named.
     Ended { winner: Option<String> },
@@ -53,15 +58,17 @@ pub struct GameSnapshot {
 pub struct Game {
     options: GameOptions,
     status: GameStatus,
-    /// Ticks since `start`, while Starting.
+    /// Ticks since `start`, while Starting (the delay, then the numbers).
     countdown_ticks: u64,
+    /// The last whole-seconds value sent as a Timer event, `-1` before the first (TimerPacketController.kt:17).
+    timer_prev: i32,
     /// Ticks since play began. Stays at its final value in Postgame, so the elapsed time is frozen.
     playing_ticks: u64,
 }
 
 impl Game {
     pub fn new(options: GameOptions) -> Self {
-        Self { options, status: GameStatus::Pregame, countdown_ticks: 0, playing_ticks: 0 }
+        Self { options, status: GameStatus::Pregame, countdown_ticks: 0, timer_prev: -1, playing_ticks: 0 }
     }
 
     /// Sets or removes the time limit (counted from the start of play); takes effect from the next tick.
@@ -88,6 +95,7 @@ impl Game {
     pub fn restore(&mut self, snapshot: GameSnapshot) {
         self.status = snapshot.status;
         self.countdown_ticks = snapshot.countdown_ticks;
+        self.timer_prev = -1;
         self.playing_ticks = snapshot.playing_ticks;
         self.options.time_limit_secs = snapshot.time_limit_secs;
     }
@@ -99,11 +107,10 @@ impl Game {
         }
         self.status = GameStatus::Starting;
         self.countdown_ticks = 0;
-        let mut events = vec![
-            Event::StatusChanged(GameStatus::Starting),
-            Event::Countdown { seconds: self.countdown_secs() },
-        ];
+        let mut events = vec![Event::StatusChanged(GameStatus::Starting)];
+        // CountdownController.kt:116-126: with a countdown the numbers wait for the delay; with none, 0 and play at once.
         if self.countdown_secs() == 0 {
+            events.push(Event::Countdown { seconds: 0 });
             self.begin_playing(&mut events);
         }
         Ok(events)
@@ -132,6 +139,7 @@ impl Game {
         self.status = GameStatus::Playing;
         let mut events = vec![Event::Resumed];
         if let Some(seconds_remaining) = self.remaining_ms().map(|ms| (ms / 1000) as i32) {
+            self.timer_prev = seconds_remaining;
             events.push(Event::Timer { seconds_remaining });
         }
         Ok(events)
@@ -141,6 +149,7 @@ impl Game {
     pub fn reset(&mut self) -> Vec<Event> {
         self.status = GameStatus::Pregame;
         self.countdown_ticks = 0;
+        self.timer_prev = -1;
         self.playing_ticks = 0;
         vec![Event::StatusChanged(GameStatus::Pregame), Event::Reset]
     }
@@ -164,6 +173,14 @@ impl Game {
         self.time_limit_secs().map(|secs| (secs as i64 * 1000 - self.elapsed_ms()).max(0))
     }
 
+    /// Whole seconds from `start` until play begins, delay included; 0 when there is no countdown.
+    pub fn start_span_secs(&self) -> i32 {
+        match self.countdown_secs() {
+            0 => 0,
+            secs => (COUNTDOWN_DELAY_TICKS / TICKS_PER_SECOND) as i32 + secs,
+        }
+    }
+
     fn countdown_secs(&self) -> i32 {
         self.options.countdown_secs.max(0)
     }
@@ -175,14 +192,16 @@ impl Game {
 
     fn tick_starting(&mut self) -> Vec<Event> {
         self.countdown_ticks += 1;
-        // One Countdown event per full second: at ticks 20, 40, ... after start.
-        if self.countdown_ticks % TICKS_PER_SECOND != 0 {
+        // Nothing happens during the delay. The tick after it schedules number 3; each next number is a second later.
+        let Some(since_first) = self.countdown_ticks.checked_sub(COUNTDOWN_DELAY_TICKS + 1) else {
+            return Vec::new();
+        };
+        if since_first % TICKS_PER_SECOND != 0 {
             return Vec::new();
         }
-        let elapsed_secs = (self.countdown_ticks / TICKS_PER_SECOND) as i32;
-        let seconds = self.countdown_secs() - elapsed_secs;
+        let seconds = self.countdown_secs() - (since_first / TICKS_PER_SECOND) as i32;
         let mut events = vec![Event::Countdown { seconds }];
-        if seconds == 0 {
+        if seconds <= 0 {
             self.begin_playing(&mut events);
         }
         events
@@ -190,29 +209,29 @@ impl Game {
 
     fn tick_playing(&mut self) -> Vec<Event> {
         self.playing_ticks += 1;
-        let ticks = self.playing_ticks;
         let mut events = Vec::new();
         if let Some(limit_secs) = self.time_limit_secs() {
-            let limit_ticks = limit_secs as u64 * TICKS_PER_SECOND;
-            if ticks % TICKS_PER_SECOND == 0 && ticks <= limit_ticks {
-                let seconds_remaining = ((limit_ticks - ticks) / TICKS_PER_SECOND) as i32;
+            // TimerPacketController.kt:24-29: floor of the time left, sent when it differs from the last one sent. The
+            // first tick already has some time on the clock, so the full limit is never sent.
+            let remaining_ms = (limit_secs as i64 * 1000 - self.elapsed_ms()).max(0);
+            let seconds_remaining = (remaining_ms / 1000) as i32;
+            if seconds_remaining != self.timer_prev {
+                self.timer_prev = seconds_remaining;
                 events.push(Event::Timer { seconds_remaining });
             }
-            if ticks >= limit_ticks {
+            if self.playing_ticks >= limit_secs as u64 * TICKS_PER_SECOND {
                 events.extend(self.finish(None));
             }
         }
         events
     }
 
-    /// Enters Playing with a fresh timer. The first Timer event for the limit goes out here, as the original does.
+    /// Enters Playing with a fresh timer. The first Timer event comes on the first play tick.
     fn begin_playing(&mut self, events: &mut Vec<Event>) {
         self.status = GameStatus::Playing;
         self.playing_ticks = 0;
+        self.timer_prev = -1;
         events.push(Event::StatusChanged(GameStatus::Playing));
-        if let Some(seconds_remaining) = self.time_limit_secs() {
-            events.push(Event::Timer { seconds_remaining });
-        }
     }
 
     fn finish(&mut self, winner: Option<String>) -> Vec<Event> {

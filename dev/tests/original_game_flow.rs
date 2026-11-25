@@ -39,19 +39,21 @@ fn ended_at(log: &[(u32, Vec<Event>)]) -> Option<u32> {
 
 #[test]
 fn countdown_numbers_are_sent_once_a_second_from_start() {
-    // CountdownController.kt:96-108 schedules one send per second, 3 at 0s, 2 at 1s, 1 at 2s, 0 at 3s (the 0 starts the game).
-    // CountdownService.kt sends each number as a title. 20 ticks per second: 2 at tick 20, 1 at 40, 0 at 60.
+    // CountdownController.kt:96-108 schedules one send per second, 3 at 0s, 2 at 1s, 1 at 2s, 0 at 3s (the 0 starts the game),
+    // scheduled on tick 101 (the delay, :150-152). CountdownService.kt sends each number as a title.
+    // 20 ticks per second: 3 at tick 101, 2 at 121, 1 at 141, 0 at 161.
     let mut game = Game::new(options(3, None));
     let start = game.start().unwrap();
-    assert_eq!(start, vec![Event::StatusChanged(GameStatus::Starting), Event::Countdown { seconds: 3 }]);
+    assert_eq!(start, vec![Event::StatusChanged(GameStatus::Starting)]);
 
-    let log = ticks(&mut game, 0, 60);
+    let log = ticks(&mut game, 0, 161);
     assert_eq!(
         log,
         vec![
-            (20, vec![Event::Countdown { seconds: 2 }]),
-            (40, vec![Event::Countdown { seconds: 1 }]),
-            (60, vec![Event::Countdown { seconds: 0 }, Event::StatusChanged(GameStatus::Playing)]),
+            (101, vec![Event::Countdown { seconds: 3 }]),
+            (121, vec![Event::Countdown { seconds: 2 }]),
+            (141, vec![Event::Countdown { seconds: 1 }]),
+            (161, vec![Event::Countdown { seconds: 0 }, Event::StatusChanged(GameStatus::Playing)]),
         ]
     );
     assert_eq!(game.status(), GameStatus::Playing);
@@ -73,7 +75,6 @@ fn countdown_zero_with_no_delay_starts_at_once() {
 }
 
 #[test]
-#[ignore = "differs from the original: the original waits countdownDelayTicks (default 100 = 5 s, BingoConfig.kt:74) before the first number"]
 fn countdown_waits_100_ticks_before_its_first_number() {
     // CountdownController.kt:118-119 sets the delay to 100 on entering COUNTDOWN; each TickEvent.Start counts it down,
     // and the tick that takes it below zero (tick 101, :150-152) schedules the countdown. So nothing is sent on start.
@@ -88,11 +89,11 @@ fn countdown_waits_100_ticks_before_its_first_number() {
 #[test]
 fn countdown_time_does_not_count_toward_the_time_limit() {
     // TimerCheck.kt:19-20: startedAt is set when PLAYING is entered, not when the countdown starts.
-    // With a 3 s countdown (60 ticks) and a 10 s limit (200 ticks), the game ends at tick 60 + 200 = 260.
+    // With the 100 tick delay, a 3 s countdown (60 ticks) and a 10 s limit (200 ticks), play begins on tick 161 and the game ends 200 play ticks later, at tick 361.
     let mut game = Game::new(options(3, Some(10)));
     game.start().unwrap();
-    let log = ticks(&mut game, 0, 300);
-    assert_eq!(ended_at(&log), Some(260));
+    let log = ticks(&mut game, 0, 400);
+    assert_eq!(ended_at(&log), Some(361));
 }
 
 #[test]
@@ -113,19 +114,19 @@ fn time_limit_ends_the_game_with_no_winner_at_the_limit() {
 }
 
 #[test]
-fn timer_shows_whole_seconds_left_at_each_20_tick_boundary() {
-    // TimerPacketController.kt:24-29: the packet is the whole seconds left, sent when that changes.
-    // With a 10 s limit, at each whole second j of play the remaining value is 10 - j.
+fn timer_shows_whole_seconds_left_one_tick_after_each_second() {
+    // TimerPacketController.kt:24-29: the packet is the whole seconds left, sent when that changes. With a 10 s limit
+    // the value at play tick k is floor(10 - k/20): 9 on tick 1, 8 on tick 21, ... 1 on tick 161, 0 on tick 181.
     let mut game = Game::new(options(0, Some(10)));
     game.start().unwrap();
     let log = ticks(&mut game, 0, 200);
     for j in 1..10u32 {
-        assert_eq!(timer_at(&log, 20 * j), Some(10 - j as i32), "at play second {j}");
+        assert_eq!(timer_at(&log, 20 * (j - 1) + 1), Some(10 - j as i32), "at play tick {}", 20 * (j - 1) + 1);
     }
+    assert_eq!(timer_at(&log, 181), Some(0));
 }
 
 #[test]
-#[ignore = "differs from the original: the original never sends the full limit; its first packet is limit-1 on the first tick"]
 fn timer_first_packet_is_one_second_under_the_limit() {
     // TimerPacketController.kt:17,27: prev starts at -1, and the first game tick after PLAYING has a duration of a few
     // milliseconds, so the first packet is floor(10 - ~0.05) = 9 on play tick 1. The port sends 10 when play begins.
@@ -137,7 +138,6 @@ fn timer_first_packet_is_one_second_under_the_limit() {
 }
 
 #[test]
-#[ignore = "differs from the original: the original's second change is on play tick 21 (ceil), the port's on tick 20 (floor)"]
 fn timer_changes_one_tick_after_each_whole_second() {
     // TimerPacketController.kt:24-27 with duration = k * 50 ms: floor(10 - k/20) changes at k = 1, 21, 41, ... so the
     // packet showing 8 comes on play tick 21. The port only sends at multiples of 20 and shows 9 there.
@@ -163,16 +163,19 @@ fn game_timer_stops_when_the_game_ends() {
 #[test]
 fn reset_during_the_countdown_drops_the_pending_numbers() {
     // CountdownController.kt:103-104: a scheduled number is skipped unless the state is still COUNTDOWN.
-    // After a reset to Pregame nothing is sent, and a new start counts from 3 again.
+    // After a reset to Pregame nothing is sent, and a new start waits the delay and counts from 3 again.
     let mut game = Game::new(options(3, None));
     game.start().unwrap();
     assert!(ticks(&mut game, 0, 10).is_empty());
     game.reset();
-    assert!(ticks(&mut game, 10, 100).is_empty());
+    assert!(ticks(&mut game, 10, 200).is_empty());
     assert_eq!(game.status(), GameStatus::Pregame);
 
     let restart = game.start().unwrap();
-    assert_eq!(restart, vec![Event::StatusChanged(GameStatus::Starting), Event::Countdown { seconds: 3 }]);
-    let log = ticks(&mut game, 0, 20);
-    assert_eq!(log, vec![(20, vec![Event::Countdown { seconds: 2 }])]);
+    assert_eq!(restart, vec![Event::StatusChanged(GameStatus::Starting)]);
+    let log = ticks(&mut game, 0, 121);
+    assert_eq!(
+        log,
+        vec![(101, vec![Event::Countdown { seconds: 3 }]), (121, vec![Event::Countdown { seconds: 2 }])]
+    );
 }

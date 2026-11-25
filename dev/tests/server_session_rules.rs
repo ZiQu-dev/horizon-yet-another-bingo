@@ -1,7 +1,7 @@
 //! Round rules of the server session: the goal, the card mode, the end condition, the toggles and the spawn distance as
 //! set before play; what they do during play (the goal, the lockout, the inventory mode); the vote and the resume after
 //! the game ends; joining a running game; and the reset when nobody is online. Expected values are counted from the
-//! rules by hand: 20 ticks per second, a countdown of 3 s is 60 ticks, and a game with nobody online resets after 100
+//! rules by hand: 20 ticks per second, a countdown of 3 s is 60 ticks after a 100 tick start delay, and a game with nobody online resets after 100
 //! ticks.
 use std::collections::HashMap;
 
@@ -383,8 +383,8 @@ fn toggles_set_before_start_reach_the_server_commands_and_the_players_at_countdo
     assert!(run(&mut session, &mut host, Some(ALICE), "nightvision on").contains("Night vision: on"));
 
     assert_eq!(run(&mut session, &mut host, Some(ALICE), "start"), "Starting the game...");
-    // The game rules go out at the start, the player's gear when play begins after the 3 s countdown (60 ticks).
-    for _ in 0..59 {
+    // The game rules go out at the start, the player's gear when play begins after the 100 tick start delay and the 3 s countdown (60 ticks): play begins on tick 161.
+    for _ in 0..160 {
         session.tick(&mut host);
     }
     assert!(status(&mut session, &mut host).contains("Starting"));
