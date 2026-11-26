@@ -129,7 +129,8 @@ fn a_timer_end_shows_out_of_time_as_the_heading_and_next_round_as_the_primary_bu
         titles,
         [
             pair("bingo.world.next_round", "Next Round"),
-            pair("bingo.world.keep_playing", "Keep Playing"),
+            // A timer end with no team finished: the time limit is grown, so Keep Playing names the extension.
+            pair("bingo.world.extend_time_limit_by", "Extend time by %s"),
             pair("bingo.world.return_to_lobby", "Return to Lobby"),
         ]
     );

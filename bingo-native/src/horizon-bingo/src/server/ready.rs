@@ -262,13 +262,14 @@ pub fn vote_for_id(id: u128) -> Option<VoteChoice> {
 }
 
 /// The postgame `ready_timer_update_v2` for one viewer (`ReadyController.createVoteOptions`, `currentVote`): the options
-/// Next Round, Keep Playing and Return to Lobby with their votes, the default vote pending (the original's `AUTO`
-/// picks the next round), and no timer. `votes` are the players' votes so far. The sneak-ready key stays off
-/// (`can_send_ready` false): this port has no postgame countdown for it to speed up.
+/// Next Round, Keep Playing (titled `keep_playing`, the resume text of the game) and Return to Lobby with their votes,
+/// the default vote pending (the original's `AUTO` picks the next round), and no timer. `votes` are the players' votes
+/// so far. The sneak-ready key stays off (`can_send_ready` false): this port has no postgame countdown for it to speed up.
 pub fn postgame_packet(
     viewer: u128,
     votes: &std::collections::BTreeMap<u128, VoteChoice>,
     online: usize,
+    keep_playing: texts::Line,
 ) -> ReadyUpdatePacket {
     let option = |choice: VoteChoice, line: texts::Line| crate::ready_update::VoteOption {
         id: vote_id(choice),
@@ -289,7 +290,7 @@ pub fn postgame_packet(
         can_send_ready: false,
         vote_options: vec![
             option(VoteChoice::NextRound, texts::next_round()),
-            option(VoteChoice::KeepPlaying, texts::keep_playing()),
+            option(VoteChoice::KeepPlaying, keep_playing),
             option(VoteChoice::ReturnToLobby, texts::return_to_lobby()),
         ],
         vote_pending: Some(vote_id(VoteChoice::NextRound)),
