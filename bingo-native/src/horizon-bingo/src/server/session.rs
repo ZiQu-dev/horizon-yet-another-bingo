@@ -1560,10 +1560,7 @@ impl Session {
         self.give_lobby_books(host, &players);
         let online: Vec<u128> = players.iter().map(|player| player.uuid).collect();
         // A lockout warning stops the countdown from running (the original's start waits for the operator too).
-        let eligible = match self.plan_start(&players, false) {
-            Ok(teams) => self.lockout_warning(&teams).is_none(),
-            Err(_) => false,
-        };
+        let eligible = self.lobby_start_eligible(&players);
         if self.ready.tick(&online, eligible) {
             // The checks above ran just now. Only the goal-met warning, which reads the card, can still refuse the start.
             if let Err(warning) = self.start_game(host, false) {
@@ -2557,6 +2554,10 @@ impl Session {
         let Some(player) = player else {
             return "Only a player can join a team.".to_string();
         };
+        // `/join spectators` (JoinCommand.SPECTATORS) is the spectator command.
+        if team == "spectators" {
+            return self.become_spectator(host, Some(player));
+        }
         if self.game.status() == GameStatus::Playing {
             return self.join_midgame(host, player, team);
         }
@@ -2564,8 +2565,8 @@ impl Session {
             return "Teams can be changed only before the game starts.".to_string();
         }
         let before = self.teams.team_of(player);
-        if let Err(error) = self.teams.join(player, team) {
-            return error;
+        if self.teams.join(player, team).is_err() {
+            return self.say(texts::team_does_not_exist(team));
         }
         if before != self.teams.team_of(player) {
             self.ready.set_ready(player, false);
@@ -2604,13 +2605,28 @@ impl Session {
         };
         // As the original's `ReadyService.setReady`: a player on no team (a spectator too) cannot ready up.
         if self.teams.team_of(player).is_none() {
-            return self.say(texts::ready_not_on_team("/spectator"));
+            return self.say(texts::ready_not_on_team("/join spectators"));
+        }
+        // A ready press starts a countdown that is not running, when the start rules hold; otherwise it is refused.
+        let players = host.players();
+        let online: Vec<u128> = players.iter().map(|p| p.uuid).collect();
+        let eligible = self.lobby_start_eligible(&players);
+        if !self.ready.start_on_ready(&online, eligible) {
+            return self.say(texts::ready_not_running());
         }
         let ready = !self.ready.is_ready(player);
         self.ready.set_ready(player, ready);
         self.send_ready_updates(host);
         let name = player_name(&*host, player);
         self.say(if ready { texts::ready_true(&name) } else { texts::ready_false(&name) })
+    }
+
+    /// Whether the lobby's start rules hold now: the teams plan, and no lockout warning stops the start.
+    fn lobby_start_eligible(&self, players: &[Player]) -> bool {
+        match self.plan_start(players, false) {
+            Ok(teams) => self.lockout_warning(&teams).is_none(),
+            Err(_) => false,
+        }
     }
 
     /// `/bingo ready cancel`: stops the ready timer and keeps it from starting again until someone is ready.

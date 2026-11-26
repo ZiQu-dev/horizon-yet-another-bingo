@@ -561,7 +561,7 @@ fn a_console_or_unknown_input_is_refused_before_play() {
     assert_eq!(run(&mut session, &mut host, None, "join red"), "Only a player can join a team.");
     assert_eq!(run(&mut session, &mut host, None, "spectator"), "Only a player can become a spectator.");
     assert_eq!(run(&mut session, &mut host, None, "card"), "Only a player can open a card.");
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "join nope"), "Unknown team \"nope\".");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "join nope"), "Team 'nope' does not exist!");
     assert_eq!(run(&mut session, &mut host, Some(ALICE), "join"), "Usage: join <team>");
     assert!(run(&mut session, &mut host, None, "dance").starts_with("Unknown command 'dance'"));
     assert!(host.take().is_empty());

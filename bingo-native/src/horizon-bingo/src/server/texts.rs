@@ -140,6 +140,16 @@ pub fn ready_false(player: &str) -> Line {
     Line::new("bingo.command.ready.false", "%s is no longer ready!", &[player])
 }
 
+/// `Cannot ready up - other players need to join a team!`, when the countdown cannot run (`CommandReadyNotRunning`).
+pub fn ready_not_running() -> Line {
+    Line::new("bingo.command.ready.not_running", "Cannot ready up - other players need to join a team!", &[])
+}
+
+/// `Team '%s' does not exist!`, for a join to a team that is not one of the presets (`CommandJoinDoesNotExist`).
+pub fn team_does_not_exist(team: &str) -> Line {
+    Line::new("bingo.command.join.does_not_exist", "Team '%s' does not exist!", &[team])
+}
+
 /// `Moved player %s onto team %s!`, for a player who joined a team (`CommandJoinSuccess`).
 pub fn joined_team(player: &str, team: &str) -> Line {
     Line::new("bingo.command.join.success", "Moved player %s onto team %s!", &[player, team])
