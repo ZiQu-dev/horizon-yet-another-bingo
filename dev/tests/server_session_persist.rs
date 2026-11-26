@@ -327,8 +327,8 @@ fn stats_count_the_win_with_its_best_time_and_the_items_found() {
     host.take_broadcasts();
 
     // 6500 ms is 6 s: `00m 06s`. Alice found 2 items and won; Bob's blue team lost and he found none.
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "stats"), "Bingo stats for Alice:\nAll Time:\n  Games: 1, Win/Loss: 1/0, Items: 2\n  Playtime: 00m 06s\nMonthly:\n  Games: 1, Win/Loss: 1/0, Items: 2\n  Playtime: 00m 06s");
-    assert_eq!(run(&mut session, &mut host, Some(BOB), "stats"), "Bingo stats for Bob:\nAll Time:\n  Games: 1, Win/Loss: 0/1, Items: 0\n  Playtime: 00m 06s\nMonthly:\n  Games: 1, Win/Loss: 0/1, Items: 0\n  Playtime: 00m 06s");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "stats"), "Bingo stats for Alice:\n\u{2605} All Time\n  Games: 1, Win/Loss: 1/0, Items: 2\n  Playtime: 00m 06s\n\u{1F4C6} Monthly\n  Games: 1, Win/Loss: 1/0, Items: 2\n  Playtime: 00m 06s");
+    assert_eq!(run(&mut session, &mut host, Some(BOB), "stats"), "Bingo stats for Bob:\n\u{2605} All Time\n  Games: 1, Win/Loss: 0/1, Items: 0\n  Playtime: 00m 06s\n\u{1F4C6} Monthly\n  Games: 1, Win/Loss: 0/1, Items: 0\n  Playtime: 00m 06s");
     assert_eq!(run(&mut session, &mut host, None, "stats"), "Only a player has statistics.");
 }
 
@@ -342,7 +342,7 @@ fn history_loaded_at_start_counts_in_stats() {
     lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "blue")]);
 
     // Both rounds were won, both started in the month of the clock: 1500 + 3000 ms is 4 s. Items 1 + 2.
-    assert_eq!(run(&mut session, &mut host, Some(ALICE), "stats"), "Bingo stats for Alice:\nAll Time:\n  Games: 2, Win/Loss: 2/0, Items: 3\n  Playtime: 00m 04s\nMonthly:\n  Games: 2, Win/Loss: 2/0, Items: 3\n  Playtime: 00m 04s");
+    assert_eq!(run(&mut session, &mut host, Some(ALICE), "stats"), "Bingo stats for Alice:\n\u{2605} All Time\n  Games: 2, Win/Loss: 2/0, Items: 3\n  Playtime: 00m 04s\n\u{1F4C6} Monthly\n  Games: 2, Win/Loss: 2/0, Items: 3\n  Playtime: 00m 04s");
     assert_eq!(host.files["history.jsonl"].lines().count(), 2, "reading the history writes nothing");
 }
 
@@ -506,7 +506,7 @@ fn the_end_screen_carries_the_win_streak_best_time_and_items_of_each_viewer() {
     assert!(!again.is_best_captured_items, "2 is not above the best 2");
 
     // The `stats` command for an online player, by operator: Bob's blue team lost both rounds.
-    assert_eq!(run(&mut session, &mut host, None, "stats Bob").lines().nth(1), Some("All Time:"));
+    assert_eq!(run(&mut session, &mut host, None, "stats Bob").lines().nth(1), Some("\u{2605} All Time"));
     assert!(run(&mut session, &mut host, None, "stats Bob").contains("Games: 2, Win/Loss: 0/2, Items: 0"));
     assert_eq!(run(&mut session, &mut host, None, "stats Zed"), "No player named Zed is online.");
 }

@@ -81,18 +81,16 @@ pub fn best_streak(history: &[HistoryEntry], uuid: u128) -> Option<i64> {
 }
 
 /// The best time of the rules, in milliseconds: the shortest round of those rules that was neither a draw nor a forfeit.
-/// `single` is the singleplayer query: the original keeps one row per rules, and that row answers it only when the first
-/// such round had one player. Without `single` the shortest round answers.
+/// `single` is the singleplayer query: the original keeps a row per rules and kind of game (`BestTime` is keyed by
+/// `is_singleplayer`), so it answers with the shortest one-player round only. Without `single` the shortest round of
+/// any kind answers, as the original's multiplayer query does.
 pub fn best_time(history: &[HistoryEntry], rules: &str, single: bool) -> Option<i64> {
-    let rows: Vec<&HistoryEntry> = history
+    history
         .iter()
         .filter(|entry| entry.rules.as_deref() == Some(rules) && !entry.forfeit && !is_draw(entry))
-        .collect();
-    let first = rows.first()?;
-    if single && !is_single(first) {
-        return None;
-    }
-    rows.iter().map(|entry| entry.duration_ms).min()
+        .filter(|entry| !single || is_single(entry))
+        .map(|entry| entry.duration_ms)
+        .min()
 }
 
 /// Whether a round set a new best time: no earlier best, or a shorter time, and the round was won (not a forfeit, with a
@@ -263,7 +261,7 @@ pub fn format_duration(ms: i64) -> String {
 pub fn summary_text(name: &str, all: &Totals, monthly: &Totals) -> String {
     let block = |title: &str, t: &Totals| {
         format!(
-            "{title}:\n  Games: {}, Win/Loss: {}/{}, Items: {}\n  Playtime: {}",
+            "{title}\n  Games: {}, Win/Loss: {}/{}, Items: {}\n  Playtime: {}",
             grouped(i64::from(t.games)),
             grouped(i64::from(t.wins)),
             grouped(i64::from(t.losses)),
@@ -271,7 +269,8 @@ pub fn summary_text(name: &str, all: &Totals, monthly: &Totals) -> String {
             format_duration(t.playtime_ms)
         )
     };
-    format!("Bingo stats for {name}:\n{}\n{}", block("All Time", all), block("Monthly", monthly))
+    // The titles carry the original's glyphs (a star, a calendar) and no colon (`StatsCommand.kt`).
+    format!("Bingo stats for {name}:\n{}\n{}", block("\u{2605} All Time", all), block("\u{1F4C6} Monthly", monthly))
 }
 
 /// The capture ledger of the round: how many items each player found, and which player found each square of each team.

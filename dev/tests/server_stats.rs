@@ -152,8 +152,9 @@ fn an_old_round_without_rules_never_sets_a_best() {
 }
 
 #[test]
-fn the_singleplayer_query_answers_only_when_the_first_round_had_one_player() {
-    // The first round had two players: the one-row table answers the singleplayer query with nothing.
+fn the_singleplayer_query_reads_only_the_one_player_rounds() {
+    // Only two-player rounds: the singleplayer row does not exist, so that query finds nothing (BestTime's key has
+    // is_singleplayer, V4), while the multiplayer query takes the shortest round of any kind.
     let two_players_first = [win(1, 300_000), Round { bob: "red", ..Round::won(2, "red", 100) }.build()];
     assert_eq!(stats::best_time(&two_players_first, RULES_A, true), None);
     assert_eq!(stats::best_time(&two_players_first, RULES_A, false), Some(100));
@@ -326,7 +327,7 @@ fn a_time_and_a_count_are_written_as_the_original_writes_them() {
     let monthly = stats::Totals::default();
     assert_eq!(
         stats::summary_text("Alice", &all, &monthly),
-        "Bingo stats for Alice:\nAll Time:\n  Games: 1,234, Win/Loss: 1,000/234, Items: 1,000,000\n  Playtime: 01m 01s\nMonthly:\n  Games: 0, Win/Loss: 0/0, Items: 0\n  Playtime: 00m 00s"
+        "Bingo stats for Alice:\n\u{2605} All Time\n  Games: 1,234, Win/Loss: 1,000/234, Items: 1,000,000\n  Playtime: 01m 01s\n\u{1F4C6} Monthly\n  Games: 0, Win/Loss: 0/0, Items: 0\n  Playtime: 00m 00s"
     );
 }
 
