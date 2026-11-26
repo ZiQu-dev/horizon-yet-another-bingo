@@ -5,6 +5,7 @@
 use super::guarded;
 use super::server;
 use horizon_bingo::server::lobby_scene::{self, Click, PanelState, LOBBY_LEVEL};
+use horizon_bingo::server::panel_clicks;
 use mod_api::{BlockClick, Flow, Hand, InteractionResult, LevelDimension, LogicalSide, ServerHost};
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, Ordering},
@@ -64,13 +65,14 @@ pub fn right_click_block(click: &BlockClick<'_>, result: &mut InteractionResult)
 pub fn tick(host: &mut dyn ServerHost) {
     let clicks = std::mem::take(&mut *CLICKS.lock().unwrap_or_else(PoisonError::into_inner));
     for (player, action) in clicks {
+        let state = panel_state(host);
+        let sound = panel_clicks::click_sound(&action, &state);
         match action {
-            Click::Open(page) => server::open_panel_page(host, player, page),
+            Click::Open(page) => server::open_panel_page(host, player, page, sound),
             Click::Panel(rule) => {
                 // The line comes from the rules as they are now; a click that changes nothing (a goal at its end) does nothing.
-                let state = panel_state(host);
                 if let Some(line) = lobby_scene::panel_command(rule, &state) {
-                    server::panel_command(host, player, line);
+                    server::panel_command(host, player, line, sound);
                 }
             }
             Click::Join(team) => {
@@ -78,7 +80,7 @@ pub fn tick(host: &mut dyn ServerHost) {
             }
             slot_click => {
                 if let Some(slot) = lobby_scene::root_slot(slot_click) {
-                    server::panel_slot(host, player, slot);
+                    server::panel_slot(host, player, slot, sound);
                 }
             }
         }

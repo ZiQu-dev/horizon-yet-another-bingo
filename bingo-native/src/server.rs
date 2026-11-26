@@ -1293,7 +1293,7 @@ pub(crate) fn panel_state(players: usize, max_players: u32) -> lobby_scene::Pane
 /// A click on a slot of the menu's root page from the lobby panel (start, reroll, auto shuffle, the team count, shuffle,
 /// reset defaults): what a click on that slot does, with no menu open. A refused start opens the menu on its warnings
 /// page, which offers the start anyway.
-pub(crate) fn panel_slot(host: &mut dyn mod_api::ServerHost, uuid: u128, slot: usize) {
+pub(crate) fn panel_slot(host: &mut dyn mod_api::ServerHost, uuid: u128, slot: usize, sound: Option<&str>) {
     let (rules, pregame, operator) = menu_view(&*host, uuid);
     let view = View {
         rules: &rules,
@@ -1301,12 +1301,12 @@ pub(crate) fn panel_slot(host: &mut dyn mod_api::ServerHost, uuid: u128, slot: u
         operator,
     };
     let outcome = menu::click(&Page::Root, slot, &view);
-    run_panel_outcome(host, uuid, outcome);
+    run_panel_outcome(host, uuid, outcome, sound);
 }
 
 /// A click on a rule tile of the lobby panel: the command line (from the rules as they are) goes through the same gate as
 /// a chest slot's command, so only an operator before the round changes a rule.
-pub(crate) fn panel_command(host: &mut dyn mod_api::ServerHost, uuid: u128, line: String) {
+pub(crate) fn panel_command(host: &mut dyn mod_api::ServerHost, uuid: u128, line: String, sound: Option<&str>) {
     let (rules, pregame, operator) = menu_view(&*host, uuid);
     let view = View {
         rules: &rules,
@@ -1314,11 +1314,14 @@ pub(crate) fn panel_command(host: &mut dyn mod_api::ServerHost, uuid: u128, line
         operator,
     };
     let outcome = menu::gate_command(line, &view);
-    run_panel_outcome(host, uuid, outcome);
+    run_panel_outcome(host, uuid, outcome, sound);
 }
 
 /// A tile that opens a page of the chest menu (features, goal and end, items and difficulty).
-pub(crate) fn open_panel_page(host: &mut dyn mod_api::ServerHost, uuid: u128, page: lobby_scene::PanelPage) {
+pub(crate) fn open_panel_page(host: &mut dyn mod_api::ServerHost, uuid: u128, page: lobby_scene::PanelPage, sound: Option<&str>) {
+    if let Some(sound) = sound {
+        ServerAdapter { host: &mut *host }.play_sound(uuid, sound);
+    }
     open_lobby_page(
         host,
         uuid,
@@ -1331,11 +1334,13 @@ pub(crate) fn open_panel_page(host: &mut dyn mod_api::ServerHost, uuid: u128, pa
 }
 
 /// Carries out what a panel click means: a refusal is told to the clicker, a command is run (with the button's click).
-fn run_panel_outcome(host: &mut dyn mod_api::ServerHost, uuid: u128, outcome: Outcome) {
+fn run_panel_outcome(host: &mut dyn mod_api::ServerHost, uuid: u128, outcome: Outcome, sound: Option<&str>) {
     match outcome {
         Outcome::Tell(text) => tell_player(host, uuid, Text::literal(text)),
         Outcome::Run(line) => {
-            ServerAdapter { host: &mut *host }.play_sound(uuid, lobby_scene::SOUND_BUTTON);
+            if let Some(sound) = sound {
+                ServerAdapter { host: &mut *host }.play_sound(uuid, sound);
+            }
             let reply = guarded("bingo panel command", || {
                 with_session(|s| {
                     s.command(&mut ServerAdapter { host: &mut *host }, Some(uuid), &line)
@@ -1405,7 +1410,7 @@ pub fn menu_clicked(
     };
     let outcome = menu::click(&page, slot, &view);
     if !matches!(outcome, Outcome::Nothing) {
-        ServerAdapter { host: &mut *host }.play_sound(uuid, lobby_scene::SOUND_BUTTON);
+        ServerAdapter { host: &mut *host }.play_sound(uuid, horizon_bingo::server::panel_clicks::CLICK_ON);
     }
     match outcome {
         Outcome::Nothing => {}

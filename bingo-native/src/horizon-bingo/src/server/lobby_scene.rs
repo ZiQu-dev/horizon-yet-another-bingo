@@ -350,7 +350,8 @@ pub fn panel_command(action: PanelAction, state: &PanelState) -> Option<String> 
             _ => None,
         },
         PanelAction::GoalKind => Some(match state.goal {
-            Goal::Lines(n) => goal(Goal::Items(n)),
+            // A full card of lines (`MAX_LINES`) turns into a full card of items (`MAX_ITEMS`), as the original does.
+            Goal::Lines(n) => goal(Goal::Items(if n >= MAX_LINES { MAX_ITEMS } else { n })),
             Goal::Items(n) => goal(Goal::Lines(n.min(MAX_LINES))),
             Goal::FullCard => goal(Goal::Lines(MAX_LINES)),
         }),
@@ -476,12 +477,8 @@ pub fn sound_command(name: &str, sound: &str) -> String {
     format!("playsound {sound} master {name}")
 }
 
-/// The wooden button's click, when a slot of the lobby menu is clicked.
-pub const SOUND_BUTTON: &str = "minecraft:block.wooden_button.click_on";
 /// The lodestone compass lock, when a player changes team.
 pub const SOUND_TEAM_CHANGED: &str = "minecraft:item.lodestone_compass.lock";
-/// A primed TNT, when the card is rerolled.
-pub const SOUND_REROLL: &str = "minecraft:entity.tnt.primed";
 
 /// A pad label's `Click to join!` background: the entity's default shade, which the original writes out.
 const BACKGROUND_JOIN: i32 = 0x4000_0000;
@@ -557,6 +554,9 @@ fn goal_value_component(goal: Goal) -> String {
         }
     };
     match goal {
+        // `BingoGoal.format`: 25 items or 11 lines or more is the full card.
+        Goal::Items(n) if n >= MAX_ITEMS => line_component(&Line::new("bingo.goal.full_card", "Full Card", &[]), None),
+        Goal::Lines(n) if n >= MAX_LINES => line_component(&Line::new("bingo.goal.full_card", "Full Card", &[]), None),
         Goal::Lines(n) => counted(n, "1 line", "lines", "bingo.game.line_count", "%s lines"),
         Goal::Items(n) => counted(n, "1 item", "items", "bingo.game.item_count", "%s items"),
         Goal::FullCard => line_component(&Line::new("bingo.goal.full_card", "Full Card", &[]), None),
