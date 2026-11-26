@@ -8,6 +8,17 @@ use std::f64::consts::PI;
 
 use crate::ui_draw::UiDraw;
 
+/// The HUD firework's fade range: `(100 * cardScale).toInt()`, the product in Float arithmetic as the Kotlin does it.
+pub fn hud_range(card_scale: f32) -> f64 {
+    (100.0_f32 * card_scale).trunc() as f64
+}
+
+/// The HUD firework's centre: `x.toInt() + CARD_WIDTH / 2` and `y.toInt() + CARD_HEIGHT / 2`, the card's unscaled
+/// half size added to its truncated origin, whatever the card scale.
+pub fn hud_centre(card_x: f32, card_y: f32) -> (i32, i32) {
+    (card_x.trunc() as i32 + 61, card_y.trunc() as i32 + 66)
+}
+
 /// Number of stars a firework starts with.
 const STAR_COUNT: usize = 50;
 /// Distance at which a star's alpha reaches zero, in GUI pixels, for the end screen (`range = 500`).
