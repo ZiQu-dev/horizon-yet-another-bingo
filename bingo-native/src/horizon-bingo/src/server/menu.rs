@@ -849,13 +849,13 @@ fn goal(view: &View) -> Vec<(usize, Slot)> {
         (
             WinCondition::Infinite,
             "Infinite",
-            "Cards are never completed to win.",
+            "If checked, the game will continue to generate new cards indefinitely, until the time limit.",
             "playto infinite",
         ),
         (
             WinCondition::ReplaceGoals,
-            "Replace goals",
-            "Scored goals are replaced.",
+            "Replace Goals",
+            "Once an item/line is scored, it is immediately replaced with new items. Scores will accumulate until the goal is reached.",
             "playto replace_goals",
         ),
     ];
@@ -875,20 +875,20 @@ fn goal(view: &View) -> Vec<(usize, Slot)> {
     let stalemates = [
         (
             StalemateBehavior::EndGame,
-            "End game",
-            "A stalemate ends the game.",
+            "End Game",
+            "If no team can reach the goal with the current card, then the game will end.",
             "stalemate end_game",
         ),
         (
             StalemateBehavior::RerollCard,
-            "Reroll card",
-            "A stalemate gives a new card.",
+            "Re-roll Card",
+            "If no team can reach the goal with the current card, then the entire card will be replaced.",
             "stalemate reroll_card",
         ),
         (
             StalemateBehavior::Nothing,
-            "Do nothing",
-            "A stalemate changes nothing.",
+            "Do Nothing",
+            "Even if the goal is unreachable, the game will continue until it is manually stopped.",
             "stalemate do_nothing",
         ),
     ];
