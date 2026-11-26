@@ -2888,9 +2888,9 @@ impl Session {
         let Some(player) = player else {
             return "Only a player can open a card.".to_string();
         };
-        if let Some(team) = self.teams.team_of(player) {
-            send(host, player, wire::open_card(Some(team)));
-        }
+        // The original sends the open packet to every player, a player on no team too (no team key): the client then
+        // opens the lobby preview card, as `CardViewService.openCard` does.
+        send(host, player, wire::open_card(self.teams.team_of(player)));
         "Opening your card".to_string()
     }
 }
