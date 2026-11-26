@@ -554,9 +554,10 @@ impl Session {
             self.captures.lost(&team, &lost);
             self.flashes.note_scored(&team, &gained, self.ticks);
             let items: Vec<String> = gained.into_iter().map(|index| card.squares[index].item.clone()).collect();
-            (items, lost.len())
+            let lost: Vec<String> = lost.into_iter().map(|index| card.squares[index].item.clone()).collect();
+            (items, lost)
         };
-        if items.is_empty() && lost == 0 {
+        if items.is_empty() && lost.is_empty() {
             if newly_seen && self.rules.hidden_consume.hidden_items {
                 self.send_tiles_after_find(host, &team);
             }
@@ -568,8 +569,12 @@ impl Session {
         self.send_tiles_after_find(host, &team);
         self.send_score_to_all(host, &team);
         for item in items {
-            let line = texts::item_captured(&finder, short_name(&item), host.item_name_key(&item));
-            self.announce_find(host, &line);
+            let shown = texts::item_captured(&finder, short_name(&item), host.item_name_key(&item));
+            self.announce_item(host, &team, &shown, &texts::hidden_item_captured(&finder));
+        }
+        for item in lost {
+            let shown = texts::item_lost(team_name(&team), short_name(&item), host.item_name_key(&item));
+            self.announce_item(host, &team, &shown, &texts::hidden_item_lost(team_name(&team)));
         }
         self.announce_lines(host, &team, &standing);
         self.check_goals(host);
@@ -588,6 +593,24 @@ impl Session {
             for player in players.iter().filter(|player| wants(player.uuid)) {
                 host.tell_line(player.uuid, line);
             }
+        }
+    }
+
+    /// A chat line about an item of `team`, a find or a loss, for the players who keep `itemMessages` on (the default).
+    /// With hidden items, a player on no team or on another team gets `hidden` instead (`createItemScoredMessage`). It is
+    /// one broadcast when everyone gets `shown`.
+    fn announce_item(&self, host: &mut dyn ServerHost, team: &str, shown: &texts::Line, hidden: &texts::Line) {
+        let wants = |uuid: u128| self.settings.get(&uuid).map_or(true, |settings| settings.item_messages);
+        let hides = self.rules.hidden_consume.hidden_items;
+        let players = host.players();
+        if !hides && players.iter().all(|player| wants(player.uuid)) {
+            host.broadcast_line(shown);
+            return;
+        }
+        for player in players.iter().filter(|player| wants(player.uuid)) {
+            let on_team_or_spectator = self.teams.team_of(player.uuid).map_or(true, |own| own == team);
+            let line = if hides && !on_team_or_spectator { hidden } else { shown };
+            host.tell_line(player.uuid, line);
         }
     }
 
@@ -709,9 +732,7 @@ impl Session {
         }
         let ends = scoring::game_should_end(self.rules.end_when, self.reached.len(), keys.len());
         if !ends {
-            for key in newly {
-                host.broadcast_line(&texts::team_reached_goal(team_name(&key)));
-            }
+            self.announce_finished(host, &newly);
         }
         if ends {
             self.end_game(host, self.reached.first().cloned());
@@ -719,6 +740,26 @@ impl Session {
         }
         let rounds = self.rounds_view();
         self.close_cards(host, rounds, Vec::new(), false);
+    }
+
+    /// The players of the teams that reached the goal while the game goes on get the wait line; the operators among them
+    /// also get the end rule and the end command (`ScoredItemCheck.postTickCards`).
+    fn announce_finished(&self, host: &mut dyn ServerHost, teams: &[String]) {
+        if teams.is_empty() {
+            return;
+        }
+        let wait = texts::not_ending_complete();
+        let operator = texts::not_ending_operator(&texts::end_when_name(self.rules.end_when), "/bingo end");
+        for player in host.players() {
+            let finished = self.teams.team_of(player.uuid).is_some_and(|own| teams.iter().any(|team| team == own));
+            if !finished {
+                continue;
+            }
+            host.tell_spans(player.uuid, std::slice::from_ref(&wait));
+            if host.is_operator(player.uuid) {
+                host.tell_spans(player.uuid, std::slice::from_ref(&operator));
+            }
+        }
     }
 
     /// The goal part of a multi-card round. On each card, the first team that plays it and has reached the goal

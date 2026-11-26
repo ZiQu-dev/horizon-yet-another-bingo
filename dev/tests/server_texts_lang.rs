@@ -22,7 +22,6 @@ fn every_line() -> Vec<Line> {
         texts::ready_true("Ada"),
         texts::ready_false("Ada"),
         texts::joined_team("Ada", "Red"),
-        texts::team_reached_goal("Red"),
         texts::game_continues(),
         texts::stalemate_no_team_can_win(),
         texts::stalemate_lockout(),
