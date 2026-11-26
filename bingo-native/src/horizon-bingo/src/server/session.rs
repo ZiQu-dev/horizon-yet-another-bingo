@@ -2733,14 +2733,20 @@ impl Session {
             EndWhen::AllWin => "all teams win".to_string(),
         };
         let on = |value: bool| if value { "on" } else { "off" };
+        // The end is named only when it is not the default, as the original's summary does.
+        let end = if self.rules.end_when == EndWhen::FirstWin { String::new() } else { format!(" End: {end}.") };
         let mut text = format!(
-            "Goal: {goal}. Mode: {mode}. End: {end}. PvP: {}. Keep inventory: {}. Elytra: {}. Night vision: {}. Spawn distance: {} chunks.",
+            "Goal: {goal}. Mode: {mode}.{end} PvP: {}. Keep inventory: {}. Elytra: {}. Night vision: {}. Spawn distance: {} chunks.",
             on(self.rules.pvp),
             on(self.rules.keep_inventory),
             on(self.rules.elytra),
             on(self.rules.night_vision),
             self.rules.spawn_distance
         );
+        // The time limit is named only when one is set, as the original's summary does (`Time Limit: 1h 30m`).
+        if let Some(minutes) = self.time_limit_minutes() {
+            text.push_str(&format!(" Time limit: {}h {:02}m.", minutes / 60, minutes % 60));
+        }
         if !self.rules.preview_card {
             text.push_str(" Preview card: off.");
         }
