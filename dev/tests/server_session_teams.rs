@@ -461,7 +461,7 @@ fn start_sends_the_team_commands_and_spreads_the_players_when_there_are_two_team
 
     // The reset takes the teams that the start added back off the server.
     run(&mut session, &mut host, None, "reset");
-    assert_eq!(host.take_commands(), ["team remove bingo_red", "team remove bingo_blue", "gamemode survival Alice", "gamemode survival Bob"]);
+    assert_eq!(host.take_commands(), ["team remove bingo_red", "team remove bingo_blue", "gamemode adventure Alice", "gamemode adventure Bob"]);
 }
 
 #[test]

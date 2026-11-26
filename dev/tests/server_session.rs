@@ -578,7 +578,7 @@ fn reset_clears_the_card_and_the_next_card_uses_the_next_seed() {
     assert_eq!(count(&reset, ALICE, "card_reset"), 1);
     assert_eq!(count(&reset, ALICE, "game_status"), 1);
     assert!(run(&mut session, &mut host, None, "status").contains("Pregame"));
-    assert_eq!(host.take_commands(), ["team remove bingo_red", "gamemode survival Alice"]);
+    assert_eq!(host.take_commands(), ["team remove bingo_red", "gamemode adventure Alice"]);
 
     // The card is gone: a find now is silent.
     session.on_inventory(&mut host, ALICE, &HashMap::from([(first[1].clone(), 1)]));
