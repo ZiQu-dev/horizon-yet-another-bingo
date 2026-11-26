@@ -469,9 +469,8 @@ fn scores(facts: &Facts, team: Option<&str>) -> Vec<Row> {
             rows.push(Row::blank());
             rows
         }
-        teams => ranked(teams)
+        teams => top_ranking(ranked(teams), team)
             .into_iter()
-            .take(RANKING_ROWS)
             .map(|(index, standing)| {
                 // `getTeamScores`: the viewer's own row is white with the marker in the team's colour, the other teams'
                 // rows are gray, and a player on no team sees every row white.
@@ -490,6 +489,20 @@ fn scores(facts: &Facts, team: Option<&str>) -> Vec<Row> {
             })
             .collect(),
     }
+}
+
+/// The ranking's rows: the first [`RANKING_ROWS`] teams, and the viewer's own team in place of the last one when it is not
+/// among them (`ScoreboardController.getTeamScores`). The own team keeps its place number.
+fn top_ranking<'a>(order: Vec<(usize, &'a Standing)>, team: Option<&str>) -> Vec<(usize, &'a Standing)> {
+    let own = team.and_then(|key| order.iter().find(|(_, standing)| standing.key == key).copied());
+    let mut top: Vec<(usize, &'a Standing)> = order.iter().take(RANKING_ROWS).copied().collect();
+    if let Some((place, standing)) = own {
+        if top.iter().all(|(_, shown)| shown.key != standing.key) {
+            top.pop();
+            top.push((place, standing));
+        }
+    }
+    top
 }
 
 /// The score on a ranking line: the time a finished team took, else its cards, lines (for a lines goal) or items.
