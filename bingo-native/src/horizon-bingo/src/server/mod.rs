@@ -12,6 +12,7 @@ pub mod items;
 pub mod session;
 pub mod commands;
 pub mod ready;
+pub mod resume;
 pub mod teams;
 pub mod options;
 pub mod store;

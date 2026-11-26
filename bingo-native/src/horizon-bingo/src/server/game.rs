@@ -124,16 +124,16 @@ impl Game {
         Ok(self.finish(winner))
     }
 
-    /// Postgame to Playing again, keeping the elapsed time. If the time limit has run out, it is moved to `extend_secs`
-    /// from now (`extendRoundTimeLimitByMinutes` of the original), so the game does not end on the next tick.
+    /// Postgame to Playing again, keeping the elapsed time. A time limit under 30 seconds away (or run out) grows by
+    /// `extend_secs` (`extendRoundTimeLimitByMinutes` of the original, added to the limit as `GameResumeService` does),
+    /// so the game does not end on the next tick.
     pub fn resume(&mut self, extend_secs: i32) -> Result<Vec<Event>, &'static str> {
         if self.status != GameStatus::Postgame {
             return Err("resume: the game is not in Postgame");
         }
-        let elapsed_secs = (self.elapsed_ms() / 1000) as i32;
         if let Some(limit) = self.time_limit_secs() {
-            if limit <= elapsed_secs {
-                self.options.time_limit_secs = Some(elapsed_secs.saturating_add(extend_secs.max(1)));
+            if super::resume::near_time_limit(self.remaining_ms()) {
+                self.options.time_limit_secs = Some(limit.saturating_add(extend_secs.max(1)));
             }
         }
         self.status = GameStatus::Playing;

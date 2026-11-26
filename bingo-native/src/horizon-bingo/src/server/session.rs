@@ -27,6 +27,7 @@ use super::objectives::{self, Runtime};
 use super::options::{EndWhen, Goal, Mode, Options};
 use super::prefs::{self, Setting};
 use super::ready::{encode_update_v2, postgame_packet, vote_for_id, ReadyOptions, ReadyTimer};
+use super::resume;
 use super::stats::{self, Captures};
 use super::store::{self, HistoryEntry, HistoryPlayer, HistoryTeam};
 use super::scoring;
@@ -145,6 +146,8 @@ pub struct Session {
     reached: Vec<String>,
     /// Postgame votes by player.
     votes: BTreeMap<u128, VoteChoice>,
+    /// The end condition and win condition as they were before a resume changed them; a reset puts them back.
+    resume_saved: Option<(EndWhen, WinCondition)>,
     /// Ticks with nobody online while a game runs, for the reset when everyone has left.
     empty_ticks: u64,
     /// The data files have been read.
@@ -258,6 +261,7 @@ impl Session {
             seen: BTreeMap::new(),
             reached: Vec::new(),
             votes: BTreeMap::new(),
+            resume_saved: None,
             empty_ticks: 0,
             loaded: false,
             settings: HashMap::new(),
@@ -1797,8 +1801,9 @@ impl Session {
     /// The end screen's vote options to everyone online (Postgame): the primary button's text and the More list.
     fn send_vote_updates(&self, host: &mut dyn ServerHost) {
         let players = host.players();
+        let keep_playing = resume::description(self.resume_choice(), self.options.extend_secs);
         for player in &players {
-            let packet = postgame_packet(player.uuid, &self.votes, players.len());
+            let packet = postgame_packet(player.uuid, &self.votes, players.len(), keep_playing.clone());
             send(host, player.uuid, encode_update_v2(&packet));
         }
     }
@@ -2012,6 +2017,10 @@ impl Session {
         self.seen.clear();
         self.reached.clear();
         self.votes.clear();
+        if let Some((end_when, win_condition)) = self.resume_saved.take() {
+            self.rules.end_when = end_when;
+            self.rules.win_condition = win_condition;
+        }
         self.progress.clear();
         self.persistent.clear();
         self.objective_runtime.clear();
@@ -2788,10 +2797,20 @@ impl Session {
             .map(|p| p.uuid)
             .filter(|&uuid| !self.teams.is_spectator(uuid))
             .collect();
-        if voters.iter().all(|uuid| self.votes.contains_key(uuid)) {
+        if !voters.is_empty() && voters.iter().all(|uuid| self.votes.contains_key(uuid)) {
             let count = |wanted: VoteChoice| voters.iter().filter(|uuid| self.votes.get(uuid) == Some(&wanted)).count();
             let (next, keep, lobby) = (count(VoteChoice::NextRound), count(VoteChoice::KeepPlaying), count(VoteChoice::ReturnToLobby));
-            if keep > next && keep > lobby {
+            // A tie goes to the next round, then to keep playing (the original's `AUTO` default is the next round).
+            if next >= keep && next >= lobby {
+                // The original's NEXT_ROUND: reset the round, then start it at once, ignoring the warnings.
+                let events = self.game.reset();
+                self.dispatch(host, events);
+                return match self.start_game(host, true) {
+                    Ok(()) => self.say(texts::vote_starts_next_round()),
+                    Err(error) => error,
+                };
+            }
+            if keep >= lobby {
                 return self.resume(host);
             }
             let events = self.game.reset();
@@ -2811,10 +2830,15 @@ impl Session {
         } else {
             scoring::game_should_end(self.rules.end_when, self.reached.len(), self.teams.teams().len())
         };
+        let choice = self.resume_choice();
         match self.game.resume(self.options.extend_secs) {
             Ok(events) => {
-                if ended_by_rule {
-                    self.rules.end_when = EndWhen::Never;
+                self.resume_saved.get_or_insert((self.rules.end_when, self.rules.win_condition));
+                match choice {
+                    resume::Resume::WaitUntilAllWin => self.rules.end_when = EndWhen::AllWin,
+                    resume::Resume::InfiniteMode => self.rules.win_condition = WinCondition::Infinite,
+                    resume::Resume::KeepPlaying if ended_by_rule => self.rules.end_when = EndWhen::Never,
+                    resume::Resume::KeepPlaying | resume::Resume::IncreaseTimeLimit => {}
                 }
                 self.votes.clear();
                 self.dispatch(host, events);
@@ -2823,6 +2847,15 @@ impl Session {
             }
             Err(error) => error.to_string(),
         }
+    }
+
+    /// What Keep Playing does now, from the finished teams and the time left (`GameResumeService.getResumeInfo`).
+    fn resume_choice(&self) -> resume::Resume {
+        resume::choose(resume::Situation {
+            no_team_finished: self.finished.is_empty(),
+            unfinished_teams: self.finished.len() < self.teams.teams().len(),
+            near_time_limit: resume::near_time_limit(self.game.remaining_ms()),
+        })
     }
 
     /// `/bingo card`: opens the card of the caller's team.

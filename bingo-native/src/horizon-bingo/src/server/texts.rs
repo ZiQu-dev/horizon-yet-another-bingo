@@ -483,6 +483,31 @@ pub fn return_to_lobby() -> Line {
     Line::new("bingo.world.return_to_lobby", "Return to Lobby", &[])
 }
 
+/// `Extend time by 15m 00s`: the Keep Playing button when the time limit is extended.
+pub fn extend_time_limit_by(duration: &str) -> Line {
+    Line::new("bingo.world.extend_time_limit_by", "Extend time by %s", &[duration])
+}
+
+/// `Extend to 'All Teams Win'`: the Keep Playing button when the game goes on until every team wins.
+pub fn extend_game_to_all_win(end_when: &str) -> Line {
+    Line::new("bingo.world.extend_game_to", "Extend to '%s'", &[end_when])
+}
+
+/// `All Teams Win`: the name of the end condition `EndWhen::AllWin`.
+pub fn all_teams_win() -> Line {
+    Line::new("bingo.options.end_when.all_win", "All Teams Win", &[])
+}
+
+/// `Extend to Infinite Mode`: the Keep Playing button when the game goes on with no card limit.
+pub fn extend_game_to_infinite() -> Line {
+    Line::new("bingo.world.extend_game_to_infinite", "Extend to Infinite Mode", &[])
+}
+
+/// The vote result when the next round wins: the round starts at once.
+pub fn vote_starts_next_round() -> Line {
+    Line::new("bingo.native.vote_starts_next_round", "The vote is over: starting the next round.", &[])
+}
+
 /// `Out of time!`, the reason when the time limit ran out.
 pub fn out_of_time() -> Line {
     Line::new("bingo.game.end.reason_timer", "Out of time!", &[])
