@@ -79,6 +79,16 @@ impl ReadyTimer {
         self.ready.contains(&player)
     }
 
+    /// `ReadyService.setReady`: a ready press starts a countdown that is not running, when the start rules hold
+    /// (`eligible`) and enough players are online. No tick is counted. Returns whether the countdown runs afterwards.
+    pub fn start_on_ready(&mut self, online: &[u128], eligible: bool) -> bool {
+        if !self.running && eligible && online.len() >= self.options.min_players {
+            self.running = true;
+            self.elapsed_ms = 0;
+        }
+        self.running
+    }
+
     /// Forgets a player's readiness, for example when they leave the server.
     pub fn remove(&mut self, player: u128) {
         self.ready.remove(&player);

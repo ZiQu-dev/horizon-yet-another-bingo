@@ -569,9 +569,15 @@ fn a_player_on_no_team_cannot_ready_up_and_one_on_a_team_can() {
     let (mut session, mut host) = session(3);
     assert_eq!(
         session.command(&mut host, Some(ALICE), "ready"),
-        "You cannot ready up without joining a team! (use '/spectator' if you want to spectate)"
+        "You cannot ready up without joining a team! (use '/join spectators' if you want to spectate)"
     );
     session.command(&mut host, Some(ALICE), "join red");
+    // Bob is online on no team, so the start rules do not hold yet (ReadyService.isConditionSatisfied).
+    assert_eq!(
+        session.command(&mut host, Some(ALICE), "ready"),
+        "Cannot ready up - other players need to join a team!"
+    );
+    session.command(&mut host, Some(BOB), "join blue");
     assert_eq!(session.command(&mut host, Some(ALICE), "ready"), "Alice is ready!");
 }
 

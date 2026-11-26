@@ -121,24 +121,25 @@ fn subtitle(packet: &ReadyUpdatePacket) -> &Text {
 }
 
 #[test]
-fn a_player_who_is_not_ready_is_told_how_to_ready_up_and_the_timer_waits() {
+fn a_player_who_is_not_ready_is_told_how_to_ready_up_and_the_ready_press_starts_the_timer() {
     let mut host = FakeHost::default();
     let mut session = Session::new(options(7));
     lobby(&mut host, &mut session);
     assert_eq!(session.command(&mut host, Some(ALICE), "ready"), "Alice is ready!");
 
+    // ReadyService.setReady: the ready press starts the countdown at once, when the start rules hold. One of two
+    // online is ready, so the length is (1 - 1/2) * 600 s = 5 min, with no tick passed yet.
     let bob = last_packet(&host, BOB);
-    assert!(!bob.is_running && !bob.is_ready);
+    assert!(bob.is_running && !bob.is_ready);
     assert_eq!(key_of(title(&bob)), "bingo.lobby.vote.ready_up_command");
     assert_eq!(english(title(&bob)), "type /bingo ready to speed up!");
-    assert_eq!(key_of(subtitle(&bob)), "bingo.game.waiting_to_start");
-    assert_eq!(english(subtitle(&bob)), "Waiting to start...");
+    assert_eq!(key_of(subtitle(&bob)), "bingo.lobby.vote.starting_time_remaining");
+    assert_eq!(english(subtitle(&bob)), "Starting in 5:00");
 
-    // Alice is ready, but no countdown runs yet: her title stays empty, the subtitle still says she waits.
     let alice = last_packet(&host, ALICE);
-    assert!(alice.is_ready && !alice.is_running);
-    assert_eq!(english(title(&alice)), "");
-    assert_eq!(english(subtitle(&alice)), "Waiting to start...");
+    assert!(alice.is_ready && alice.is_running);
+    assert_eq!(english(title(&alice)), "1 of 2 ready!");
+    assert_eq!(english(subtitle(&alice)), "Starting in 5:00");
 }
 
 #[test]
