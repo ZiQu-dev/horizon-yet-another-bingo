@@ -8,9 +8,9 @@ use crate::assets::Assets;
 use crate::atlas::Atlas;
 use crate::card_images::ImageStore;
 use crate::buf::{encode, DecodeError};
-use crate::card_draw::{draw_card, translate, truncate_to_width, CardView, Draw, CARD_HEIGHT, CARD_WIDTH};
+use crate::card_draw::{draw_card, team_outlines_shown, translate, truncate_to_width, CardView, Draw, CARD_HEIGHT, CARD_WIDTH};
 use crate::config::{alignment_xy, card_pos, card_scale, message_scale, ClientConfig};
-use crate::fireworks::Fireworks;
+use crate::fireworks::{hud_centre, hud_range, Fireworks};
 use crate::message_draw::{draw_messages, MessageView};
 use crate::ready_draw::draw_ready;
 use crate::channels::{id, Dir, CHANNELS};
@@ -133,8 +133,6 @@ const FACE_SCAN_TICKS: u64 = 10;
 const FACE_RETRY_TICKS: u64 = 60;
 /// Tries per head before the client gives up on its skin (until the head leaves the messages).
 const FACE_MAX_TRIES: u32 = 5;
-/// The HUD's win fireworks fade out at `100 * cardScale` pixels (`BingoHudController`): this is the range at scale 1.
-const HUD_FIREWORK_RANGE: f64 = 100.0;
 /// The seed of the HUD's fireworks, mixed with their start time so they differ from the end screen's.
 const HUD_FIREWORK_SEED: u64 = 0x2545_F491_4F6C_DD1D;
 
@@ -721,7 +719,7 @@ impl BingoClient {
                 }
                 // `BingoHudController`: `cardCompletedV1` with `isWinner` starts the fireworks over the card.
                 ClientEvent::Fireworks => {
-                    let range = HUD_FIREWORK_RANGE * f64::from(card_scale(&self.config));
+                    let range = hud_range(card_scale(&self.config));
                     self.hud_fireworks = Some(Fireworks::with_range(now, now ^ HUD_FIREWORK_SEED, range));
                 }
                 ClientEvent::OpenCard(_) | ClientEvent::OpenEndScreen => self.ui_events.push(event),
@@ -819,8 +817,7 @@ impl BingoClient {
         // `drawHudCards` draws the win fireworks before the card, and only while a card is shown.
         if shown.card && self.state.selected_card().is_some() {
             // The fireworks are centred on the card's middle, wherever the card is drawn.
-            let centre = (card_x + CARD_WIDTH as f32 * scale / 2.0, card_y + CARD_HEIGHT as f32 * scale / 2.0);
-            self.draw_hud_fireworks(host, now, (centre.0.round() as i32, centre.1.round() as i32));
+            self.draw_hud_fireworks(host, now, hud_centre(card_x, card_y));
         }
         let mut team_name_draws = None;
         if let Some((key, card)) = self.state.selected_card().filter(|_| shown.card) {
@@ -834,7 +831,7 @@ impl BingoClient {
                 .map(|name| truncate_to_width(&name, 70, &|s| host.text_width(s)));
             // Every team's outline is looked up with the card's own colour, as the original does.
             let outline = |team: &str| assets.team_colors(Some(team), formatting).outline;
-            let view = CardView { card, colors: &colors, now_ms: now, show_outlines: self.config.card_team_outlines, team_outline: &outline, items: &assets, images: Some(&known), team_name, is_gui: false };
+            let view = CardView { card, colors: &colors, now_ms: now, show_outlines: team_outlines_shown(self.config.card_team_outlines, self.config.show_multiple_cards, false, self.state.cards.len()), team_outline: &outline, items: &assets, images: Some(&known), team_name, is_gui: false };
             let mut draws = draw_card(&view);
             // `ClientCardRenderer.draw`: the focused card (hovered in the chat, not at the bottom left) gets the outline.
             if self.hud_card_focused(gui, host.cursor(), host.chat_open()) {

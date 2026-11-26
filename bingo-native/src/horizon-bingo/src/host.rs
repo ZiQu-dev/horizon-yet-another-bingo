@@ -16,6 +16,12 @@ pub fn scale_alpha(argb: Argb, alpha: f32) -> Argb {
     (argb & 0x00ff_ffff) | (a << 24)
 }
 
+/// The colour a host draws text in: `argb` with the alpha it carries, so a faded text (a message's alpha, the ready
+/// title's pulse) stays faded. A colour with no alpha byte (0x00RRGGBB) is opaque.
+pub fn text_argb(argb: Argb) -> Argb {
+    if argb >> 24 == 0 { 0xff00_0000 | argb } else { argb }
+}
+
 pub trait Host {
     /// Send a plugin-channel message to the server. An error means the player is not in a server's play state yet.
     fn send_to_server(&mut self, channel: &str, data: &[u8]) -> Result<(), String>;

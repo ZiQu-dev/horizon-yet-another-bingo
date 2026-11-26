@@ -4,7 +4,7 @@
 use horizon_bingo::assets::Assets;
 use horizon_bingo::client::BingoClient;
 use horizon_bingo::config::ClientConfig;
-use horizon_bingo::host::{Argb, Host as BingoHost, scale_alpha};
+use horizon_bingo::host::{Argb, Host as BingoHost, scale_alpha, text_argb};
 use horizon_bingo::state::SoundKey;
 use mod_api::{
     ClientHost, ClientPacketEvent, ClientPlayerLoggingInEvent, ClientPlayerLoggingOutEvent, ClientTickPostEvent,
@@ -501,7 +501,7 @@ impl BingoHost for ReadOnly<'_> {
         self.draw.ops.push(Op::Text {
             text: text.to_owned(),
             at: [x as f32, y as f32],
-            argb: 0xFF00_0000 | (color & 0x00FF_FFFF),
+            argb: text_argb(color),
             shadow,
         });
     }

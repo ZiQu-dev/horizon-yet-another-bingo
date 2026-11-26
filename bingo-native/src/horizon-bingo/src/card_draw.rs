@@ -162,6 +162,12 @@ fn decorations(out: &mut Vec<Draw>, image: &CardTileImage) {
     out.push(sprite(&name, -1, -1, 20, 20));
 }
 
+/// `ClientCardBufferRenderer.drawCard`: team outlines are drawn when `cardTeamOutlines` is on and the card is not on a
+/// screen with several cards shown, or there is at most one card.
+pub fn team_outlines_shown(card_team_outlines: bool, show_multiple_cards: bool, is_gui: bool, cards: usize) -> bool {
+    card_team_outlines && ((!is_gui && !show_multiple_cards) || cards <= 1)
+}
+
 /// The commands that draw the whole card, relative to its top left corner, in the order they must be painted.
 pub fn draw_card(view: &CardView<'_>) -> Vec<Draw> {
     let colors = view.colors;
