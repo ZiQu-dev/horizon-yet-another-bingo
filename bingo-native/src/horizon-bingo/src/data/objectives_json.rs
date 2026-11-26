@@ -233,7 +233,9 @@ pub const JSON: &str = r####"{
  "yet-another-minecraft-bingo:challenge/never_sleep_in_bed": {
   "statName": "minecraft:sleep_in_bed",
   "statType": "minecraft:custom",
-  "type": "stats"
+  "type": "stats",
+  "min": 0,
+  "max": 0
  },
  "yet-another-minecraft-bingo:challenge/stat_broken_golden_axe": {
   "statName": "minecraft:golden_axe",
@@ -288,7 +290,8 @@ pub const JSON: &str = r####"{
  "yet-another-minecraft-bingo:challenge/stat_custom_bell_ring": {
   "statName": "minecraft:bell_ring",
   "statType": "minecraft:custom",
-  "type": "stats"
+  "type": "stats",
+  "min": 12
  },
  "yet-another-minecraft-bingo:challenge/stat_custom_deaths": {
   "statName": "minecraft:deaths",
