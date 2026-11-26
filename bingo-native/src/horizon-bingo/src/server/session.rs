@@ -1424,8 +1424,19 @@ impl Session {
             return;
         }
         for player in players {
-            if self.books_given.contains(&player.uuid) {
-                continue;
+            // A player who holds the book keeps it. Its text is refreshed once per session, the first time it is seen
+            // (after a restart `books_given` is empty). A player who lost the book is given a new one (InfoBookController).
+            match host.held_tagged(player.uuid, infobook::HELD_TAG) {
+                Some(count) if count > 0 => {
+                    if !self.books_given.contains(&player.uuid) && self.refresh_book(host, player.uuid) {
+                        self.books_given.insert(player.uuid);
+                    }
+                    continue;
+                }
+                Some(_) => {}
+                // The inventory cannot be read: the book is given once per session, as before.
+                None if self.books_given.contains(&player.uuid) => continue,
+                None => {}
             }
             // The book names the keybind of the card HUD, and a client answers with its settings a moment after it joins.
             // The book waits for that answer, up to `BOOK_HUD_WAIT_TICKS` after the join (a book is never replaced).
