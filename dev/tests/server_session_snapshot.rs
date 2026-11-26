@@ -288,7 +288,7 @@ fn restoring_a_running_game_gives_the_same_snapshot_status_and_card_and_the_owne
     );
     assert_eq!(
         run(&mut copy, &mut blank, None, "options"),
-        "Goal: 6 item(s). Mode: lockout. End: first win. PvP: on. Keep inventory: off. Elytra: off. Night vision: off. Spawn distance: 25 chunks."
+        "Goal: 6 item(s). Mode: lockout. PvP: on. Keep inventory: off. Elytra: off. Night vision: off. Spawn distance: 25 chunks. Time limit: 0h 10m."
     );
 
     // A player who joins the restored game is sent the same card.

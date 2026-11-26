@@ -154,7 +154,7 @@ mod session_side {
         (host, session)
     }
 
-    const DEFAULT_OPTIONS: &str = "Goal: 1 line(s). Mode: standard. End: first win. PvP: on. Keep inventory: off. Elytra: off. Night vision: off. Spawn distance: 25 chunks.";
+    const DEFAULT_OPTIONS: &str = "Goal: 1 line(s). Mode: standard. PvP: on. Keep inventory: off. Elytra: off. Night vision: off. Spawn distance: 25 chunks.";
 
     #[test]
     fn the_options_line_names_objectives_only_when_it_is_on() {
