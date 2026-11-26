@@ -20,6 +20,7 @@ pub mod multicard;
 pub mod difficulty;
 pub mod stats;
 pub mod objectives;
+pub mod objective_names;
 pub mod map_render;
 pub mod map_items;
 pub mod menu;
