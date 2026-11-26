@@ -345,7 +345,7 @@ fn the_cards_leave_out_the_items_of_the_kit() {
 
 #[test]
 fn lines_render_their_english_with_arguments_and_percent_escapes() {
-    assert_eq!(texts::team_reached_goal("Red").render(), "Red reached the goal!");
+    assert_eq!(texts::item_lost("Red", "copper", "item.minecraft.copper".to_string()).render(), "Red lost [copper]");
     assert_eq!(texts::game_continues().render(), "The game continues.");
     assert_eq!(
         texts::stalemate_lockout().render(),

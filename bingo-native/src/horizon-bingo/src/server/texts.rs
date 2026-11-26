@@ -4,7 +4,7 @@
 //! the English, as vanilla does. Replies to a command are plain English for now.
 //!
 //! The keys are `bingo.native.*`, so the original mod's own `bingo.*` keys keep their meaning.
-use super::options::Goal;
+use super::options::{EndWhen, Goal};
 
 /// A line with a translation key: the English template and the arguments that fill its `%s` places.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,9 +145,51 @@ pub fn joined_team(player: &str, team: &str) -> Line {
     Line::new("bingo.command.join.success", "Moved player %s onto team %s!", &[player, team])
 }
 
-/// `%s reached the goal!`, for a team that reached the goal before the game ends.
-pub fn team_reached_goal(team: &str) -> Line {
-    Line::new("bingo.native.team_reached_goal", "%s reached the goal!", &[team])
+/// `%s lost %s`, for a scored item that left a team's inventory (`GameMessageService`, `sendItemLost`). The team is named,
+/// not a player; the item is in brackets as a find's is.
+pub fn item_lost(team: &str, item: &str, item_key: String) -> Line {
+    Line::new("bingo.game.message.lost_item", "%s lost %s", &[team, item]).with_arg_key(1, item_key)
+}
+
+/// `%s got *****`: a find that hidden items mode keeps from a player who is on no team or on another team.
+pub fn hidden_item_captured(finder: &str) -> Line {
+    Line::new("bingo.game.message.captured_item", "%s got %s", &[finder, "*****"])
+}
+
+/// `%s lost *****`: a loss that hidden items mode keeps from a player who is on no team or on another team.
+pub fn hidden_item_lost(team: &str) -> Line {
+    Line::new("bingo.game.message.lost_item", "%s lost %s", &[team, "*****"])
+}
+
+/// `You've finished the game! Wait for other teams to complete their cards...`, for the players of a team that reached the
+/// goal while the game goes on. Aqua and bold in the original; a span has no bold, so only the colour is kept.
+pub fn not_ending_complete() -> Span {
+    Span::translate(
+        "bingo.game.not_ending_complete",
+        "You've finished the game! Wait for other teams to complete their cards...",
+        Vec::new(),
+    )
+    .in_color("aqua")
+}
+
+/// `(End Game is set to '%s'. Use '%s' if you're ready to end the game.)`, for the operators after the wait line. Gray.
+pub fn not_ending_operator(end_when: &str, end_command: &str) -> Span {
+    Span::translate(
+        "bingo.game.not_ending_complete_operator",
+        "(End Game is set to '%s'. Use '%s' if you're ready to end the game.)",
+        vec![Span::text(end_when), Span::text(end_command)],
+    )
+    .in_color("gray")
+}
+
+/// The end condition as the original's options name it (`bingo.options.end_when.*`).
+pub fn end_when_name(end_when: EndWhen) -> String {
+    match end_when {
+        EndWhen::Never => "Never".to_string(),
+        EndWhen::FirstWin => "First Win".to_string(),
+        EndWhen::TeamsWin(n) => format!("{n} Teams Win"),
+        EndWhen::AllWin => "All Teams Win".to_string(),
+    }
 }
 
 pub fn game_continues() -> Line {

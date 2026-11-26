@@ -232,7 +232,7 @@ fn endwhen_never_announces_the_goal_but_does_not_end_until_end() {
     host.take();
     assert_eq!(
         host.take_broadcasts(),
-        [format!("Alice got [{}]", short(&names[0])), "Red reached the goal!".to_string()]
+        [format!("Alice got [{}]", short(&names[0]))]
     );
     assert!(status(&mut session, &mut host).contains("Playing"));
 
@@ -266,7 +266,7 @@ fn endwhen_all_win_lets_the_first_team_to_reach_the_goal_play_on() {
     host.take();
     assert_eq!(
         host.take_broadcasts(),
-        [format!("Alice got [{}]", short(&names[0])), "Red reached the goal!".to_string()]
+        [format!("Alice got [{}]", short(&names[0]))]
     );
     assert!(status(&mut session, &mut host).contains("Playing"));
 
@@ -341,7 +341,10 @@ fn inventory_mode_takes_a_square_back_when_the_item_leaves_the_inventory() {
     let alice = score_of(&only(&lost, ALICE, "score_update"));
     assert_eq!((alice.team.as_str(), alice.is_viewer_on_team, alice.score.items), ("bingo_red", true, 0));
     assert_eq!(score_of(&only(&lost, BOB, "score_update")).score.items, 0);
-    assert!(host.take_broadcasts().is_empty());
+    // The loss is announced under the team's name, as `GameMessageService.createItemScoredMessage` does for a lost item.
+    let announced = host.take_broadcasts();
+    assert_eq!(announced.len(), 1, "{announced:?}");
+    assert!(announced[0].starts_with("Red lost ["), "{announced:?}");
     assert!(status(&mut session, &mut host).contains("Red: 1 players, 0 items, 0 lines"));
 }
 

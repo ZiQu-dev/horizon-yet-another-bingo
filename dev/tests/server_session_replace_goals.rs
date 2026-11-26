@@ -172,7 +172,7 @@ fn items_round_replaces_each_scored_square_and_keeps_its_score() {
     // One of the new squares is found: the total is 2 + 1 = 3, the goal. Red has reached it and the round goes on.
     session.on_inventory(&mut host, ALICE, &held(&after[0..1]));
     let lines = host.take_broadcasts();
-    assert!(lines.contains(&"Red reached the goal!".to_string()), "{lines:?}");
+    assert!(!lines.iter().any(|line| line.contains("reached the goal")), "{lines:?}");
     let text = status(&mut session, &mut host);
     assert!(text.contains("Red: 1 players, 3 items, 0 lines"), "{text}");
     assert!(text.contains("Playing"), "endwhen never keeps the round going: {text}");
@@ -205,7 +205,7 @@ fn lines_round_replaces_a_full_line_at_once_and_leaves_a_partial_row_alone() {
     // The second row is found on the new card: 5 + 5 items and 1 + 1 lines. Two lines: the goal is reached.
     session.on_inventory(&mut host, ALICE, &held(&row0[5..10]));
     let lines = host.take_broadcasts();
-    assert!(lines.contains(&"Red reached the goal!".to_string()), "{lines:?}");
+    assert!(!lines.iter().any(|line| line.contains("reached the goal")), "{lines:?}");
     let text = status(&mut session, &mut host);
     assert!(text.contains("Red: 1 players, 10 items, 2 lines"), "{text}");
     assert!(text.contains("Playing"), "{text}");
@@ -218,7 +218,7 @@ fn the_round_goes_on_for_the_other_teams_until_its_end_rule_holds() {
     ticks(&mut session, &mut host, 4);
     let card = tiles_names(&host, ALICE);
     session.on_inventory(&mut host, ALICE, &held(&card[0..2]));
-    assert!(host.take_broadcasts().contains(&"Red reached the goal!".to_string()));
+    assert!(!host.take_broadcasts().iter().any(|line| line.contains("reached the goal")));
     assert!(status(&mut session, &mut host).contains("Playing"));
 
     // Red and Blue play the same card, so Blue is sent the squares Red's goals were replaced with.
@@ -241,7 +241,7 @@ fn a_square_another_team_has_found_loses_that_team_its_progress_when_it_is_repla
 
     session.on_inventory(&mut host, ALICE, &held(&card[0..5]));
     let lines = host.take_broadcasts();
-    assert!(lines.contains(&"Red reached the goal!".to_string()), "{lines:?}");
+    assert!(!lines.iter().any(|line| line.contains("reached the goal")), "{lines:?}");
     let text = status(&mut session, &mut host);
     assert!(text.contains("Red: 1 players, 5 items, 1 lines"), "{text}");
     assert!(text.contains("Blue: 1 players, 0 items, 0 lines"), "{text}");
@@ -254,7 +254,7 @@ fn a_cards_one_round_keeps_its_squares_when_a_goal_is_reached() {
     ticks(&mut session, &mut host, 4);
     let before = tiles_names(&host, ALICE);
     session.on_inventory(&mut host, ALICE, &held(&before[0..2]));
-    assert!(host.take_broadcasts().contains(&"Red reached the goal!".to_string()));
+    assert!(!host.take_broadcasts().iter().any(|line| line.contains("reached the goal")));
     assert_eq!(tiles_names(&host, ALICE), before, "the card keeps its squares");
     assert!(status(&mut session, &mut host).contains("Red: 1 players, 2 items, 0 lines"));
 }
@@ -280,7 +280,7 @@ fn a_replace_goals_round_restores_its_persistent_score_from_its_snapshot() {
     // One more square of the card the snapshot kept: 2 + 1 = 3, the goal.
     restored.on_inventory(&mut restored_host, ALICE, &held(&after[0..1]));
     let lines = restored_host.take_broadcasts();
-    assert!(lines.contains(&"Red reached the goal!".to_string()), "{lines:?}");
+    assert!(!lines.iter().any(|line| line.contains("reached the goal")), "{lines:?}");
     assert!(status(&mut restored, &mut restored_host).contains("Red: 1 players, 3 items, 0 lines"));
 }
 
