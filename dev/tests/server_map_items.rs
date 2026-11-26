@@ -35,28 +35,34 @@ const RED: i32 = 1;
 const BLUE: i32 = 2;
 const PREVIEW: i32 = 3;
 
-/// The SNBT of a team card made as the server gives it (`Team card (Red)`, the team's colour).
+/// The SNBT of a team card made as the server gives it (`Bingo Card (Red)`, the team's colour).
 fn red_card(id: i32) -> String {
     format!(
-        "{{id:\"minecraft:filled_map\",count:1,components:{{\"minecraft:map_id\":{id},\"minecraft:custom_name\":{{text:\"Team card (Red)\",color:\"red\",italic:1b}},\"minecraft:map_color\":16733525,\"minecraft:custom_data\":{{bingo_card:1b}},\"minecraft:tooltip_display\":{{hide_additional_tooltip:1b}}}}}}"
+        "{{id:\"minecraft:filled_map\",count:1,components:{{\"minecraft:map_id\":{id},\"minecraft:custom_name\":{{translate:\"bingo.card.team_card\",with:[\"Red\"],color:\"red\",italic:1b}},\"minecraft:map_color\":16733525,\"minecraft:custom_data\":{{bingo_card:1b}},\"minecraft:tooltip_display\":{{hide_additional_tooltip:1b}}}}}}"
     )
 }
 
 fn blue_card(id: i32) -> String {
     format!(
-        "{{id:\"minecraft:filled_map\",count:1,components:{{\"minecraft:map_id\":{id},\"minecraft:custom_name\":{{text:\"Team card (Blue)\",color:\"blue\",italic:1b}},\"minecraft:map_color\":5592575,\"minecraft:custom_data\":{{bingo_card:1b}},\"minecraft:tooltip_display\":{{hide_additional_tooltip:1b}}}}}}"
+        "{{id:\"minecraft:filled_map\",count:1,components:{{\"minecraft:map_id\":{id},\"minecraft:custom_name\":{{translate:\"bingo.card.team_card\",with:[\"Blue\"],color:\"blue\",italic:1b}},\"minecraft:map_color\":5592575,\"minecraft:custom_data\":{{bingo_card:1b}},\"minecraft:tooltip_display\":{{hide_additional_tooltip:1b}}}}}}"
     )
 }
 
 fn preview_card(id: i32) -> String {
     format!(
-        "{{id:\"minecraft:filled_map\",count:1,components:{{\"minecraft:map_id\":{id},\"minecraft:custom_name\":{{text:\"Card preview\",italic:1b}},\"minecraft:custom_data\":{{bingo_card:1b}},\"minecraft:tooltip_display\":{{hide_additional_tooltip:1b}}}}}}"
+        "{{id:\"minecraft:filled_map\",count:1,components:{{\"minecraft:map_id\":{id},\"minecraft:custom_name\":{{translate:\"bingo.card.preview_card\",italic:1b}},\"minecraft:custom_data\":{{bingo_card:1b}},\"minecraft:tooltip_display\":{{hide_additional_tooltip:1b}}}}}}"
+    )
+}
+
+fn blue_memento_lost(id: i32) -> String {
+    format!(
+        "{{id:\"minecraft:filled_map\",count:1,components:{{\"minecraft:map_id\":{id},\"minecraft:custom_name\":{{translate:\"bingo.card.team_card_memento_lost\",color:\"blue\",italic:1b}},\"minecraft:map_color\":5592575,\"minecraft:custom_data\":{{bingo_card:1b}},\"minecraft:tooltip_display\":{{hide_additional_tooltip:1b}}}}}}"
     )
 }
 
 fn red_memento_lost(id: i32) -> String {
     format!(
-        "{{id:\"minecraft:filled_map\",count:1,components:{{\"minecraft:map_id\":{id},\"minecraft:custom_name\":{{text:\"Team card (Red, lost)\",color:\"red\",italic:1b}},\"minecraft:map_color\":16733525,\"minecraft:custom_data\":{{bingo_card:1b}},\"minecraft:tooltip_display\":{{hide_additional_tooltip:1b}}}}}}"
+        "{{id:\"minecraft:filled_map\",count:1,components:{{\"minecraft:map_id\":{id},\"minecraft:custom_name\":{{translate:\"bingo.card.team_card_memento_lost\",color:\"red\",italic:1b}},\"minecraft:map_color\":16733525,\"minecraft:custom_data\":{{bingo_card:1b}},\"minecraft:tooltip_display\":{{hide_additional_tooltip:1b}}}}}}"
     )
 }
 
@@ -287,7 +293,7 @@ fn an_item_is_written_as_vanilla_reads_it_with_its_name_colour_and_marker() {
     let blue = Want::Memento { key: "bingo_blue".to_string(), won: false };
     assert_eq!(
         horizon_bingo::server::map_items::item_snbt(2, &blue),
-        blue_card(2).replace("Team card (Blue)", "Team card (Blue, lost)")
+        blue_memento_lost(2)
     );
     assert_eq!(horizon_bingo::server::map_items::item_snbt(3, &Want::Preview), preview_card(3));
 }
@@ -403,7 +409,7 @@ fn after_the_game_each_team_card_is_taken_and_the_memento_with_the_result_is_giv
     assert!(host.take_gives().is_empty(), "the memento is given after the card is gone");
 
     step(&mut session, &mut host);
-    let blue_memento = blue_card(BLUE).replace("Team card (Blue)", "Team card (Blue, lost)");
+    let blue_memento = blue_memento_lost(BLUE);
     assert_eq!(host.take_gives(), vec![(ALICE, red_memento_lost(RED)), (BOB, blue_memento)]);
 }
 

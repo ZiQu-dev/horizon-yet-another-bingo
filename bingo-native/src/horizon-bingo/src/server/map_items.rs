@@ -118,10 +118,17 @@ fn snbt_string(text: &str) -> String {
     out
 }
 
-/// A text component in SNBT: the text, an optional colour (a `Formatting` name, lower case) and italics.
-fn name_snbt(text: &str, color: Option<&str>) -> String {
+/// A translatable name in SNBT, as the original's `textProvider.string(key, args)` gives it: the key of `bingo.card.*`
+/// in `en_us.json`, its arguments, an optional colour (a `Formatting` name, lower case) and italics.
+fn name_snbt(key: &str, args: &[&str], color: Option<&str>) -> String {
+    let with = if args.is_empty() {
+        String::new()
+    } else {
+        let args: Vec<String> = args.iter().map(|arg| snbt_string(arg)).collect();
+        format!("with:[{}],", args.join(","))
+    };
     let color = color.map_or(String::new(), |c| format!("color:\"{}\",", c.to_ascii_lowercase()));
-    format!("{{text:{},{color}italic:1b}}", snbt_string(text))
+    format!("{{translate:{},{with}{color}italic:1b}}", snbt_string(key))
 }
 
 /// The SNBT of the item a player holds for `want`, on map `map_id`: a filled map with the bingo marker, named as the
@@ -130,18 +137,17 @@ pub fn item_snbt(map_id: i32, want: &Want) -> String {
     let mut components = vec![format!("\"minecraft:map_id\":{map_id}")];
     match want {
         Want::Preview => {
-            components.push(format!("\"minecraft:custom_name\":{}", name_snbt("Card preview", None)));
+            components.push(format!("\"minecraft:custom_name\":{}", name_snbt("bingo.card.preview_card", &[], None)));
         }
         Want::Team { key } => {
             let (name, color) = team_text(key);
-            components.push(format!("\"minecraft:custom_name\":{}", name_snbt(&format!("Team card ({name})"), color)));
+            components.push(format!("\"minecraft:custom_name\":{}", name_snbt("bingo.card.team_card", &[name], color)));
             push_map_color(&mut components, color);
         }
         Want::Memento { key, won } => {
-            let (name, color) = team_text(key);
-            let result = if *won { "won" } else { "lost" };
-            let text = format!("Team card ({name}, {result})");
-            components.push(format!("\"minecraft:custom_name\":{}", name_snbt(&text, color)));
+            let (_, color) = team_text(key);
+            let key = if *won { "bingo.card.team_card_memento_won" } else { "bingo.card.team_card_memento_lost" };
+            components.push(format!("\"minecraft:custom_name\":{}", name_snbt(key, &[], color)));
             push_map_color(&mut components, color);
         }
     }
