@@ -745,7 +745,7 @@ impl Hooks for Mod {
     }
 
     fn screen_mouse_button_pressed_pre(&self, host: &dyn ClientHost, event: &mut ScreenMouseButtonPressedPreEvent<'_>) -> Flow {
-        if let Some(flow) = title_button::press(event) {
+        if let Some(flow) = title_button::press(self, event) {
             return flow;
         }
         if !mod_screen_up(host) {
