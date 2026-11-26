@@ -35,6 +35,7 @@ use crate::item::ItemStack;
 use crate::nbt::Nbt;
 use crate::text::Text;
 use crate::update_card_tiles::CardTilesPacket;
+use super::objective_names::{contents_name, italic, stat_name as stat_name_text, translated};
 use super::wire;
 
 /// Item tags of the round: a tag key with its `#` (`#minecraft:banners`) to the item ids it holds. A tag missing here
@@ -296,19 +297,24 @@ fn to_tile(team: &str, square: &Square, index: usize, is_found: bool, item_id: &
                     ..CardTileImage::default()
                 })
                 .collect();
-            let label = if is_one_of { "One of" } else { "All of" };
-            Text::plain(&format!("{label}: {}", items.join(", ")))
+            let key = if is_one_of { "bingo.objective.one_of" } else { "bingo.objective.all_of" };
+            let first = items.first().map(|item| wire::item_name(item));
+            italic(translated(key, vec![contents_name(first)]))
         }
         Objective::Inverse { of, .. } => {
             if let Objective::Item { item } = of.as_ref() {
                 image.item = stack(item, item_id);
             }
             image.decoration = Decoration::Forbidden;
-            Text::plain(&format!("Not {}", describe(of)))
+            let inner = match of.as_ref() {
+                Objective::Item { item } => wire::item_name(item),
+                other => Text::plain(&describe(other)),
+            };
+            italic(translated("bingo.objective.inverse", vec![inner]))
         }
         Objective::Stats { stat_type, stat_name, min, .. } => {
             image.decoration = Decoration::Advancement;
-            Text::plain(&format!("{}: {min}", stat_name.as_deref().unwrap_or(stat_type)))
+            italic(stat_name_text(stat_type, stat_name.as_deref(), *min))
         }
         Objective::Advancement { id, .. } => {
             image.decoration = Decoration::Advancement;
