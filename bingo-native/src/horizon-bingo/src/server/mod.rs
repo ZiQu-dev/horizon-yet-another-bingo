@@ -31,3 +31,5 @@ pub mod infobook;
 pub mod prefs;
 pub mod world_reset;
 pub mod lobby_scene;
+pub mod panel_clicks;
+pub mod reroll_spam;

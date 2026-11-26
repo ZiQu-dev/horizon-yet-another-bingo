@@ -576,14 +576,18 @@ fn a_player_on_no_team_cannot_ready_up_and_one_on_a_team_can() {
 }
 
 #[test]
-fn joining_a_team_plays_the_lodestone_lock_to_that_player_and_a_reroll_plays_primed_tnt() {
+fn joining_a_team_plays_the_lodestone_lock_to_that_player_and_a_repeated_reroll_plays_primed_tnt() {
     let (mut session, mut host) = session(3);
     host.commands.clear();
     session.command(&mut host, Some(BOB), "join green");
     assert_eq!(host.commands, vec!["playsound minecraft:item.lodestone_compass.lock master Bob".to_owned()]);
     host.commands.clear();
+    // The first reroll is quiet (CardReroll.kt plays only for a repeat within a second); the repeat plays the TNT at
+    // volume 1/100 and pitch 0.5 + 0.5 * 1/100.
     session.command(&mut host, Some(ALICE), "reroll");
-    assert_eq!(host.commands, vec!["playsound minecraft:entity.tnt.primed master Alice".to_owned()]);
+    assert!(host.commands.is_empty());
+    session.command(&mut host, Some(ALICE), "reroll");
+    assert_eq!(host.commands, vec!["playsound minecraft:entity.tnt.primed blocks Alice 0.010 0.505".to_owned()]);
 }
 
 #[test]

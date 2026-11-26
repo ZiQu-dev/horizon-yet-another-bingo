@@ -26,6 +26,7 @@ use super::multicard::{
 use super::objectives::{self, Runtime};
 use super::options::{EndWhen, Goal, Mode, Options};
 use super::prefs::{self, Setting};
+use super::reroll_spam::{self, Effect, RerollSpam};
 use super::ready::{encode_update_v2, postgame_packet, vote_for_id, ReadyOptions, ReadyTimer};
 use super::stats::{self, Captures};
 use super::store::{self, HistoryEntry, HistoryPlayer, HistoryTeam};
@@ -105,6 +106,8 @@ pub struct Session {
     seed: u64,
     /// Generator of the shuffles.
     rng: Rng,
+    /// The reroll spam's counter (the primed TNT and the spam of the lobby panel's reroll).
+    reroll_spam: RerollSpam,
     teams: Teams,
     ready: ReadyTimer,
     /// The lobby flow of a start: the players out of the vanilla worlds, the reset, and the players into the new game.
@@ -239,6 +242,7 @@ impl Session {
             pool: load_pool(),
             seed,
             rng: Rng::new(seed),
+            reroll_spam: RerollSpam::default(),
             teams: Teams::new(),
             ready: ReadyTimer::new(options.ready),
             world: WorldReset::new(),
@@ -2699,9 +2703,24 @@ impl Session {
         }
         self.seed = self.rng.next_u64();
         if let Some(player) = player {
-            host.play_sound(player, super::lobby_scene::SOUND_REROLL);
+            self.reroll_effect(host, player);
         }
         "Card re-rolled.".to_string()
+    }
+
+    /// The reroll's sound, or its spam, for the player (`CardReroll.kt`): a repeat within a second plays the primed TNT.
+    fn reroll_effect(&mut self, host: &mut dyn ServerHost, player: u128) {
+        let effect = self.reroll_spam.reroll(std::time::Instant::now(), false);
+        let name = player_name(&*host, player);
+        match effect {
+            Effect::Quiet => {}
+            Effect::Sound { volume, pitch } => host.command(&reroll_spam::sound_command(&name, volume, pitch)),
+            Effect::Spam => {
+                for line in reroll_spam::spam_commands(&name, reroll_spam::random_unit) {
+                    host.command(&line);
+                }
+            }
+        }
     }
 
     /// Changes one round rule. Only before the game starts.
