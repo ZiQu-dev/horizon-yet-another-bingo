@@ -32,6 +32,7 @@ use crate::card_tile::{CardTile, TierLabel};
 use crate::card_tile_action::CardTileAction;
 use crate::card_tile_image::{CardTileImage, Decoration, ItemStyle};
 use crate::item::ItemStack;
+use crate::nbt::Nbt;
 use crate::text::Text;
 use crate::update_card_tiles::CardTilesPacket;
 use super::wire;
@@ -269,6 +270,7 @@ fn to_tile(team: &str, square: &Square, index: usize, is_found: bool, item_id: &
     let mut image = CardTileImage { is_achieved: is_found, ..CardTileImage::default() };
     let mut image_list = Vec::new();
     let mut action = CardTileAction::None;
+    let mut description = None;
     let name = match &square.objective {
         Objective::Item { item } => {
             image.item = stack(item, item_id);
@@ -311,9 +313,13 @@ fn to_tile(team: &str, square: &Square, index: usize, is_found: bool, item_id: &
         Objective::Advancement { id, .. } => {
             image.decoration = Decoration::Advancement;
             action = CardTileAction::Advancement(id.clone());
-            Text::plain(id)
+            description = Some(advancement_text(id, "description", None));
+            advancement_text(id, "title", Some("green"))
         }
     };
+    // The objective's own lore first, then the tier, list and coordinate line (BingoObjectiveManager.kt).
+    let mut lore: Vec<Text> = description.into_iter().collect();
+    lore.push(wire::tile_lore(square.tier, index));
     CardTile {
         id: Some(describe(&square.objective)),
         image,
@@ -321,13 +327,31 @@ fn to_tile(team: &str, square: &Square, index: usize, is_found: bool, item_id: &
         action,
         item_tier: Some(square.tier),
         name: Some(name),
-        lore: vec![wire::tile_lore(square.tier, index)],
+        lore,
         is_hidden: false,
         is_locked: false,
         is_flashing: false,
         progress: if is_found { 1.0 } else { 0.0 },
         team_keys: if is_found { vec![team.to_owned()] } else { vec![] },
     }
+}
+
+/// The vanilla translation of an advancement's `title` or `description`: `advancements.story.mine_stone.title` for
+/// `minecraft:story/mine_stone` (the `minecraft` namespace is left out of the key, other namespaces stay in it). The id
+/// is the fallback text, and `color` is the formatting the name takes.
+fn advancement_text(id: &str, part: &str, color: Option<&str>) -> Text {
+    let (namespace, path) = id.split_once(':').unwrap_or(("minecraft", id));
+    let dotted = path.replace('/', ".");
+    let key = if namespace == "minecraft" {
+        format!("advancements.{dotted}.{part}")
+    } else {
+        format!("advancements.{namespace}.{dotted}.{part}")
+    };
+    let mut fields = vec![("translate", Nbt::string(&key)), ("fallback", Nbt::string(id))];
+    if let Some(color) = color {
+        fields.push(("color", Nbt::string(color)));
+    }
+    Text(Nbt::compound(fields))
 }
 
 /// The `update_card_tiles` packet for a board of any objectives: `(channel path, payload)`, as `wire::card_tiles` gives
