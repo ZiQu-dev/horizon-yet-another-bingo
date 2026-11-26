@@ -149,6 +149,8 @@ pub struct Session {
     reached: Vec<String>,
     /// Postgame votes by player.
     votes: BTreeMap<u128, VoteChoice>,
+    /// The options voted for, in the order each was first voted for: the original's tie goes to the first of them.
+    vote_order: Vec<VoteChoice>,
     /// The end condition and win condition as they were before a resume changed them; a reset puts them back.
     resume_saved: Option<(EndWhen, WinCondition)>,
     /// Ticks with nobody online while a game runs, for the reset when everyone has left.
@@ -265,6 +267,7 @@ impl Session {
             seen: BTreeMap::new(),
             reached: Vec::new(),
             votes: BTreeMap::new(),
+            vote_order: Vec::new(),
             resume_saved: None,
             empty_ticks: 0,
             loaded: false,
@@ -1799,6 +1802,7 @@ impl Session {
         self.seen.clear();
         self.reached.clear();
         self.votes.clear();
+        self.vote_order.clear();
         self.forfeit = false;
         self.end_reason = None;
         let players = host.players();
@@ -2073,6 +2077,7 @@ impl Session {
         self.seen.clear();
         self.reached.clear();
         self.votes.clear();
+        self.vote_order.clear();
         if let Some((end_when, win_condition)) = self.resume_saved.take() {
             self.rules.end_when = end_when;
             self.rules.win_condition = win_condition;
@@ -2887,6 +2892,9 @@ impl Session {
             return "Voting is possible only after the game ends.".to_string();
         }
         self.votes.insert(player, choice);
+        if !self.vote_order.contains(&choice) {
+            self.vote_order.push(choice);
+        }
         let voters: Vec<u128> = host
             .players()
             .iter()
@@ -2895,9 +2903,18 @@ impl Session {
             .collect();
         if !voters.is_empty() && voters.iter().all(|uuid| self.votes.contains_key(uuid)) {
             let count = |wanted: VoteChoice| voters.iter().filter(|uuid| self.votes.get(uuid) == Some(&wanted)).count();
-            let (next, keep, lobby) = (count(VoteChoice::NextRound), count(VoteChoice::KeepPlaying), count(VoteChoice::ReturnToLobby));
-            // A tie goes to the next round, then to keep playing (the original's `AUTO` default is the next round).
-            if next >= keep && next >= lobby {
+            // The option with the most votes; a tie goes to the option voted for first (the original's `leadingVote` is
+            // the first of the largest in a map that keeps the order its options were first voted for). Votes restored
+            // from a save have no order, so the original's `AUTO` order stands in: next round, keep playing, lobby.
+            let fallback = [VoteChoice::NextRound, VoteChoice::KeepPlaying, VoteChoice::ReturnToLobby];
+            let mut winner = None;
+            for &option in self.vote_order.iter().chain(fallback.iter()) {
+                if winner.is_none_or(|(_, most)| count(option) > most) {
+                    winner = Some((option, count(option)));
+                }
+            }
+            let winner = winner.map_or(VoteChoice::NextRound, |(option, _)| option);
+            if winner == VoteChoice::NextRound {
                 // The original's NEXT_ROUND: reset the round, then start it at once, ignoring the warnings.
                 let events = self.game.reset();
                 self.dispatch(host, events);
@@ -2906,7 +2923,7 @@ impl Session {
                     Err(error) => error,
                 };
             }
-            if keep >= lobby {
+            if winner == VoteChoice::KeepPlaying {
                 return self.resume(host);
             }
             let events = self.game.reset();
@@ -2937,6 +2954,7 @@ impl Session {
                     resume::Resume::KeepPlaying | resume::Resume::IncreaseTimeLimit => {}
                 }
                 self.votes.clear();
+        self.vote_order.clear();
                 self.dispatch(host, events);
                 self.save_playing(host);
                 "The game continues.".to_string()

@@ -390,7 +390,8 @@ fn toggles_set_before_start_reach_the_server_commands_and_the_players_at_countdo
     for _ in 0..160 {
         session.tick(&mut host);
     }
-    assert!(status(&mut session, &mut host).contains("Starting"));
+    let now = status(&mut session, &mut host);
+    assert!(now.contains("Starting"), "{now}");
     session.tick(&mut host);
     assert!(status(&mut session, &mut host).contains("Playing"));
 
@@ -470,13 +471,19 @@ fn with_two_players_the_vote_waits_for_the_second_one() {
     assert!(status(&mut session, &mut host).contains("Postgame"), "Bob has not voted yet");
     host.take();
 
-    assert_eq!(run(&mut session, &mut host, Some(BOB), "vote next"), "The vote is over: back to the lobby.");
-    assert!(status(&mut session, &mut host).contains("Pregame"));
+    // The original's NEXT_ROUND starts the next round at once.
+    assert_eq!(run(&mut session, &mut host, Some(BOB), "vote next"), "The vote is over: starting the next round.");
+    assert!(status(&mut session, &mut host).contains("Playing"), "the countdown is 0: the next round is on");
 }
 
 #[test]
-fn a_tie_between_keep_and_next_goes_back_to_the_lobby_and_a_keep_majority_resumes() {
-    for (bob_vote, expect) in [("vote next", "Pregame"), ("vote keep", "Playing")] {
+fn a_tie_goes_to_the_option_voted_for_first() {
+    // The original's `leadingVote` takes the first of the largest, in the order the options were first voted for.
+    let next = "The vote is over: starting the next round.";
+    let keep = "The game continues.";
+    for (alice_vote, bob_vote, expect) in
+        [("vote keep", "vote next", keep), ("vote next", "vote keep", next), ("vote keep", "vote keep", keep)]
+    {
         let mut host = FakeHost::default();
         let mut session = Session::new(options(7, 0, None));
         lobby(&mut host, &mut session, &[(ALICE, "Alice"), (BOB, "Bob")], &[(ALICE, "red"), (BOB, "blue")]);
@@ -484,9 +491,9 @@ fn a_tie_between_keep_and_next_goes_back_to_the_lobby_and_a_keep_majority_resume
         run(&mut session, &mut host, None, "end");
         host.take();
 
-        run(&mut session, &mut host, Some(ALICE), "vote keep");
-        run(&mut session, &mut host, Some(BOB), bob_vote);
-        assert!(status(&mut session, &mut host).contains(expect), "keep vs {bob_vote}");
+        run(&mut session, &mut host, Some(ALICE), alice_vote);
+        assert_eq!(run(&mut session, &mut host, Some(BOB), bob_vote), expect, "{alice_vote} then {bob_vote}");
+        assert!(status(&mut session, &mut host).contains("Playing"), "{alice_vote} then {bob_vote}");
     }
 }
 
@@ -510,9 +517,11 @@ fn resume_after_a_first_win_turns_the_end_condition_off() {
     host.take();
     assert_eq!(host.take_broadcasts(), ["The game continues."]);
     assert!(status(&mut session, &mut host).contains("Playing"));
-    assert!(run(&mut session, &mut host, None, "options").contains("End: never"));
+    // The original raises the winner's goal; the port keeps one goal for every team, so it takes the original's next
+    // choice: the game ends only when every team has won.
+    assert!(run(&mut session, &mut host, None, "options").contains("End: all teams win"));
 
-    // Another square: the goal was already reached, and with no end condition the game does not end again.
+    // Another square: Alice's team had reached the goal already, and Blue has not, so the game does not end again.
     session.on_inventory(&mut host, ALICE, &held(&names[0..2]));
     host.take();
     assert_eq!(host.take_broadcasts(), [format!("Alice got [{}]", short(&names[1]))]);
