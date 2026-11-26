@@ -457,6 +457,8 @@ impl Session {
             // Before play the players wait in the lobby: a joiner goes there now, or as soon as the lobby is open.
             self.lobby_wanted.insert(player.uuid);
             self.gather_in_lobby(host);
+            // PREGAME: everyone is in adventure mode (`PlayerController.updateGameMode`), so the lobby cannot be built in.
+            host.command(&format!("gamemode adventure {}", player.name));
         }
         send(host, player.uuid, self.game_status());
         match self.game.status() {
@@ -2052,8 +2054,9 @@ impl Session {
         }
         send_all(host, wire::game_reset());
         send_all(host, wire::card_reset());
+        // Back in PREGAME: adventure mode for everyone (`PlayerController.updateGameMode`).
         for player in host.players() {
-            host.command(&format!("gamemode survival {}", player.name));
+            host.command(&format!("gamemode adventure {}", player.name));
         }
         self.cards.clear();
         self.card_started.clear();
