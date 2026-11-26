@@ -40,6 +40,20 @@ pub struct ScreenController {
     entrance_team: Option<crate::state::TeamKey>,
 }
 
+/// The team a click on the card row selects, from the row's hit regions (topmost first).
+/// `BingoCardsWidget.onMouseClicked`: a tile takes the click only when `onTileClick` handles it. Horizon has no JEI
+/// to open an item's recipe, so the click falls through to the card, and the card is selected only where it can be
+/// selected (`onViewClick` is null on the end screen and in a single-card HUD, which have no `SelectCard` hit).
+pub fn card_click_team(hits: &[screen_cards::Hit], mouse: (i32, i32)) -> Option<crate::state::TeamKey> {
+    let hit = hits.iter().find(|h| h.contains(mouse))?;
+    let team = match &hit.action {
+        screen_cards::Action::SelectCard(team) | screen_cards::Action::Tile { team, .. } => team,
+        screen_cards::Action::ScrollBar => return None,
+    };
+    let selectable = hits.iter().any(|h| h.contains(mouse) && h.action == screen_cards::Action::SelectCard(team.clone()));
+    selectable.then(|| team.clone())
+}
+
 fn inside(area: (i32, i32, i32, i32), mouse: (i32, i32)) -> bool {
     mouse.0 >= area.0 && mouse.0 < area.0 + area.2 && mouse.1 >= area.1 && mouse.1 < area.1 + area.3
 }
@@ -317,11 +331,16 @@ impl ScreenController {
             self.history.drag_start(mouse, area);
         } else if let Some(card) = self.card_hits.iter().find(|h| h.contains(mouse)).map(|h| h.action.clone()) {
             match card {
-                screen_cards::Action::SelectCard(team) => hud.selected_team = team,
-                screen_cards::Action::Tile { .. } => {}
                 screen_cards::Action::ScrollBar => {
                     if let (Some(scroll), Some(area)) = (self.scroll.as_mut(), self.area) {
                         screen_cards::drag(scroll, &area, self.card_count, (mouse.0 as f64, mouse.1 as f64));
+                    }
+                }
+                // `onViewClick`: the card is selected and the screen closes (`requestClose`).
+                _ => {
+                    if let Some(team) = card_click_team(&self.card_hits, mouse) {
+                        hud.selected_team = team;
+                        state.request_close(hud.now());
                     }
                 }
             }
