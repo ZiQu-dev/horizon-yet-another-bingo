@@ -383,7 +383,7 @@ fn catalog() -> &'static HashMap<String, Objective> {
 
 /// One objective of the catalog's form: `{"type": "item", "item"}`, `{"type": "one_of" | "all_of", "entries"}`,
 /// `{"type": "inverse", "of"}` (permanent, as the original's default), or `{"type": "stats", "statType", "statName"?}`
-/// (relative, `min` 1, `max` unbounded, as the original's defaults). `None` for anything else.
+/// (relative, `min` 1 and `max` unbounded unless the file gives them). `None` for anything else.
 fn parse_objective(value: &Value) -> Option<Objective> {
     let text = |key: &str| value.get(key).and_then(Value::as_str).map(str::to_string);
     let entries = || -> Option<Vec<String>> {
@@ -405,8 +405,9 @@ fn parse_objective(value: &Value) -> Option<Objective> {
         "stats" => Some(Objective::Stats {
             stat_type: text("statType")?,
             stat_name: text("statName"),
-            min: 1,
-            max: i64::MAX,
+            // A fixed `min` or `max` is read as written; a random one (rolled per card in the original) keeps the default.
+            min: value.get("min").and_then(Value::as_i64).unwrap_or(1),
+            max: value.get("max").and_then(Value::as_i64).unwrap_or(i64::MAX),
             relative: true,
             permanent: false,
         }),
