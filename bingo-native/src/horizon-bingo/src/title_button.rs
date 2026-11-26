@@ -2,6 +2,7 @@
 //! module is the pure part: where the button sits, what it says, which folder it opens and what each answer of
 //! `host.request_world` tells the player. The adapter (`bingo-native/api`, feature `world-request`) asks Horizon and
 //! draws through the `Host` seam; nothing here needs the game.
+use crate::config::ClientConfig;
 use crate::host::{Argb, Host};
 use crate::text_plain::Lang;
 
@@ -106,6 +107,11 @@ pub fn lobby_folder_ok(folder: &str) -> bool {
     (1..=64).contains(&folder.chars().count())
         && !folder.starts_with('.')
         && folder.chars().all(|c| !c.is_control() && !matches!(c, '/' | '\\' | ':'))
+}
+
+/// Whether the title screen shows the button and takes its clicks: the `showQuickStartButton` option (`BingoWorldManager.kt:37`).
+pub fn is_offered(config: &ClientConfig) -> bool {
+    config.show_quick_start_button
 }
 
 /// The button's rectangle `[x, y, w, h]` on a title screen of `width` by `height` GUI pixels.

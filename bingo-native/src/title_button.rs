@@ -41,7 +41,7 @@ fn answer(result: NativeWorldResult) -> WorldAnswer {
 
 /// The button over the title's main page: its frame, and the hint while it lasts.
 pub(super) fn render(this: &Mod, host: &dyn ClientHost, event: &mut ScreenRenderPostEvent<'_>) {
-    if event.screen.id != "title" {
+    if event.screen.id != "title" || !button::is_offered(this.lock_client().config()) {
         return;
     }
     let [_, _, width, height] = event.screen.rect;
@@ -67,8 +67,8 @@ pub(super) fn render(this: &Mod, host: &dyn ClientHost, event: &mut ScreenRender
 }
 
 /// A left press on the button: cancelled, and remembered for the next tick. None for any other press.
-pub(super) fn press(event: &ScreenMouseButtonPressedPreEvent<'_>) -> Option<Flow> {
-    if event.screen.id != "title" || event.button != 0 {
+pub(super) fn press(this: &Mod, event: &ScreenMouseButtonPressedPreEvent<'_>) -> Option<Flow> {
+    if event.screen.id != "title" || event.button != 0 || !button::is_offered(this.lock_client().config()) {
         return None;
     }
     let [_, _, width, height] = event.screen.rect;
